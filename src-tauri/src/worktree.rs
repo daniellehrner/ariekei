@@ -79,6 +79,32 @@ fn find_existing(
         }))
 }
 
+/// Where a PR's head is fetched for reviewing without a worktree.
+pub fn pull_ref(number: i64) -> String {
+    format!("refs/ariekei/pull/{number}/head")
+}
+
+/// Fetches GitHub's `refs/pull/<N>/head` (works for PRs from forks too) and the base
+/// branch from `remote` into the clone; returns the head commit.
+pub fn fetch_pr_head(
+    repo: &Path,
+    remote: &str,
+    number: i64,
+    base_ref: &str,
+) -> Result<String, String> {
+    git(
+        repo,
+        &[
+            "fetch",
+            "--quiet",
+            remote,
+            &format!("+refs/pull/{number}/head:{}", pull_ref(number)),
+            &format!("+refs/heads/{base_ref}:refs/remotes/{remote}/{base_ref}"),
+        ],
+    )?;
+    git_str(repo, &["rev-parse", &pull_ref(number)])
+}
+
 pub fn worktree_path(repo: &Repo, number: i64) -> PathBuf {
     let dir = repo
         .path
@@ -208,6 +234,8 @@ mod tests {
         let pr = PrSummary {
             number: 42,
             title: "t".into(),
+            author: "me".into(),
+            state: "OPEN".into(),
             url: String::new(),
             is_draft: false,
             updated_at: String::new(),
@@ -274,6 +302,41 @@ mod tests {
             p2.note
         );
         assert!(p2.path.join("local.txt").exists());
+    }
+
+    #[test]
+    fn fetches_a_pull_ref_for_review_without_a_worktree() {
+        let (_root, repo, _pr) = setup();
+        // GitHub keeps every PR's head at refs/pull/<N>/head of the base repo.
+        let up = git_str(
+            &repo.path,
+            &["config", "--get-regexp", "^url\\..*\\.insteadof$"],
+        )
+        .unwrap();
+        let upstream = PathBuf::from(
+            up.split_whitespace()
+                .next()
+                .unwrap()
+                .trim_start_matches("url.")
+                .trim_end_matches(".insteadof"),
+        );
+        git(&upstream, &["update-ref", "refs/pull/7/head", "feature/x"]).unwrap();
+
+        let head = fetch_pr_head(&repo.path, "origin", 7, "main").unwrap();
+        assert_eq!(
+            head,
+            git_str(&upstream, &["rev-parse", "feature/x"]).unwrap()
+        );
+        let base = git::merge_base(&repo.path, &head, "origin/main").unwrap();
+        let files = git::changed_files(&repo.path, &base, Some(&head)).unwrap();
+        assert_eq!(
+            files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
+            ["a.txt"]
+        );
+        assert!(
+            git::worktrees(&repo.path).unwrap().len() == 1,
+            "no worktree was created"
+        );
     }
 
     #[test]

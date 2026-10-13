@@ -2,14 +2,36 @@
 //! so Ariekei never handles tokens itself.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::process::Command;
+use serde_json::{Value, json};
+use std::io::Write as _;
+use std::process::{Command, Stdio};
+
+/// The `gh` binary; `ARIEKEI_GH` replaces it (tests use a fake).
+fn gh_command() -> Command {
+    Command::new(std::env::var_os("ARIEKEI_GH").unwrap_or_else(|| "gh".into()))
+}
 
 fn gh(args: &[&str]) -> Result<Vec<u8>, String> {
-    let out = Command::new("gh")
+    gh_with_input(args, None)
+}
+
+/// Runs `gh`, optionally writing `input` to its stdin (for `--input -`).
+fn gh_with_input(args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, String> {
+    let mut child = gh_command()
         .args(args)
-        .output()
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| format!("failed to run gh (is the GitHub CLI installed?): {e}"))?;
+    if let (Some(data), Some(mut stdin)) = (input, child.stdin.take()) {
+        stdin.write_all(data).map_err(|e| e.to_string())?;
+    }
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
     if !out.status.success() {
         return Err(format!(
             "gh {} failed: {}",
@@ -60,6 +82,11 @@ pub struct Review {
 pub struct PrSummary {
     pub number: i64,
     pub title: String,
+    #[serde(default)]
+    pub author: String,
+    /// OPEN, CLOSED or MERGED.
+    #[serde(default = "open_state")]
+    pub state: String,
     pub url: String,
     pub is_draft: bool,
     pub updated_at: String,
@@ -81,8 +108,12 @@ pub struct PrSummary {
     pub reviews: Vec<Review>,
 }
 
+fn open_state() -> String {
+    "OPEN".into()
+}
+
 const PR_FIELDS: &str = r#"
-  number title url isDraft updatedAt headRefName headRefOid baseRefName reviewDecision
+  number title url state isDraft updatedAt author { login } headRefName headRefOid baseRefName reviewDecision
   headRepository { name owner { login } sshUrl url }
   reviews(last: 20) { nodes { author { login } state submittedAt } }
   comments(last: 20) { nodes { author { login } createdAt } }
@@ -94,14 +125,46 @@ const PR_FIELDS: &str = r#"
   } } } } } }
 "#;
 
-/// The viewer's open PRs in `owner/name`, newest first.
-pub fn open_prs(owner: &str, name: &str, viewer: &str) -> Result<Vec<PrSummary>, String> {
+/// Open PRs in `owner/name` matching GitHub search `terms`, most recently updated first.
+/// `viewer` decides what counts as activity by others.
+pub fn search_prs(
+    owner: &str,
+    name: &str,
+    viewer: &str,
+    terms: &str,
+) -> Result<Vec<PrSummary>, String> {
     let query = format!(
         "query($q: String!) {{ search(query: $q, type: ISSUE, first: 50) {{ nodes {{ ... on PullRequest {{ {PR_FIELDS} }} }} }} }}"
     );
-    let q = format!("repo:{owner}/{name} is:pr is:open author:{viewer} sort:updated-desc");
+    let q = format!("repo:{owner}/{name} is:pr is:open {terms} sort:updated-desc");
     let v = graphql(&query, &[("q", &q)], &[])?;
     Ok(parse_prs(&v["data"]["search"]["nodes"], viewer))
+}
+
+/// PRs by number (any state), e.g. ones the user opened from search.
+pub fn prs_by_number(
+    owner: &str,
+    name: &str,
+    viewer: &str,
+    numbers: &[i64],
+) -> Result<Vec<PrSummary>, String> {
+    if numbers.is_empty() {
+        return Ok(vec![]);
+    }
+    let fields: String = numbers
+        .iter()
+        .map(|n| format!("p{n}: pullRequest(number: {n}) {{ {PR_FIELDS} }}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let query = format!(
+        "query($owner: String!, $name: String!) {{ repository(owner: $owner, name: $name) {{ {fields} }} }}"
+    );
+    let v = graphql(&query, &[("owner", owner), ("name", name)], &[])?;
+    let found: Vec<Value> = numbers
+        .iter()
+        .map(|n| v["data"]["repository"][format!("p{n}")].clone())
+        .collect();
+    Ok(parse_prs(&Value::Array(found), viewer))
 }
 
 fn s(v: &Value) -> String {
@@ -171,6 +234,8 @@ pub fn parse_prs(list: &Value, viewer: &str) -> Vec<PrSummary> {
             PrSummary {
                 number: pr["number"].as_i64().unwrap_or_default(),
                 title: s(&pr["title"]),
+                author: s(&pr["author"]["login"]),
+                state: pr["state"].as_str().unwrap_or("OPEN").to_owned(),
                 url: s(&pr["url"]),
                 is_draft: pr["isDraft"].as_bool().unwrap_or_default(),
                 updated_at: s(&pr["updatedAt"]),
@@ -238,25 +303,277 @@ pub struct PrDetail {
     pub failing: Vec<FailingCheck>,
 }
 
-pub fn pr_detail(owner: &str, name: &str, number: i64) -> Result<PrDetail, String> {
-    let query = r#"query($owner: String!, $name: String!, $number: Int!) {
-      repository(owner: $owner, name: $name) { pullRequest(number: $number) {
-        title body url headRefName baseRefName
-        reviews(last: 30) { nodes { author { login } state body } }
-        reviewThreads(first: 100) { nodes { isResolved isOutdated path line originalLine
-          comments(first: 30) { nodes { author { login } body } } } }
-        commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
-          __typename
-          ... on CheckRun { name conclusion detailsUrl databaseId title summary }
-          ... on StatusContext { context state targetUrl description }
-        } } } } } }
-      } } }"#;
+/// Everything shown about one PR: its description, conversation, review threads and
+/// checks. GitHub renders the markdown (`bodyHTML`); the UI sanitizes it.
+const CONVERSATION: &str = r#"query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+    number title url state isDraft createdAt body bodyHTML headRefName headRefOid baseRefName reviewDecision
+    author { login }
+    labels(first: 20) { nodes { name color } }
+    reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { name } } } }
+    comments(first: 100) { nodes { databaseId author { login } bodyHTML createdAt url } }
+    reviews(last: 50) { nodes { author { login } state body bodyHTML submittedAt } }
+    reviewThreads(first: 100) { nodes { id isResolved isOutdated path line originalLine
+      comments(first: 50) { nodes { databaseId author { login } body bodyHTML createdAt diffHunk url } } } }
+    commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 100) { nodes {
+      __typename
+      ... on CheckRun { name conclusion status detailsUrl databaseId title summary }
+      ... on StatusContext { context state targetUrl description }
+    } } } } } }
+  } } }"#;
+
+fn conversation_json(owner: &str, name: &str, number: i64) -> Result<Value, String> {
     let v = graphql(
-        query,
+        CONVERSATION,
         &[("owner", owner), ("name", name)],
         &[("number", number)],
     )?;
-    Ok(parse_detail(&v["data"]["repository"]["pullRequest"]))
+    Ok(v["data"]["repository"]["pullRequest"].clone())
+}
+
+pub fn pr_detail(owner: &str, name: &str, number: i64) -> Result<PrDetail, String> {
+    Ok(parse_detail(&conversation_json(owner, name, number)?))
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Comment {
+    /// REST id (replies and links need it).
+    pub id: i64,
+    pub author: String,
+    pub body_html: String,
+    pub created_at: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewEntry {
+    pub author: String,
+    pub state: String,
+    pub body_html: String,
+    pub submitted_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadView {
+    /// GraphQL node id (resolve/unresolve need it).
+    pub id: String,
+    pub path: String,
+    pub line: Option<i64>,
+    pub resolved: bool,
+    pub outdated: bool,
+    /// The diff around the commented line, from the thread's first comment.
+    pub diff_hunk: String,
+    pub comments: Vec<Comment>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Check {
+    pub name: String,
+    /// SUCCESS, FAILURE, … or the status of a check that has not finished.
+    pub outcome: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Conversation {
+    pub number: i64,
+    pub title: String,
+    pub url: String,
+    pub author: String,
+    pub state: String,
+    pub is_draft: bool,
+    pub created_at: String,
+    pub head_ref: String,
+    pub head_sha: String,
+    pub base_ref: String,
+    pub review_decision: Option<String>,
+    pub body_html: String,
+    pub labels: Vec<String>,
+    pub requested_reviewers: Vec<String>,
+    pub comments: Vec<Comment>,
+    pub reviews: Vec<ReviewEntry>,
+    pub threads: Vec<ThreadView>,
+    pub checks: Vec<Check>,
+}
+
+pub fn conversation(owner: &str, name: &str, number: i64) -> Result<Conversation, String> {
+    Ok(parse_conversation(&conversation_json(owner, name, number)?))
+}
+
+fn comment(c: &Value) -> Comment {
+    Comment {
+        id: c["databaseId"].as_i64().unwrap_or_default(),
+        author: s(&c["author"]["login"]),
+        body_html: s(&c["bodyHTML"]),
+        created_at: s(&c["createdAt"]),
+        url: s(&c["url"]),
+    }
+}
+
+pub fn parse_conversation(pr: &Value) -> Conversation {
+    let threads = nodes(&pr["reviewThreads"])
+        .iter()
+        .map(|t| ThreadView {
+            id: s(&t["id"]),
+            path: s(&t["path"]),
+            line: t["line"].as_i64().or(t["originalLine"].as_i64()),
+            resolved: t["isResolved"].as_bool().unwrap_or_default(),
+            outdated: t["isOutdated"].as_bool().unwrap_or_default(),
+            diff_hunk: s(&t["comments"]["nodes"][0]["diffHunk"]),
+            comments: nodes(&t["comments"]).iter().map(comment).collect(),
+        })
+        .collect();
+    let checks = nodes(&pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"])
+        .iter()
+        .map(|c| Check {
+            name: c["name"]
+                .as_str()
+                .or(c["context"].as_str())
+                .unwrap_or("?")
+                .to_owned(),
+            outcome: c["conclusion"]
+                .as_str()
+                .or(c["state"].as_str())
+                .or(c["status"].as_str())
+                .unwrap_or("?")
+                .to_owned(),
+            url: c["detailsUrl"]
+                .as_str()
+                .or(c["targetUrl"].as_str())
+                .unwrap_or_default()
+                .to_owned(),
+        })
+        .collect();
+    Conversation {
+        number: pr["number"].as_i64().unwrap_or_default(),
+        title: s(&pr["title"]),
+        url: s(&pr["url"]),
+        author: s(&pr["author"]["login"]),
+        state: s(&pr["state"]),
+        is_draft: pr["isDraft"].as_bool().unwrap_or_default(),
+        created_at: s(&pr["createdAt"]),
+        head_ref: s(&pr["headRefName"]),
+        head_sha: s(&pr["headRefOid"]),
+        base_ref: s(&pr["baseRefName"]),
+        review_decision: pr["reviewDecision"].as_str().map(str::to_owned),
+        body_html: s(&pr["bodyHTML"]),
+        labels: nodes(&pr["labels"]).iter().map(|l| s(&l["name"])).collect(),
+        requested_reviewers: nodes(&pr["reviewRequests"])
+            .iter()
+            .filter_map(|r| {
+                let who = &r["requestedReviewer"];
+                who["login"]
+                    .as_str()
+                    .or(who["name"].as_str())
+                    .map(str::to_owned)
+            })
+            .collect(),
+        comments: nodes(&pr["comments"]).iter().map(comment).collect(),
+        reviews: nodes(&pr["reviews"])
+            .iter()
+            .map(|r| ReviewEntry {
+                author: s(&r["author"]["login"]),
+                state: s(&r["state"]),
+                body_html: s(&r["bodyHTML"]),
+                submitted_at: s(&r["submittedAt"]),
+            })
+            .collect(),
+        threads,
+        checks,
+    }
+}
+
+// --- writing to GitHub (only on the user's explicit action) ---------------------
+
+/// A line comment of a review: `line` (and `start_line` for a range) in the file at
+/// the review's commit, on the given diff side ("RIGHT" for new code).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineComment {
+    pub path: String,
+    pub line: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<u32>,
+    pub side: String,
+    pub body: String,
+}
+
+/// The JSON body for `POST /repos/{o}/{r}/pulls/{n}/reviews`.
+pub fn review_payload(commit_id: &str, event: &str, body: &str, comments: &[LineComment]) -> Value {
+    let comments: Vec<Value> = comments
+        .iter()
+        .map(|c| {
+            let mut v = json!({ "path": c.path, "line": c.line, "side": c.side, "body": c.body });
+            if let Some(start) = c.start_line.filter(|s| *s < c.line) {
+                v["start_line"] = json!(start);
+                v["start_side"] = json!(c.side);
+            }
+            v
+        })
+        .collect();
+    json!({ "commit_id": commit_id, "event": event, "body": body, "comments": comments })
+}
+
+fn post(path: &str, payload: &Value) -> Result<Value, String> {
+    let out = gh_with_input(
+        &["api", "--method", "POST", path, "--input", "-"],
+        Some(payload.to_string().as_bytes()),
+    )?;
+    serde_json::from_slice(&out).map_err(|e| e.to_string())
+}
+
+/// Submits a review (event COMMENT, APPROVE or REQUEST_CHANGES); returns its URL.
+pub fn submit_review(
+    owner: &str,
+    name: &str,
+    number: i64,
+    payload: &Value,
+) -> Result<String, String> {
+    let v = post(
+        &format!("repos/{owner}/{name}/pulls/{number}/reviews"),
+        payload,
+    )?;
+    Ok(s(&v["html_url"]))
+}
+
+/// Replies to the review thread that `comment_id` belongs to.
+pub fn reply(
+    owner: &str,
+    name: &str,
+    number: i64,
+    comment_id: i64,
+    body: &str,
+) -> Result<(), String> {
+    post(
+        &format!("repos/{owner}/{name}/pulls/{number}/comments/{comment_id}/replies"),
+        &json!({ "body": body }),
+    )
+    .map(|_| ())
+}
+
+/// Adds a comment to the PR's conversation.
+pub fn comment_on(owner: &str, name: &str, number: i64, body: &str) -> Result<(), String> {
+    post(
+        &format!("repos/{owner}/{name}/issues/{number}/comments"),
+        &json!({ "body": body }),
+    )
+    .map(|_| ())
+}
+
+pub fn resolve_thread(thread_id: &str, resolved: bool) -> Result<(), String> {
+    let mutation = if resolved {
+        "resolveReviewThread"
+    } else {
+        "unresolveReviewThread"
+    };
+    let query = format!(
+        "mutation($id: ID!) {{ {mutation}(input: {{ threadId: $id }}) {{ thread {{ isResolved }} }} }}"
+    );
+    graphql(&query, &[("id", thread_id)], &[]).map(|_| ())
 }
 
 pub fn parse_detail(pr: &Value) -> PrDetail {
@@ -406,6 +723,108 @@ mod tests {
     }
 
     #[test]
+    fn summaries_carry_author_and_state() {
+        let mut list = fixture();
+        list[0]["author"] = json!({ "login": "alice" });
+        list[0]["state"] = json!("OPEN");
+        let pr = &parse_prs(&list, "me")[0];
+        assert_eq!((pr.author.as_str(), pr.state.as_str()), ("alice", "OPEN"));
+        // Snapshots stored before these fields existed still load.
+        let mut old = serde_json::to_value(pr).unwrap();
+        old.as_object_mut().unwrap().remove("author");
+        old.as_object_mut().unwrap().remove("state");
+        let loaded: PrSummary = serde_json::from_value(old).unwrap();
+        assert_eq!(
+            (loaded.author.as_str(), loaded.state.as_str()),
+            ("", "OPEN")
+        );
+    }
+
+    #[test]
+    fn parses_conversation() {
+        let pr = json!({
+            "number": 9, "title": "T", "url": "U", "state": "OPEN", "isDraft": true, "createdAt": "2026-10-01T00:00:00Z",
+            "bodyHTML": "<p>Hi</p>", "headRefName": "h", "headRefOid": "abc", "baseRefName": "main", "reviewDecision": null,
+            "author": { "login": "alice" },
+            "labels": { "nodes": [ { "name": "perf" } ] },
+            "reviewRequests": { "nodes": [ { "requestedReviewer": { "__typename": "User", "login": "me" } },
+                                           { "requestedReviewer": { "__typename": "Team", "name": "core" } } ] },
+            "comments": { "nodes": [ { "databaseId": 1, "author": { "login": "bob" }, "bodyHTML": "<p>LGTM?</p>", "createdAt": "2026-10-02T00:00:00Z", "url": "C1" } ] },
+            "reviews": { "nodes": [ { "author": { "login": "bob" }, "state": "COMMENTED", "bodyHTML": "", "submittedAt": "2026-10-02T01:00:00Z" } ] },
+            "reviewThreads": { "nodes": [ { "id": "T1", "isResolved": true, "isOutdated": false, "path": "A.java", "line": null, "originalLine": 3,
+                "comments": { "nodes": [ { "databaseId": 5, "author": { "login": "bob" }, "bodyHTML": "<p>x</p>", "createdAt": "c", "diffHunk": "@@ -1 +1 @@", "url": "C5" } ] } } ] },
+            "commits": { "nodes": [ { "commit": { "statusCheckRollup": { "contexts": { "nodes": [
+                { "__typename": "CheckRun", "name": "build", "conclusion": null, "status": "IN_PROGRESS", "detailsUrl": "D" } ] } } } } ] }
+        });
+        let c = parse_conversation(&pr);
+        assert_eq!(
+            (c.author.as_str(), c.is_draft, c.head_sha.as_str()),
+            ("alice", true, "abc")
+        );
+        assert_eq!(c.labels, ["perf"]);
+        assert_eq!(c.requested_reviewers, ["me", "core"]);
+        assert_eq!(
+            (c.comments[0].id, c.comments[0].body_html.as_str()),
+            (1, "<p>LGTM?</p>")
+        );
+        let t = &c.threads[0];
+        assert_eq!(
+            (t.id.as_str(), t.line, t.resolved, t.diff_hunk.as_str()),
+            ("T1", Some(3), true, "@@ -1 +1 @@")
+        );
+        assert_eq!(t.comments[0].id, 5);
+        assert_eq!(
+            (c.checks[0].name.as_str(), c.checks[0].outcome.as_str()),
+            ("build", "IN_PROGRESS")
+        );
+    }
+
+    #[test]
+    fn review_payload_has_line_and_range_comments() {
+        let comments = [
+            LineComment {
+                path: "A.java".into(),
+                line: 12,
+                start_line: None,
+                side: "RIGHT".into(),
+                body: "one".into(),
+            },
+            LineComment {
+                path: "B.java".into(),
+                line: 9,
+                start_line: Some(7),
+                side: "RIGHT".into(),
+                body: "range".into(),
+            },
+            LineComment {
+                path: "C.java".into(),
+                line: 4,
+                start_line: Some(4),
+                side: "RIGHT".into(),
+                body: "same".into(),
+            },
+        ];
+        let p = review_payload("abc", "REQUEST_CHANGES", "Summary", &comments);
+        assert_eq!(p["commit_id"], "abc");
+        assert_eq!(p["event"], "REQUEST_CHANGES");
+        assert_eq!(
+            p["comments"][0],
+            json!({ "path": "A.java", "line": 12, "side": "RIGHT", "body": "one" })
+        );
+        assert_eq!(
+            (
+                p["comments"][1]["start_line"].as_i64(),
+                p["comments"][1]["start_side"].as_str()
+            ),
+            (Some(7), Some("RIGHT"))
+        );
+        assert!(
+            p["comments"][2].get("start_line").is_none(),
+            "a one-line range is a plain line comment"
+        );
+    }
+
+    #[test]
     fn log_excerpt_ends_at_the_last_error() {
         let log = "2026-10-13T10:00:00.0000000Z a\n2026-10-13T10:00:01.0000000Z FooTest > bar FAILED\n\
                    2026-10-13T10:00:02.0000000Z ##[error]Process completed with exit code 1.\n\
@@ -481,7 +900,29 @@ mod live {
     fn live_open_prs_and_detail() {
         let (owner, name) = repo();
         let me = viewer().unwrap();
-        let prs = open_prs(&owner, &name, &me).unwrap();
+        let prs = search_prs(&owner, &name, &me, &format!("author:{me}")).unwrap();
+        let requested = search_prs(&owner, &name, &me, &format!("review-requested:{me}")).unwrap();
+        println!("{} PRs request my review", requested.len());
+        let others = search_prs(&owner, &name, &me, &format!("-author:{me}")).unwrap();
+        println!(
+            "{} open PRs by others, e.g. {:?}",
+            others.len(),
+            others.first().map(|p| (p.number, &p.author))
+        );
+        if let Some(o) = others.first() {
+            let c = conversation(&owner, &name, o.number).unwrap();
+            println!(
+                "conversation #{}: {} chars of description, {} comments, {} reviews, {} threads, {} checks",
+                c.number,
+                c.body_html.len(),
+                c.comments.len(),
+                c.reviews.len(),
+                c.threads.len(),
+                c.checks.len()
+            );
+            let by_number = prs_by_number(&owner, &name, &me, &[o.number]).unwrap();
+            assert_eq!(by_number[0].number, o.number);
+        }
         println!("{} open PRs by {me}", prs.len());
         for p in prs.iter().take(5) {
             println!(

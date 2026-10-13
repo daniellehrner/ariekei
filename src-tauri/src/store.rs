@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
 CREATE TABLE repos (
     id INTEGER PRIMARY KEY,
     path TEXT NOT NULL UNIQUE,
@@ -38,7 +39,15 @@ CREATE TABLE work_items (
     UNIQUE (repo_id, number)
 );
 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-"#];
+"#,
+    r#"
+-- Why the item is in the Inbox: 'author' (the viewer's PR), 'requested' (review requested
+-- from the viewer) or 'other'. Recomputed on every poll.
+ALTER TABLE work_items ADD COLUMN role TEXT NOT NULL DEFAULT 'author';
+-- The user opened it, so it stays listed (and polled) even when no query finds it.
+ALTER TABLE work_items ADD COLUMN tracked INTEGER NOT NULL DEFAULT 0;
+"#,
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,6 +76,17 @@ pub struct WorkItem {
     pub reviewed_sha: Option<String>,
     pub last_seen: Option<String>,
     pub ui_state: Option<serde_json::Value>,
+    pub role: String,
+    pub tracked: bool,
+}
+
+/// One PR as found by a poll.
+#[derive(Debug, Clone)]
+pub struct PolledPr {
+    pub number: i64,
+    pub role: &'static str,
+    pub open: bool,
+    pub snapshot: serde_json::Value,
 }
 
 pub struct Store {
@@ -78,7 +98,7 @@ fn err(e: rusqlite::Error) -> String {
 }
 
 const ITEM_COLUMNS: &str = "id, repo_id, number, snapshot, open, worktree_path, branch, session_id, \
-     session_started, transcript_path, reviewed_sha, last_seen, ui_state";
+     session_started, transcript_path, reviewed_sha, last_seen, ui_state, role, tracked";
 
 fn item_from_row(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
     let json = |s: Option<String>| s.and_then(|s| serde_json::from_str(&s).ok());
@@ -96,6 +116,8 @@ fn item_from_row(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
         reviewed_sha: r.get(10)?,
         last_seen: r.get(11)?,
         ui_state: json(r.get(12)?),
+        role: r.get(13)?,
+        tracked: r.get(14)?,
     })
 }
 
@@ -218,11 +240,9 @@ impl Store {
 
     /// Records the current GitHub state of the repo's open PRs. Items that are no longer
     /// open are kept (with `open = false`) until cleanup, so no local state is lost.
-    pub fn sync_open_prs(
-        &self,
-        repo_id: i64,
-        prs: &[(i64, serde_json::Value)],
-    ) -> Result<(), String> {
+    /// Records what a poll found. Items it did not find are kept (with `open = false`)
+    /// until cleanup, so no local state is lost.
+    pub fn sync_prs(&self, repo_id: i64, prs: &[PolledPr]) -> Result<(), String> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction().map_err(err)?;
         tx.execute(
@@ -230,15 +250,52 @@ impl Store {
             [repo_id],
         )
         .map_err(err)?;
-        for (number, snapshot) in prs {
+        for pr in prs {
             tx.execute(
-                "INSERT INTO work_items (repo_id, number, snapshot, open) VALUES (?1, ?2, ?3, 1)
-                 ON CONFLICT (repo_id, number) DO UPDATE SET snapshot = ?3, open = 1",
-                params![repo_id, number, snapshot.to_string()],
+                "INSERT INTO work_items (repo_id, number, snapshot, open, role) VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT (repo_id, number) DO UPDATE SET snapshot = ?3, open = ?4, role = ?5",
+                params![repo_id, pr.number, pr.snapshot.to_string(), pr.open, pr.role],
             )
             .map_err(err)?;
         }
         tx.commit().map_err(err)
+    }
+
+    /// Adds a PR the user picked (e.g. from search) or marks an existing one as tracked.
+    pub fn track(&self, repo_id: i64, pr: &PolledPr) -> Result<i64, String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO work_items (repo_id, number, snapshot, open, role, tracked, last_seen)
+             VALUES (?1, ?2, ?3, ?4, ?5, 1, '')
+             ON CONFLICT (repo_id, number) DO UPDATE SET snapshot = ?3, open = ?4, tracked = 1",
+            params![
+                repo_id,
+                pr.number,
+                pr.snapshot.to_string(),
+                pr.open,
+                pr.role
+            ],
+        )
+        .map_err(err)?;
+        conn.query_row(
+            "SELECT id FROM work_items WHERE repo_id = ?1 AND number = ?2",
+            params![repo_id, pr.number],
+            |r| r.get(0),
+        )
+        .map_err(err)
+    }
+
+    pub fn set_tracked(&self, id: i64) -> Result<(), String> {
+        self.update(id, "tracked = ?2", true)
+    }
+
+    pub fn tracked_numbers(&self, repo_id: i64) -> Result<Vec<i64>, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT number FROM work_items WHERE repo_id = ?1 AND tracked = 1")
+            .map_err(err)?;
+        let rows = stmt.query_map([repo_id], |r| r.get(0)).map_err(err)?;
+        rows.collect::<Result<_, _>>().map_err(err)
     }
 
     pub fn items(&self, repo_id: i64) -> Result<Vec<WorkItem>, String> {
@@ -331,6 +388,15 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn polled(number: i64, snapshot: serde_json::Value) -> PolledPr {
+        PolledPr {
+            number,
+            role: "author",
+            open: true,
+            snapshot,
+        }
+    }
+
     fn store_with_repo() -> (Store, Repo) {
         let store = Store::in_memory();
         let repo = store
@@ -375,9 +441,12 @@ mod tests {
     fn sync_keeps_local_state_and_marks_vanished_prs_closed() {
         let (store, repo) = store_with_repo();
         store
-            .sync_open_prs(
+            .sync_prs(
                 repo.id,
-                &[(1, json!({"title": "a"})), (2, json!({"title": "b"}))],
+                &[
+                    polled(1, json!({"title": "a"})),
+                    polled(2, json!({"title": "b"})),
+                ],
             )
             .unwrap();
         let one = store
@@ -392,7 +461,7 @@ mod tests {
         store.set_reviewed(one.id, "abc").unwrap();
 
         store
-            .sync_open_prs(repo.id, &[(1, json!({"title": "a2"}))])
+            .sync_prs(repo.id, &[polled(1, json!({"title": "a2"}))])
             .unwrap();
         let items = store.items(repo.id).unwrap();
         let one = items.iter().find(|i| i.number == 1).unwrap();
@@ -407,9 +476,45 @@ mod tests {
     }
 
     #[test]
+    fn tracking_keeps_a_pr_and_roles_follow_the_poll() {
+        let (store, repo) = store_with_repo();
+        let requested = PolledPr {
+            role: "requested",
+            ..polled(5, json!({"title": "theirs"}))
+        };
+        store.sync_prs(repo.id, &[requested]).unwrap();
+        assert_eq!(store.items(repo.id).unwrap()[0].role, "requested");
+        assert!(store.tracked_numbers(repo.id).unwrap().is_empty());
+
+        // The user opens a PR found by search: it is added and tracked, unseen so far.
+        let found = PolledPr {
+            role: "other",
+            ..polled(9, json!({"title": "found"}))
+        };
+        let id = store.track(repo.id, &found).unwrap();
+        assert_eq!(store.item(id).unwrap().last_seen.as_deref(), Some(""));
+        assert_eq!(store.tracked_numbers(repo.id).unwrap(), [9]);
+
+        // Next poll: #9 is found by number (merged now), #5 is no longer requested.
+        let merged = PolledPr {
+            open: false,
+            ..found
+        };
+        store.sync_prs(repo.id, &[merged]).unwrap();
+        let items = store.items(repo.id).unwrap();
+        let nine = items.iter().find(|i| i.number == 9).unwrap();
+        let five = items.iter().find(|i| i.number == 5).unwrap();
+        assert!(nine.tracked && !nine.open && nine.role == "other");
+        assert!(
+            !five.open,
+            "an untracked PR no query finds drops out of the Inbox"
+        );
+    }
+
+    #[test]
     fn sessions_track_start_and_transcript() {
         let (store, repo) = store_with_repo();
-        store.sync_open_prs(repo.id, &[(7, json!({}))]).unwrap();
+        store.sync_prs(repo.id, &[polled(7, json!({}))]).unwrap();
         let id = store.items(repo.id).unwrap()[0].id;
         store.set_session(id, "s-1").unwrap();
         assert!(!store.item(id).unwrap().session_started);

@@ -5,7 +5,7 @@ use crate::AppState;
 use crate::git::{self, git};
 use crate::github::{self, PrSummary};
 use crate::inbox::{self, Row};
-use crate::store::{Repo, WorkItem};
+use crate::store::{PolledPr, Repo, WorkItem};
 use crate::terminal::{self, SessionPlan};
 use crate::worktree::{self, Prepared};
 use serde::Serialize;
@@ -107,6 +107,8 @@ pub fn inbox(state: &AppState) -> Result<Vec<Row>, String> {
                 id: item.id,
                 number: item.number,
                 title: pr.title.clone(),
+                author: pr.author.clone(),
+                role: item.role.clone(),
                 url: pr.url.clone(),
                 is_draft: pr.is_draft,
                 open: item.open,
@@ -129,9 +131,13 @@ pub fn inbox(state: &AppState) -> Result<Vec<Row>, String> {
     Ok(inbox::order(rows))
 }
 
-/// Opening an item counts as seeing its current GitHub activity.
+/// Opening an item counts as seeing its current GitHub activity, and keeps it in the
+/// Inbox from now on (e.g. after the review request is gone because the user reviewed).
 pub fn mark_seen(state: &AppState, id: i64) -> Result<(), String> {
     let item = state.store.item(id)?;
+    if !item.tracked {
+        state.store.set_tracked(id)?;
+    }
     if let Ok(pr) = summary(&item)
         && let Some(at) = pr.latest_activity
     {
@@ -242,54 +248,181 @@ pub fn comments_message(state: &AppState, id: i64) -> Result<String, String> {
     ))
 }
 
+// --- other people's PRs -------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchHit {
+    pub number: i64,
+    pub title: String,
+    pub author: String,
+    pub is_draft: bool,
+    pub updated_at: String,
+    /// The work item, if the PR is already in the Inbox.
+    pub item_id: Option<i64>,
+}
+
+/// Open PRs of the active repo matching `text` (GitHub search syntax: words, `author:x`, …).
+pub fn search(state: &AppState, text: &str) -> Result<Vec<SearchHit>, String> {
+    let repo = state
+        .store
+        .active_repo()?
+        .ok_or("no repository connected")?;
+    let items = state.store.items(repo.id)?;
+    let terms = text.trim().trim_start_matches('#');
+    Ok(
+        github::search_prs(&repo.owner, &repo.name, &repo.viewer, terms)?
+            .into_iter()
+            .map(|p| SearchHit {
+                item_id: items.iter().find(|i| i.number == p.number).map(|i| i.id),
+                number: p.number,
+                title: p.title,
+                author: p.author,
+                is_draft: p.is_draft,
+                updated_at: p.updated_at,
+            })
+            .collect(),
+    )
+}
+
+/// Adds PR `number` to the Inbox (tracked) and returns its work item id.
+pub fn track(state: &AppState, number: i64) -> Result<i64, String> {
+    let repo = state
+        .store
+        .active_repo()?
+        .ok_or("no repository connected")?;
+    let pr = github::prs_by_number(&repo.owner, &repo.name, &repo.viewer, &[number])?
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("PR #{number} not found"))?;
+    let role = crate::poller::role_of(&pr, &repo.viewer, &[]);
+    state.store.track(
+        repo.id,
+        &PolledPr {
+            number,
+            role,
+            open: pr.state == "OPEN",
+            snapshot: serde_json::to_value(&pr).unwrap_or_default(),
+        },
+    )
+}
+
+pub fn conversation(state: &AppState, id: i64) -> Result<github::Conversation, String> {
+    let (item, repo) = item_repo(state, id)?;
+    github::conversation(&repo.owner, &repo.name, item.number)
+}
+
 // --- review -------------------------------------------------------------------------
+
+/// Where the review reads from: the item's worktree, or (without one) the main clone with
+/// the PR head fetched to `refs/ariekei/pull/<N>/head`.
+fn review_dir(item: &WorkItem, repo: &Repo) -> PathBuf {
+    item.worktree_path
+        .clone()
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| repo.path.clone())
+}
+
+use crate::worktree::pull_ref;
+
+/// Fetches the PR head and its base branch into the main clone, for reviewing without a
+/// worktree. Returns the head commit.
+pub fn fetch_pr(state: &AppState, id: i64) -> Result<String, String> {
+    let (item, repo) = item_repo(state, id)?;
+    let pr = summary(&item)?;
+    worktree::fetch_pr_head(&repo.path, &repo.base_remote, item.number, &pr.base_ref)
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewCommit {
+    #[serde(flatten)]
+    pub commit: git::Commit,
+    /// Newer than the user's review marker.
+    pub after_review: bool,
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewState {
-    pub worktree: String,
-    /// The commit the review diff starts from.
-    pub marker: String,
-    /// "reviewed" when the user marked it, "base" for the PR's merge base.
-    pub marker_kind: &'static str,
+    /// "worktree" (diffs reach the working tree) or "ref" (the fetched PR head).
+    pub mode: &'static str,
+    pub dir: String,
+    /// Merge base of the head and the PR's base branch: "all changes" start here.
+    pub base: String,
+    pub base_ref: String,
+    /// The commit the user marked as reviewed, if it still exists.
+    pub reviewed: Option<String>,
+    /// HEAD of the worktree, or the fetched PR head.
     pub head: String,
-    pub commits: Vec<git::Commit>,
+    /// The PR's head commit on GitHub (line comments are made against it).
+    pub pr_head: String,
+    /// All commits of the PR (base..head), newest first.
+    pub commits: Vec<ReviewCommit>,
     pub dirty: bool,
+    /// The viewer wrote this PR (GitHub does not let them approve it).
+    pub own: bool,
 }
 
 pub fn review_state(state: &AppState, id: i64) -> Result<ReviewState, String> {
     let (item, repo) = item_repo(state, id)?;
-    let cwd = worktree_of(&item)?;
     let pr = summary(&item)?;
-    let head = git::head(&cwd)?;
-    let (marker, marker_kind) = match reviewed_marker(&cwd, &item) {
-        Some(sha) => (sha, "reviewed"),
-        None => (
-            git::merge_base(
-                &cwd,
-                "HEAD",
-                &format!("{}/{}", repo.base_remote, pr.base_ref),
-            )
-            .unwrap_or_else(|_| head.clone()),
-            "base",
-        ),
+    let worktree = item.worktree_path.clone().filter(|p| p.exists());
+    let dir = review_dir(&item, &repo);
+    let head = match &worktree {
+        Some(w) => git::head(w)?,
+        None => git::git_str(&dir, &["rev-parse", &pull_ref(item.number)])
+            .map_err(|_| "the PR head is not fetched yet".to_owned())?,
     };
+    let base = git::merge_base(
+        &dir,
+        &head,
+        &format!("{}/{}", repo.base_remote, pr.base_ref),
+    )
+    .unwrap_or_else(|_| head.clone());
+    let reviewed = reviewed_marker(&dir, &item);
+    let after: Vec<String> = match &reviewed {
+        Some(r) => git::commits_between(&dir, r, &head)?
+            .into_iter()
+            .map(|c| c.sha)
+            .collect(),
+        None => vec![],
+    };
+    let commits = git::commits_between(&dir, &base, &head)?
+        .into_iter()
+        .map(|c| ReviewCommit {
+            after_review: after.contains(&c.sha),
+            commit: c,
+        })
+        .collect();
     Ok(ReviewState {
-        worktree: cwd.to_string_lossy().into_owned(),
-        commits: git::commits_since(&cwd, &marker)?,
-        dirty: git::is_dirty(&cwd)?,
-        marker,
-        marker_kind,
+        mode: if worktree.is_some() {
+            "worktree"
+        } else {
+            "ref"
+        },
+        dir: dir.to_string_lossy().into_owned(),
+        dirty: worktree
+            .as_deref()
+            .map(git::is_dirty)
+            .transpose()?
+            .unwrap_or(false),
+        own: pr.author.eq_ignore_ascii_case(&repo.viewer),
+        base,
+        base_ref: pr.base_ref,
+        reviewed,
+        pr_head: pr.head_sha,
         head,
+        commits,
     })
 }
 
-/// Marks HEAD as reviewed. Also kept as `refs/ariekei/reviewed/pr-<N>` in the clone so the
-/// commit stays reachable when the agent rebases or amends.
+/// Marks the reviewed head (worktree HEAD or fetched PR head) as reviewed. Also kept as
+/// `refs/ariekei/reviewed/pr-<N>` in the clone so the commit stays reachable when the
+/// agent rebases or amends.
 pub fn mark_reviewed(state: &AppState, id: i64) -> Result<String, String> {
     let (item, repo) = item_repo(state, id)?;
-    let cwd = worktree_of(&item)?;
-    let head = git::head(&cwd)?;
+    let head = review_state(state, id)?.head;
     git(
         &repo.path,
         &[
@@ -302,13 +435,23 @@ pub fn mark_reviewed(state: &AppState, id: i64) -> Result<String, String> {
     Ok(head)
 }
 
+/// `to` is a commit, or `None` for the working tree (only with a worktree).
+fn review_target(item: &WorkItem, repo: &Repo, to: Option<&str>) -> Result<PathBuf, String> {
+    let dir = review_dir(item, repo);
+    if to.is_none() && item.worktree_path.as_deref().is_none_or(|p| !p.exists()) {
+        return Err("without a worktree, a review needs a commit to compare to".into());
+    }
+    Ok(dir)
+}
+
 pub fn review_files(
     state: &AppState,
     id: i64,
     from: &str,
     to: Option<&str>,
 ) -> Result<Vec<git::ChangedFile>, String> {
-    git::changed_files(&worktree_of(&state.store.item(id)?)?, from, to)
+    let (item, repo) = item_repo(state, id)?;
+    git::changed_files(&review_target(&item, &repo, to)?, from, to)
 }
 
 pub fn review_file(
@@ -318,7 +461,92 @@ pub fn review_file(
     to: Option<&str>,
     path: &str,
 ) -> Result<git::FileDiff, String> {
-    git::file_diff(&worktree_of(&state.store.item(id)?)?, from, to, path)
+    let (item, repo) = item_repo(state, id)?;
+    git::file_diff(&review_target(&item, &repo, to)?, from, to, path)
+}
+
+/// Line ranges per path, as `(first, last)` lines of the new side.
+pub type CommentRanges = Vec<(String, Vec<(u32, u32)>)>;
+
+/// For each path, the line ranges (new side) of the PR diff that GitHub accepts line
+/// comments on: its hunks with GitHub's three lines of context.
+pub fn comment_ranges(
+    state: &AppState,
+    id: i64,
+    paths: &[String],
+) -> Result<CommentRanges, String> {
+    let review = review_state(state, id)?;
+    let dir = PathBuf::from(&review.dir);
+    let head = if git::commit_exists(&dir, &review.pr_head) {
+        review.pr_head
+    } else {
+        review.head
+    };
+    paths
+        .iter()
+        .map(|path| {
+            let diff = git::git_str(
+                &dir,
+                &[
+                    "diff",
+                    "-U3",
+                    "--no-color",
+                    "--no-ext-diff",
+                    "--no-renames",
+                    &review.base,
+                    &head,
+                    "--",
+                    path,
+                ],
+            )?;
+            let ranges = git::parse_hunks(&diff)
+                .into_iter()
+                .filter(|h| h.new_lines > 0)
+                .map(|h| (h.new_start, h.new_start + h.new_lines - 1))
+                .collect();
+            Ok((path.clone(), ranges))
+        })
+        .collect()
+}
+
+/// Submits a review on GitHub. `comments` must already be on lines of the PR diff
+/// (see `comment_ranges`); everything else belongs in `body`.
+pub fn submit_review(
+    state: &AppState,
+    id: i64,
+    event: &str,
+    body: &str,
+    comments: &[github::LineComment],
+) -> Result<String, String> {
+    let (item, repo) = item_repo(state, id)?;
+    if !matches!(event, "COMMENT" | "APPROVE" | "REQUEST_CHANGES") {
+        return Err(format!("unknown review event {event}"));
+    }
+    let pr = summary(&item)?;
+    let payload = github::review_payload(&pr.head_sha, event, body, comments);
+    let url = github::submit_review(&repo.owner, &repo.name, item.number, &payload)?;
+    state.poller.refresh();
+    Ok(url)
+}
+
+pub fn reply_comment(state: &AppState, id: i64, comment_id: i64, body: &str) -> Result<(), String> {
+    let (item, repo) = item_repo(state, id)?;
+    github::reply(&repo.owner, &repo.name, item.number, comment_id, body)?;
+    state.poller.refresh();
+    Ok(())
+}
+
+pub fn post_comment(state: &AppState, id: i64, body: &str) -> Result<(), String> {
+    let (item, repo) = item_repo(state, id)?;
+    github::comment_on(&repo.owner, &repo.name, item.number, body)?;
+    state.poller.refresh();
+    Ok(())
+}
+
+pub fn resolve_thread(state: &AppState, thread_id: &str, resolved: bool) -> Result<(), String> {
+    github::resolve_thread(thread_id, resolved)?;
+    state.poller.refresh();
+    Ok(())
 }
 
 /// Writes a file edited in the review view. `path` must stay inside the worktree.

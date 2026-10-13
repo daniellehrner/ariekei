@@ -2,6 +2,7 @@
 //! (or right away when asked) and stores the result.
 
 use crate::github::{self, PrSummary};
+use crate::store::PolledPr;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
@@ -51,23 +52,48 @@ fn run(app: AppHandle, wake: Receiver<()>) {
     }
 }
 
-/// One poll of the active repo. Public so a command can run it synchronously.
+/// One poll of the active repo: the viewer's PRs, PRs requesting their review, and the
+/// PRs they track (by number, so merged/closed ones get their final state).
 pub fn poll(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<crate::AppState>();
     let Some(repo) = state.store.active_repo()? else {
         return Ok(());
     };
-    let prs = github::open_prs(&repo.owner, &repo.name, &repo.viewer)?;
+    let (o, n, me) = (&repo.owner, &repo.name, &repo.viewer);
+    let mine = github::search_prs(o, n, me, &format!("author:{me}"))?;
+    let requested = github::search_prs(o, n, me, &format!("review-requested:{me}"))?;
+    let known: Vec<i64> = mine.iter().chain(&requested).map(|p| p.number).collect();
+    let tracked: Vec<i64> = state
+        .store
+        .tracked_numbers(repo.id)?
+        .into_iter()
+        .filter(|t| !known.contains(t))
+        .collect();
+    let others = github::prs_by_number(o, n, me, &tracked)?;
+
+    let mut prs: Vec<(PrSummary, &'static str)> = vec![];
+    for pr in mine.into_iter().chain(requested).chain(others) {
+        if prs.iter().any(|(p, _)| p.number == pr.number) {
+            continue;
+        }
+        let role = role_of(&pr, me, &known);
+        prs.push((pr, role));
+    }
 
     let before = state.store.items(repo.id)?;
-    let snapshots: Vec<(i64, serde_json::Value)> = prs
+    let polled: Vec<PolledPr> = prs
         .iter()
-        .map(|p| (p.number, serde_json::to_value(p).unwrap_or_default()))
+        .map(|(p, role)| PolledPr {
+            number: p.number,
+            role,
+            open: p.state == "OPEN",
+            snapshot: serde_json::to_value(p).unwrap_or_default(),
+        })
         .collect();
-    state.store.sync_open_prs(repo.id, &snapshots)?;
+    state.store.sync_prs(repo.id, &polled)?;
 
     for item in state.store.items(repo.id)? {
-        let Some(pr) = prs.iter().find(|p| p.number == item.number) else {
+        let Some((pr, _)) = prs.iter().find(|(p, _)| p.number == item.number) else {
             continue;
         };
         let old = before.iter().find(|b| b.id == item.id);
@@ -81,4 +107,16 @@ pub fn poll(app: &AppHandle) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Why a PR is in the Inbox. `requested` holds the numbers found by the author and
+/// review-requested queries; a PR in there that the viewer did not write was requested.
+pub fn role_of(pr: &PrSummary, viewer: &str, requested: &[i64]) -> &'static str {
+    if pr.author.eq_ignore_ascii_case(viewer) {
+        "author"
+    } else if requested.contains(&pr.number) {
+        "requested"
+    } else {
+        "other"
+    }
 }

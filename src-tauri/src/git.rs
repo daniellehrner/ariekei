@@ -308,14 +308,14 @@ pub struct Commit {
     pub date: String,
 }
 
-/// Commits reachable from HEAD but not from `since`, newest first.
-pub fn commits_since(cwd: &Path, since: &str) -> Result<Vec<Commit>, String> {
+/// Commits reachable from `to` but not from `from`, newest first.
+pub fn commits_between(cwd: &Path, from: &str, to: &str) -> Result<Vec<Commit>, String> {
     let out = git_str(
         cwd,
         &[
             "log",
             "--format=%H%x1f%s%x1f%an%x1f%aI",
-            &format!("{since}..HEAD"),
+            &format!("{from}..{to}"),
         ],
     )?;
     Ok(out
@@ -425,7 +425,7 @@ pub mod tests {
             }]
         );
 
-        let commits = commits_since(p, &first).unwrap();
+        let commits = commits_between(p, &first, "HEAD").unwrap();
         assert_eq!(
             commits
                 .iter()

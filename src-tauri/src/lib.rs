@@ -169,6 +169,74 @@ async fn send_pr_feedback(app: tauri::AppHandle, id: i64) -> Res<()> {
     .await
 }
 
+// --- other people's PRs and the PR conversation ---
+
+#[tauri::command]
+async fn search_prs(app: tauri::AppHandle, text: String) -> Res<Vec<workitem::SearchHit>> {
+    blocking(app, move |s| workitem::search(s, &text)).await
+}
+
+/// Adds a PR (e.g. a search result) to the Inbox; returns its work item id.
+#[tauri::command]
+async fn track_pr(app: tauri::AppHandle, number: i64) -> Res<i64> {
+    blocking(app, move |s| workitem::track(s, number)).await
+}
+
+#[tauri::command]
+async fn pr_conversation(app: tauri::AppHandle, id: i64) -> Res<github::Conversation> {
+    blocking(app, move |s| workitem::conversation(s, id)).await
+}
+
+/// Fetches the PR head into the clone for reviewing without a worktree.
+#[tauri::command]
+async fn fetch_pr(app: tauri::AppHandle, id: i64) -> Res<String> {
+    blocking(app, move |s| workitem::fetch_pr(s, id)).await
+}
+
+#[tauri::command]
+async fn comment_ranges(
+    app: tauri::AppHandle,
+    id: i64,
+    paths: Vec<String>,
+) -> Res<workitem::CommentRanges> {
+    blocking(app, move |s| workitem::comment_ranges(s, id, &paths)).await
+}
+
+#[tauri::command]
+async fn submit_review(
+    app: tauri::AppHandle,
+    id: i64,
+    event: String,
+    body: String,
+    comments: Vec<github::LineComment>,
+) -> Res<String> {
+    blocking(app, move |s| {
+        workitem::submit_review(s, id, &event, &body, &comments)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn reply_comment(app: tauri::AppHandle, id: i64, comment_id: i64, body: String) -> Res<()> {
+    blocking(app, move |s| {
+        workitem::reply_comment(s, id, comment_id, &body)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn post_comment(app: tauri::AppHandle, id: i64, body: String) -> Res<()> {
+    blocking(app, move |s| workitem::post_comment(s, id, &body)).await
+}
+
+#[tauri::command]
+async fn resolve_thread(app: tauri::AppHandle, thread_id: String, resolved: bool) -> Res<()> {
+    blocking(app, move |s| {
+        workitem::resolve_thread(s, &thread_id, resolved)
+    })
+    .await
+}
+
 // --- review ---
 
 #[tauri::command]
@@ -302,6 +370,15 @@ pub fn run() {
             review_files,
             review_file,
             save_file,
+            search_prs,
+            track_pr,
+            pr_conversation,
+            fetch_pr,
+            comment_ranges,
+            submit_review,
+            reply_comment,
+            post_comment,
+            resolve_thread,
             self_rss_kib,
         ])
         .build(tauri::generate_context!())

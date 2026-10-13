@@ -9,6 +9,9 @@ pub struct Row {
     pub id: i64,
     pub number: i64,
     pub title: String,
+    pub author: String,
+    /// "author", "requested" or "other" (see `store`).
+    pub role: String,
     pub url: String,
     pub is_draft: bool,
     pub open: bool,
@@ -74,6 +77,8 @@ mod tests {
             id: number,
             number,
             title: String::new(),
+            author: String::new(),
+            role: "author".into(),
             url: String::new(),
             is_draft: false,
             open: true,
