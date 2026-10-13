@@ -193,6 +193,32 @@ try:
     review_post = [w for w in writes() if w.get("post", "").endswith("/pulls/43/reviews")]
     print("[submit] request:", json.dumps(review_post[-1]["body"]) if review_post else None, "| expected commit:", sha43)
 
+    # More room for the diff: collapse the Inbox, the commit list and the side panel.
+    width = lambda css: s.js("return Math.round(document.querySelector(arguments[0]).getBoundingClientRect().width)", css)
+    before = (width(".item"), width(".review .main"))
+    print("[layout] scope list collapsed by default:", s.js("return document.querySelectorAll('.scopes li').length"), "entries:",
+          s.js("return [...document.querySelectorAll('.scopes li')].map(l => l.textContent.trim())"))
+    s.click(s.wait("[data-toggle='commits']"))
+    print("[layout] expanded:", s.js("return [...document.querySelectorAll('.scopes li')].map(l => l.textContent.trim())"))
+    s.click(s.wait("[data-toggle='commits']"))
+    s.click(s.wait(".inbox header button[aria-label='Hide the Inbox']"))
+    s.wait(".inbox.collapsed", timeout=5)
+    s.click(s.wait("[data-toggle='side']"))
+    time.sleep(0.5)
+    after = (width(".item"), width(".review .main"))
+    print(f"[layout] work item width {before[0]} -> {after[0]} px, diff area {before[1]} -> {after[1]} px",
+          "| attention dots:", s.js("return document.querySelectorAll('.inbox.collapsed .pip').length"))
+    first = s.js("return document.querySelector('.toolbar .current')?.textContent.trim()")
+    s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: ']', bubbles: true }))")
+    time.sleep(0.5)
+    print("[layout] file before/after ']':", first, "->", s.js("return document.querySelector('.toolbar .current')?.textContent.trim()"))
+    s.screenshot(os.path.join(shots, "r5-wide.png"))
+    # Ctrl+B brings the Inbox back (the state is saved for the next launch).
+    s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }))")
+    s.wait(".inbox:not(.collapsed)", timeout=5)
+    s.click(s.wait("[data-toggle='side']"))
+    print("[layout] Ctrl+B restored the Inbox; side panel shown again:", bool(s.find(".review .side")))
+
     # Own PR, also without a worktree: after Mark reviewed, "All changes" is still there.
     select_row(s, 42)
     s.wait(".overview h2", timeout=30)

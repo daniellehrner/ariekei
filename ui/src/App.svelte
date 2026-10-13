@@ -11,6 +11,23 @@
   let rows: Row[] = $state([]);
   let selected: number | null = $state(null);
   let pollError: string | null = $state(null);
+  // The Inbox can collapse to a thin strip, leaving the screen to the work item.
+  let inboxCollapsed = $state(false);
+
+  function toggleInbox() {
+    inboxCollapsed = !inboxCollapsed;
+    api.setUiSetting("inboxCollapsed", String(inboxCollapsed));
+  }
+
+  // Ctrl+B (Cmd+B) toggles the Inbox, except in the agent terminal, where the key belongs
+  // to Claude Code.
+  function onKeydown(e: KeyboardEvent) {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b") {
+      if ((e.target as Element | null)?.closest?.(".xterm")) return;
+      e.preventDefault();
+      toggleInbox();
+    }
+  }
 
   const current = $derived(rows.find((r) => r.id === selected) ?? null);
 
@@ -47,6 +64,7 @@
       repo = r;
       if (r) {
         selected = await api.selectedItem();
+        inboxCollapsed = (await api.uiSetting("inboxCollapsed")) === "true";
         reload();
       }
     });
@@ -54,11 +72,13 @@
   });
 </script>
 
+<svelte:window onkeydown={onKeydown} />
+
 {#if repo === null}
   <Connect onconnected={(r) => { repo = r; reload(); }} />
 {:else if repo}
   <div class="app">
-    <Inbox {repo} {rows} {selected} error={pollError} onselect={select} onrefresh={() => api.refresh()} onadded={reload} />
+    <Inbox {repo} {rows} {selected} error={pollError} collapsed={inboxCollapsed} ontoggle={toggleInbox} onselect={select} onrefresh={() => api.refresh()} onadded={reload} />
     {#if current}
       <WorkItem row={current} onchanged={reload} />
     {:else}

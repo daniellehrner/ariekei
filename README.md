@@ -79,3 +79,6 @@ issues and records every write instead of sending it. Test-only environment vari
 | `ARIEKEI_IDLE_SECS` | Close idle, unwatched agents after N seconds instead of 15 minutes |
 | `ARIEKEI_CLAUDE_ARGS` | Extra arguments for `claude` |
 | `ARIEKEI_CLAUDE` | Use this `claude` binary |
+
+Screenshots via WebKitWebDriver are slow under Xvfb (40 s or more each); `E2E_SHOTS=0` skips
+them. The scenarios check the DOM, not the pictures.

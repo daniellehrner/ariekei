@@ -6,6 +6,8 @@
     rows,
     selected,
     error,
+    collapsed,
+    ontoggle,
     onselect,
     onrefresh,
     onadded,
@@ -14,6 +16,8 @@
     rows: Row[];
     selected: number | null;
     error: string | null;
+    collapsed: boolean;
+    ontoggle: () => void;
     onselect: (id: number) => void;
     onrefresh: () => void;
     /// A PR was added to the Inbox (from search).
@@ -96,10 +100,22 @@
   }
 </script>
 
+{#if collapsed}
+  <aside class="inbox collapsed">
+    <button class="expand" onclick={ontoggle} title="Show the Inbox (Ctrl+B)" aria-label="Show the Inbox">»</button>
+    <!-- Items that need attention stay visible as dots. -->
+    {#each rows.filter((r) => r.attention) as row (row.id)}
+      <button class="pip {row.agent ?? ''}" class:active={row.id === selected} class:bad={row.ci === "FAILURE" || row.ci === "ERROR"}
+        onclick={() => onselect(row.id)} title="#{row.number} {row.title} — {row.attention}" aria-label="#{row.number}: {row.attention}"
+        data-pip={row.number}>●</button>
+    {/each}
+  </aside>
+{:else}
 <aside class="inbox">
   <header>
     <span class="repo" title={repo.path}>{repo.owner}/{repo.name}</span>
     <button onclick={onrefresh} title="Refresh from GitHub" aria-label="Refresh">↻</button>
+    <button onclick={ontoggle} title="Hide the Inbox (Ctrl+B)" aria-label="Hide the Inbox">«</button>
   </header>
   <div class="search">
     <input
@@ -167,8 +183,15 @@
     </div>
   {/if}
 </aside>
+{/if}
 
 <style>
+  .inbox.collapsed { width: 36px; align-items: center; padding-top: 8px; gap: 6px; }
+  .expand { padding: 2px 8px; margin-bottom: 6px; }
+  .pip { border: 0; background: none; padding: 2px; font-size: 12px; color: var(--accent); }
+  .pip.waitingForPermission { color: var(--warn); }
+  .pip.bad { color: var(--bad); }
+  .pip.active { outline: 1px solid var(--border); border-radius: 4px; }
   .inbox { width: 340px; flex-shrink: 0; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--sidebar); min-height: 0; }
   header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
   .repo { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

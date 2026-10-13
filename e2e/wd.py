@@ -1,6 +1,7 @@
 """Minimal W3C WebDriver client (stdlib only) for driving the Tauri app via tauri-driver."""
 
 import base64
+import os
 import json
 import time
 import urllib.error
@@ -71,9 +72,19 @@ class Session:
     def screenshot(self, path):
         """WebKitWebDriver takes 40+ s per screenshot under Xvfb (an X capture of the display
         shows only black: the window is not drawn there under automation), hence the long
-        timeout. Scenarios check the DOM; screenshots are for looking at the result."""
+        timeout. Scenarios check the DOM; screenshots are for looking at the result.
+        E2E_SHOTS=0 skips them."""
+        if os.environ.get("E2E_SHOTS") == "0":
+            return False
+        try:
+            data = base64.b64decode(self._call("GET", f"/session/{self.id}/screenshot", timeout=300))
+        except (TimeoutError, OSError, WebDriverError) as e:
+            # A missing picture must not fail a scenario; the DOM checks are what count.
+            print(f"   (screenshot {os.path.basename(path)} skipped: {e})")
+            return False
         with open(path, "wb") as f:
-            f.write(base64.b64decode(self._call("GET", f"/session/{self.id}/screenshot", timeout=300)))
+            f.write(data)
+        return True
 
     def quit(self):
         try:

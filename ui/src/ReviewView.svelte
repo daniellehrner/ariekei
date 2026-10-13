@@ -7,6 +7,9 @@
     scope: string;
     file: string | null;
     comments: DraftComment[];
+    // Layout: the commit list expanded, the whole side panel (scopes + files) hidden.
+    commitsOpen?: boolean;
+    sideHidden?: boolean;
   }
 </script>
 
@@ -159,6 +162,29 @@
     view.scope = value;
   }
 
+  const scopeLabel = $derived.by(() => {
+    if (scope === "all") return `All changes vs ${review?.baseRef ?? "base"}`;
+    if (scope === "review") return "Since your review";
+    const c = review?.commits.find((c) => c.sha === scope);
+    return c ? `${short(c.sha)} ${c.subject}` : scope;
+  });
+
+  const fileIndex = $derived(files.findIndex((f) => f.path === view.file));
+  function stepFile(delta: number) {
+    if (!files.length) return;
+    const next = (Math.max(fileIndex, 0) + delta + files.length) % files.length;
+    view.file = files[next].path;
+  }
+
+  // [ and ] step through the files, except while typing (fields, the editable diff side).
+  function onKeydown(e: KeyboardEvent) {
+    if (e.ctrlKey || e.metaKey || e.altKey || (e.key !== "[" && e.key !== "]")) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest?.("input, textarea, [contenteditable='true'], .xterm")) return;
+    e.preventDefault();
+    stepFile(e.key === "]" ? 1 : -1);
+  }
+
   async function markReviewed() {
     if (review?.dirty && !confirmMark) {
       confirmMark = true;
@@ -247,8 +273,13 @@
   const linesOf = (c: DraftComment) => (c.fromLine === c.toLine ? `${c.fromLine}` : `${c.fromLine}-${c.toLine}`);
 </script>
 
+<svelte:window onkeydown={onKeydown} />
+
 <section class="review" use:externalLinks>
   <header>
+    <button class="toggle" onclick={() => (view.sideHidden = !view.sideHidden)}
+      title={view.sideHidden ? "Show scopes and files" : "Hide scopes and files (more room for the diff)"}
+      aria-label={view.sideHidden ? "Show scopes and files" : "Hide scopes and files"} data-toggle="side">{view.sideHidden ? "»" : "«"}</button>
     {#if review}
       <span class="marker">
         {review.mode === "ref" ? "PR head" : "Worktree"} {short(review.head)} · {review.commits.length} commit{review.commits.length === 1 ? "" : "s"} vs {review.baseRef}
@@ -269,20 +300,32 @@
   {#if error}<p class="error">{error}</p>{/if}
 
   <div class="body">
+    {#if !view.sideHidden}
     <nav class="side">
-      <h3>Scope</h3>
+      <h3>
+        <button class="section" onclick={() => (view.commitsOpen = !view.commitsOpen)} aria-expanded={!!view.commitsOpen} data-toggle="commits">
+          {view.commitsOpen ? "▾" : "▸"} Scope <span class="count">{review ? `${review.commits.length} commit${review.commits.length === 1 ? "" : "s"}` : ""}</span>
+        </button>
+      </h3>
       <ul class="scopes">
-        <li><button class:active={scope === "all"} onclick={() => setScope("all")} data-scope="all">All changes vs {review?.baseRef ?? "base"}</button></li>
-        {#if review?.reviewed}
-          <li><button class:active={scope === "review"} onclick={() => setScope("review")} data-scope="review">Since your review</button></li>
+        {#if view.commitsOpen}
+          <li><button class:active={scope === "all"} onclick={() => setScope("all")} data-scope="all">All changes vs {review?.baseRef ?? "base"}</button></li>
+          {#if review?.reviewed}
+            <li><button class:active={scope === "review"} onclick={() => setScope("review")} data-scope="review">Since your review</button></li>
+          {/if}
+          {#each review?.commits ?? [] as c (c.sha)}
+            <li>
+              <button class:active={scope === c.sha} onclick={() => setScope(c.sha)} title="{c.subject}&#10;{c.author}, {c.date}">
+                <span class="sha" class:new={c.afterReview}>{short(c.sha)}</span> {c.subject}
+              </button>
+            </li>
+          {/each}
+        {:else}
+          <!-- Collapsed: only the active scope, plus quick switches between the two main ones. -->
+          <li><button class="active" onclick={() => (view.commitsOpen = true)} title="Show all scopes and commits">{scopeLabel}</button></li>
+          {#if scope !== "all"}<li><button onclick={() => setScope("all")} data-scope="all">All changes vs {review?.baseRef ?? "base"}</button></li>{/if}
+          {#if review?.reviewed && scope !== "review"}<li><button onclick={() => setScope("review")} data-scope="review">Since your review</button></li>{/if}
         {/if}
-        {#each review?.commits ?? [] as c (c.sha)}
-          <li>
-            <button class:active={scope === c.sha} onclick={() => setScope(c.sha)} title="{c.subject}&#10;{c.author}, {c.date}">
-              <span class="sha" class:new={c.afterReview}>{short(c.sha)}</span> {c.subject}
-            </button>
-          </li>
-        {/each}
       </ul>
       <h3>Files</h3>
       <ul class="files">
@@ -297,9 +340,15 @@
         {/each}
       </ul>
     </nav>
+    {/if}
 
     <div class="main">
       <div class="toolbar">
+        {#if view.sideHidden && files.length}
+          <button onclick={() => stepFile(-1)} title="Previous file ([)" aria-label="Previous file">‹</button>
+          <span class="current" title={view.file ?? ""}>{view.file ?? ""} <span class="muted">{fileIndex + 1}/{files.length} · {scopeLabel}</span></span>
+          <button onclick={() => stepFile(1)} title="Next file (])" aria-label="Next file">›</button>
+        {/if}
         {#if editedPath}<button class="primary" onclick={save}>Save {editedPath}</button>{/if}
         {#if selection && view.file}
           <span class="sel">Lines {selection.fromLine}{selection.toLine !== selection.fromLine ? `–${selection.toLine}` : ""}:</span>
@@ -363,6 +412,11 @@
   .review { display: flex; flex-direction: column; height: 100%; min-height: 0; }
   header { display: flex; gap: 10px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
   .marker { font-size: 0.9em; }
+  .toggle { padding: 2px 8px; }
+  .side h3 .section { width: auto; border: 0; background: none; padding: 0; font: inherit; text-transform: inherit; letter-spacing: inherit; color: inherit; }
+  .count { text-transform: none; letter-spacing: 0; font-weight: 400; }
+  .current { font-family: var(--mono); font-size: 0.85em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 50%; }
+  .muted { color: var(--muted); }
   .warn { color: var(--warn); font-size: 0.85em; }
   .notice { color: var(--ok); font-size: 0.85em; margin-left: auto; }
   .notice a { color: var(--accent); }

@@ -91,6 +91,17 @@ fn set_active_item(state: State<'_, AppState>, id: Option<i64>) -> Res<()> {
     }
 }
 
+/// UI preferences (e.g. whether the Inbox is collapsed), kept in the database.
+#[tauri::command]
+fn ui_setting(state: State<'_, AppState>, key: String) -> Res<Option<String>> {
+    state.store.setting(&format!("ui.{key}"))
+}
+
+#[tauri::command]
+fn set_ui_setting(state: State<'_, AppState>, key: String, value: String) -> Res<()> {
+    state.store.set_setting(&format!("ui.{key}"), &value)
+}
+
 #[tauri::command]
 fn selected_item(state: State<'_, AppState>) -> Res<Option<i64>> {
     Ok(state
@@ -322,6 +333,7 @@ pub fn run() {
         .init();
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -377,6 +389,8 @@ pub fn run() {
             mark_seen,
             set_active_item,
             selected_item,
+            ui_setting,
+            set_ui_setting,
             ui_state,
             set_ui_state,
             prepare_item,
