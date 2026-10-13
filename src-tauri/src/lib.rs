@@ -1,63 +1,77 @@
-mod agent;
+mod claude;
 mod git;
-mod node;
+mod hooks;
 mod sessions;
+mod terminal;
 
-use agent::{AgentLaunch, AgentManager, Started};
-use std::path::PathBuf;
-use tauri::{Manager, State};
+use portable_pty::PtySize;
+use tauri::ipc::{Channel, InvokeResponseBody};
+use tauri::{Manager, RunEvent, State};
+use terminal::{Launch, Opened, TerminalManager};
 
 pub struct AppState {
-    agents: AgentManager,
+    terminals: TerminalManager,
     sessions: sessions::SessionStore,
 }
 
-/// Node 22+ (detected) and the pinned ACP adapter. The adapter path is overridable
-/// via env and defaults to this checkout's node_modules until packaging (M1+).
-fn agent_launch() -> Result<AgentLaunch, String> {
-    let node = node::find()?;
-    let adapter = std::env::var_os("ARIEKEI_ACP_ADAPTER")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js")
-        });
-    Ok(AgentLaunch { node, adapter })
+fn pty_size(cols: u16, rows: u16) -> PtySize {
+    PtySize {
+        cols: cols.max(2),
+        rows: rows.max(2),
+        ..PtySize::default()
+    }
 }
 
-/// Starts the agent for a worktree, loading its previous session if there is one.
+/// Canonical key for a worktree path; fails if it is not a git worktree.
 #[tauri::command]
-async fn agent_start(state: State<'_, AppState>, cwd: String) -> Result<Started, String> {
-    let cwd = std::fs::canonicalize(&cwd).map_err(|e| format!("{cwd}: {e}"))?;
-    let key = cwd.to_string_lossy().into_owned();
-    let resume = state.sessions.get(&key);
-    let started = state.agents.start(key.clone(), cwd, resume).await?;
-    state.sessions.put(&key, &started.session_id)?;
-    Ok(started)
+fn worktree_key(path: String) -> Result<String, String> {
+    terminal::worktree_key(&path)
 }
 
+/// Attaches the view to the work item's terminal, starting (or resuming) `claude`.
 #[tauri::command]
-fn agent_prompt(state: State<'_, AppState>, key: String, text: String) -> Result<(), String> {
-    state.agents.prompt(&key, text)
-}
-
-#[tauri::command]
-fn agent_cancel(state: State<'_, AppState>, key: String) -> Result<(), String> {
-    state.agents.cancel(&key)
-}
-
-#[tauri::command]
-fn agent_stop(state: State<'_, AppState>, key: String) {
-    state.agents.stop(&key)
-}
-
-#[tauri::command]
-fn agent_permission(
+fn term_open(
     state: State<'_, AppState>,
-    request_id: String,
-    option_id: Option<String>,
+    cwd: String,
+    cols: u16,
+    rows: u16,
+    output: Channel<InvokeResponseBody>,
+) -> Result<Opened, String> {
+    let key = terminal::worktree_key(&cwd)?;
+    state
+        .terminals
+        .open(&state.sessions, key, pty_size(cols, rows), output)
+}
+
+#[tauri::command]
+fn term_detach(state: State<'_, AppState>, key: String) {
+    state.terminals.detach(&key)
+}
+
+#[tauri::command]
+fn term_write(state: State<'_, AppState>, key: String, data: String) -> Result<(), String> {
+    state.terminals.write(&key, data.as_bytes())
+}
+
+#[tauri::command]
+fn term_resize(
+    state: State<'_, AppState>,
+    key: String,
+    cols: u16,
+    rows: u16,
 ) -> Result<(), String> {
-    state.agents.answer_permission(&request_id, option_id)
+    state.terminals.resize(&key, pty_size(cols, rows))
+}
+
+#[tauri::command]
+fn term_close(state: State<'_, AppState>, key: String) {
+    state.terminals.close(&key)
+}
+
+/// Sends `text` to the agent as one message (e.g. review feedback).
+#[tauri::command]
+async fn agent_send(state: State<'_, AppState>, key: String, text: String) -> Result<(), String> {
+    state.terminals.send_to_agent(&key, &text)
 }
 
 #[tauri::command]
@@ -88,31 +102,52 @@ pub fn run() {
         )
         .init();
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
-            let launch = agent_launch();
+
+            let handle = app.handle().clone();
+            let hook_server =
+                hooks::HookServer::start(&data_dir, move |e| hooks::dispatch(&handle, e))?;
+            let launch = claude::find().map(|claude| Launch {
+                claude,
+                hooks_settings: hook_server.settings_path.clone(),
+                extra_args: std::env::var("ARIEKEI_CLAUDE_ARGS")
+                    .map(|a| a.split_whitespace().map(str::to_owned).collect())
+                    .unwrap_or_default(),
+            });
             match &launch {
-                Ok(l) => tracing::info!("agent launch: {l:?}"),
+                Ok(l) => tracing::info!("claude launch: {l:?}"),
                 Err(e) => tracing::warn!("agents unavailable: {e}"),
             }
             app.manage(AppState {
-                agents: AgentManager::new(app.handle().clone(), launch),
+                terminals: TerminalManager::new(app.handle().clone(), launch),
                 sessions: sessions::SessionStore::new(data_dir.join("sessions.json")),
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            agent_start,
-            agent_prompt,
-            agent_cancel,
-            agent_stop,
-            agent_permission,
+            worktree_key,
+            term_open,
+            term_detach,
+            term_write,
+            term_resize,
+            term_close,
+            agent_send,
             diff_files,
             diff_file,
             self_rss_kib,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Ariekei");
+        .build(tauri::generate_context!())
+        .expect("error while building Ariekei");
+
+    app.run(|app, event| {
+        if let RunEvent::Exit = event
+            && let Some(state) = app.try_state::<AppState>()
+        {
+            // Conversations stay resumable; only the processes end.
+            state.terminals.close_all();
+        }
+    });
 }

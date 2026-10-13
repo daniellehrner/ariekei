@@ -1,5 +1,9 @@
 # Phase 0 spike — results (2026-10-13)
 
+> **Superseded for the agent:** the ACP chat UI below was replaced by the embedded Claude
+> Code TUI; see [Agent integration v2](#agent-integration-v2-embedded-claude-code-tui).
+> The ACP findings are kept for the record.
+
 Stack under test: Tauri 2.12 (Rust core, WebKitGTK 2.52 on Linux) + Svelte 5 UI, Claude Code
 via ACP (`@agentclientprotocol/claude-agent-acp` 0.84.0, Rust `agent-client-protocol` 2.2.0).
 Measured on Linux (release build, driven headless under Xvfb via `tauri-driver`).
@@ -48,15 +52,61 @@ Quitting the app leaves no adapter processes behind (the ACP crate kills the pro
 8. **npm 10 resolver crash** (`edgesOut` null) with vitest 5's optional peers; vitest dropped for
    the spike. Revisit (npm 11 or pnpm) when adding UI tests in M1.
 
+## Agent integration v2: embedded Claude Code TUI
+
+Trying the ACP version on besu showed our own chat UI could not keep up with Claude Code
+(slash-command autocomplete, skills such as `/code-review`, plugins and their views). Decided:
+run the user's installed `claude` unmodified in an embedded terminal (xterm.js + PTY) and
+integrate around it. No IDE bridge. The ACP adapter and the Node 22 dependency are gone.
+
+How it works:
+- One PTY per work item (`portable-pty`), `claude --strict-mcp-config --settings
+  <claude-hooks.json> (--session-id <uuid> | --resume <uuid>)` in the worktree. Output is kept
+  in a 2 MB scrollback buffer so views detach/reattach losslessly.
+- Status comes from `http` hooks POSTing to a token-protected localhost endpoint, routed by
+  session id: UserPromptSubmit/PreToolUse/PostToolUse → working, PermissionRequest or
+  Notification `permission_prompt` → needs you, Stop or Notification `idle_prompt` → finished,
+  StopFailure → error, SessionEnd/exit → stopped. `ready` = first terminal output.
+- `agent_send` types a message as one bracketed paste followed by Enter.
+
+Verified (release build, Xvfb, `e2e/terminal_scenario.py`):
+
+| Check | Result |
+|---|---|
+| TUI in the worktree, slash commands | ✅ Claude Code v2.1.296 renders; `/code-rev` autocompletes `/code-review` |
+| Status from hooks only | ✅ working → needs you (permission dialog) → working → finished |
+| Permission prompt | ✅ answered in the TUI itself (Enter on "Yes") |
+| `agent_send` multi-line | ✅ two lines arrive as one prompt (bracketed paste + `\r` works) |
+| Switch items | ✅ earlier conversation still on screen after switching back |
+| Restart | ✅ `--resume` shows the earlier conversation; no `claude` left after quit |
+| MCP servers | ✅ none started (`--strict-mcp-config` alone is enough) |
+| User/project hooks | ✅ merge with ours: the user's `PreToolUse` hook `block-dev-tcp.sh` ran alongside Ariekei's http hook |
+| Memory | app 239 MB PSS idle; ~205 MB per agent (was ~345 MB with ACP); two agents 675 MB total |
+| Startup | first paint 0.3–0.5 s; TUI ready ~1–2 s after opening an item |
+
+Findings:
+1. **SessionStart ignores `http` hooks** (only `command` hooks run for it; SessionEnd and the
+   others accept `http`). Not needed: Ariekei chose the session id, and `ready` is derived from
+   the terminal's first output.
+2. **Parent-session env leaks in.** If Ariekei is started from inside a Claude Code session,
+   markers such as `CLAUDECODE` and `CLAUDE_CODE_CHILD_SESSION` make our `claude` a nested child
+   session ("Transcript saving is off"). Ariekei removes these markers from the PTY env.
+3. **Claude Code saves a transcript only after the first prompt.** A session that was opened but
+   never prompted cannot be resumed, so Ariekei records `started` (on UserPromptSubmit) and the
+   transcript path, and only uses `--resume` when that transcript exists.
+4. At quit, `claude`'s SessionEnd hook fails with ECONNREFUSED because the app's endpoint is
+   already gone. Harmless; noted in case it shows up in debug logs.
+5. The trust dialog did not appear for these worktrees; when it does, the user answers it in
+   the terminal (Ariekei does not edit `~/.claude.json`).
+
 ## What exists after the spike
 
-- `src-tauri/src/agent.rs` — ACP session manager: one adapter process per worktree, permission
-  requests parked until the UI answers (off the connection's event loop), prompt/cancel, status
-  events (`starting/ready/working/waitingForPermission/finished/error/stopped`).
+- `src-tauri/src/terminal.rs` — one PTY per worktree running `claude`, scrollback, attach/detach,
+  resume logic, parent-session env stripping, `agent_send`.
+- `src-tauri/src/hooks.rs` — hooks settings file, localhost hook endpoint, event → status mapping.
+- `src-tauri/src/claude.rs` — locates the `claude` binary; unit tests.
 - `src-tauri/src/git.rs` — changed files vs a base (incl. untracked) and file versions; unit tests.
-- `src-tauri/src/node.rs` — Node 22+ detection; unit tests.
-- `src-tauri/src/sessions.rs` — spike-only JSON map worktree → session id (SQLite in M1).
-- `src-tauri/examples/acp_probe.rs` — headless ACP probe (spawn, permission, kill, `session/load`).
-- `e2e/` — stdlib-only WebDriver client and the spike scenario (run via `tauri-driver` + Xvfb).
-- `ui/` — worktree list with agent status, agent panel (transcript, tool calls, plan, permission
-  prompt, cancel), review view (file list + CodeMirror merge view, base ref).
+- `src-tauri/src/sessions.rs` — spike-only JSON map worktree → session (id, started, transcript); SQLite in M1.
+- `e2e/` — stdlib-only WebDriver client and the terminal scenario (run via `tauri-driver` + Xvfb).
+- `ui/` — worktree list with hook-driven agent status, terminal panel (xterm.js, WebGL with DOM
+  fallback), review view (file list + CodeMirror merge view, base ref).

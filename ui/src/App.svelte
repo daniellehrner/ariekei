@@ -1,14 +1,14 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
-  import AgentPanel from "./AgentPanel.svelte";
   import DiffView from "./DiffView.svelte";
-  import { listenToAgents, sessions, startAgent, stop } from "./lib/agent.svelte";
+  import TerminalPanel from "./TerminalPanel.svelte";
+  import { agents, listenToAgents } from "./lib/agent.svelte";
 
   // Spike: the open worktrees and their view state live in localStorage.
   // In M1 these become work items in the SQLite store.
-  interface ItemView { tab: "agent" | "review"; base: string; selected: string | null }
-  const STORAGE = "ariekei.spike.v1";
+  interface ItemView { tab: "terminal" | "review"; base: string; selected: string | null }
+  const STORAGE = "ariekei.spike.v2";
 
   function load(): { items: string[]; active: string | null; views: Record<string, ItemView> } {
     try {
@@ -38,19 +38,8 @@
   const view = $derived(active ? views[active] : null);
 
   function activate(key: string) {
-    views[key] ??= { tab: "agent", base: "HEAD", selected: null };
+    views[key] ??= { tab: "terminal", base: "HEAD", selected: null };
     active = key;
-  }
-
-  async function ensureAgent(key: string) {
-    const status = sessions[key]?.status;
-    if (status && status !== "stopped" && status !== "error") return;
-    try {
-      error = null;
-      await startAgent(key);
-    } catch (e) {
-      error = String(e);
-    }
   }
 
   async function add(e: SubmitEvent) {
@@ -59,7 +48,7 @@
     if (!path) return;
     try {
       error = null;
-      const { key } = await startAgent(path);
+      const key = await invoke<string>("worktree_key", { path });
       if (!items.includes(key)) items.push(key);
       activate(key);
       newPath = "";
@@ -68,13 +57,11 @@
     }
   }
 
-  function select(key: string) {
-    activate(key);
-    ensureAgent(key);
-  }
+  // Selecting an item mounts its terminal, which starts or resumes its `claude`.
+  const select = activate;
 
   async function remove(key: string) {
-    await stop(key);
+    await invoke("term_close", { key });
     items = items.filter((k) => k !== key);
     delete views[key];
     if (active === key) active = items[0] ?? null;
@@ -95,10 +82,7 @@
   onMount(() => {
     listenToAgents();
     // Coming back to the app resumes the work item that was open.
-    if (active) {
-      activate(active);
-      ensureAgent(active);
-    }
+    if (active) activate(active);
     const poll = () => invoke<number | null>("self_rss_kib").then((k) => (rssMib = k ? Math.round(k / 1024) : null));
     poll();
     const timer = setInterval(poll, 5000);
@@ -111,7 +95,7 @@
     <h1>Ariekei <small>spike</small></h1>
     <ul>
       {#each items as key (key)}
-        {@const status = sessions[key]?.status ?? "stopped"}
+        {@const status = agents[key]?.status ?? "stopped"}
         <li class:active={key === active}>
           <button class="item" onclick={() => select(key)} title={key}>
             <span class="dot {status}"></span>
@@ -133,16 +117,16 @@
   <main>
     {#if active && view}
       <nav>
-        <button class:on={view.tab === "agent"} onclick={() => (view.tab = "agent")}>Agent</button>
+        <button class:on={view.tab === "terminal"} onclick={() => (view.tab = "terminal")}>Terminal</button>
         <button class:on={view.tab === "review"} onclick={() => (view.tab = "review")}>Review</button>
         <span class="path">{active}</span>
-        {#if sessions[active]?.detail}<span class="detail">{sessions[active].detail}</span>{/if}
+        {#if agents[active]?.detail}<span class="detail">{agents[active].detail}</span>{/if}
       </nav>
       <div class="pane">
         {#key active}
-          {#if view.tab === "agent"}
-            <AgentPanel agentKey={active} />
-          {:else}
+          <!-- Stays mounted under the Review tab so the terminal keeps its size and focus state. -->
+          <TerminalPanel cwd={active} visible={view.tab === "terminal"} />
+          {#if view.tab === "review"}
             <DiffView cwd={active} bind:base={view.base} bind:selected={view.selected} />
           {/if}
         {/key}
