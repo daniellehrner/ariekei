@@ -1,15 +1,16 @@
 <script lang="ts">
   // The work item's `claude` TUI. The process lives in the backend; this view attaches to
   // it (replaying the scrollback) and detaches on unmount, so switching items is lossless.
-  import { Channel, invoke } from "@tauri-apps/api/core";
+  import { Channel } from "@tauri-apps/api/core";
   import { Terminal, type ITheme } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import { Unicode11Addon } from "@xterm/addon-unicode11";
   import { WebglAddon } from "@xterm/addon-webgl";
   import "@xterm/xterm/css/xterm.css";
   import { onMount } from "svelte";
+  import { api } from "./lib/api";
 
-  let { cwd, visible = true }: { cwd: string; visible?: boolean } = $props();
+  let { id, visible = true }: { id: number; visible?: boolean } = $props();
 
   let host: HTMLElement;
   let error: string | null = $state(null);
@@ -52,26 +53,27 @@
     }
     refit();
 
-    let key: string | null = null;
+    let opened = false;
     let disposed = false;
     const output = new Channel<ArrayBuffer>();
     output.onmessage = (data) => term.write(new Uint8Array(data));
 
-    const send = (data: string) => key && invoke("term_write", { key, data });
+    const send = (data: string) => opened && api.termWrite(id, data);
     term.onData(send);
     term.onBinary(send);
-    term.onResize(({ cols, rows }) => key && invoke("term_resize", { key, cols, rows }));
+    term.onResize(({ cols, rows }) => opened && api.termResize(id, cols, rows));
 
     const resizeObserver = new ResizeObserver(() => refit());
     resizeObserver.observe(host);
 
-    invoke<{ key: string }>("term_open", { cwd, cols: term.cols, rows: term.rows, output })
-      .then((opened) => {
-        key = opened.key;
-        if (disposed) invoke("term_detach", { key });
+    api
+      .termOpen(id, term.cols, term.rows, output)
+      .then(() => {
+        opened = true;
+        if (disposed) api.termDetach(id, output.id);
         else {
           // Test handle: lets the e2e scenario read the screen buffer.
-          ((window as any).__ariekeiTerminals ??= {})[opened.key] = term;
+          ((window as any).__ariekeiTerminals ??= {})[String(id)] = term;
           term.focus();
         }
       })
@@ -85,9 +87,11 @@
       disposed = true;
       prefersDark.removeEventListener("change", retheme);
       resizeObserver.disconnect();
-      if (key) {
-        invoke("term_detach", { key });
-        delete (window as any).__ariekeiTerminals?.[key];
+      if (opened) {
+        // Detach only this view: a newer view of the same item may already be attached.
+        api.termDetach(id, output.id);
+        const handles = (window as any).__ariekeiTerminals;
+        if (handles?.[String(id)] === term) delete handles[String(id)];
       }
       term.dispose();
     };

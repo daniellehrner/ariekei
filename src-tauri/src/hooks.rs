@@ -186,13 +186,16 @@ pub fn dispatch(app: &AppHandle, event: HookEvent) {
         // Hooks of sessions Ariekei did not start (or already closed) are ignored.
         return;
     };
-    if event.hook_event_name == "UserPromptSubmit" {
-        state
-            .sessions
-            .mark_started(&key, event.transcript_path.as_deref());
+    if event.hook_event_name == "UserPromptSubmit"
+        && let Ok(id) = key.parse()
+        && let Err(e) = state
+            .store
+            .mark_session_started(id, event.transcript_path.as_deref())
+    {
+        tracing::warn!("failed to record session start: {e}");
     }
     if let Some((status, detail)) = status_for(&event) {
-        emit_status(app, &key, status, detail);
+        state.terminals.report(&key, status, detail);
     }
 }
 

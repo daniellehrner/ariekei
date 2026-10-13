@@ -45,6 +45,7 @@ jobs:
 
       - run: npm ci
       - run: npm run check
+      - run: npm test
       # tauri::generate_context! embeds dist/, so the UI must be built before any cargo step.
       - run: npm run build
 
