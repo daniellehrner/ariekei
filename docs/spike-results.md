@@ -27,7 +27,7 @@ Quitting the app leaves no adapter processes behind (the ACP crate kills the pro
    its permission mode (`auto` approves writes without asking the client) and user-scope MCP servers.
    **Decided:** inherit the global config as is (settings, permission mode, CLAUDE.md, skills), but
    not MCP servers. Sessions pass `_meta.claudeCode.options.strictMcpConfig = true`, so only servers
-   the IDE passes are used (none yet). This also skips a repo's `.mcp.json`; forwarding those would
+   Ariekei passes are used (none yet). This also skips a repo's `.mcp.json`; forwarding those would
    bypass Claude Code's approval prompt for project MCP servers, so that needs its own design.
    Verified: `claude` runs with `--setting-sources=user,project,local --strict-mcp-config
    --permission-mode auto`, and no MCP server processes start.

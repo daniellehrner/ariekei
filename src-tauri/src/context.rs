@@ -22,7 +22,7 @@ pub fn render(number: i64, pr: &PrDetail, logs: &[(String, String)]) -> String {
     let _ = writeln!(
         md,
         "You are working in a git worktree of this pull request ({} → {}), opened from the \
-         Ariekei IDE. The user reviews your changes there. This context was captured when the \
+         Ariekei review workbench. The user reviews your changes there. This context was captured when the \
          conversation started; newer activity may arrive as messages. Wait for the user's \
          instructions before changing anything.",
         pr.head_ref, pr.base_ref
@@ -104,7 +104,7 @@ pub fn render_issue(
     let _ = writeln!(md);
     let _ = writeln!(
         md,
-        "You are working on this issue in a git worktree opened from the Ariekei IDE, on the new \
+        "You are working on this issue in a git worktree opened from the Ariekei review workbench, on the new \
          branch `{branch}` (from `{base}`). The user reviews your changes there. When the branch \
          is pushed (`git push` is set up for it), Ariekei opens a draft pull request that closes \
          the issue. This context was captured when the conversation started. Wait for the \

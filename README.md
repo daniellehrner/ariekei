@@ -1,8 +1,9 @@
 # Ariekei
 
-A desktop IDE where the unit of work is a GitHub pull request or issue. Each work item gets its
-own worktree, its own Claude Code session and its own review progress, and an Inbox orders them
-by what needs you. Tauri 2 (Rust) + Svelte 5.
+A review workbench for coding agents. The unit of work is a GitHub pull request or issue: each
+work item gets its own worktree, its own Claude Code session and its own review progress, and an
+Inbox orders them by what needs you. The agent writes the code; you review it here. For deep
+code navigation or debugging, use your IDE on the same worktree. Tauri 2 (Rust) + Svelte 5.
 
 ## What it does
 
