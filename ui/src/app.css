@@ -1,0 +1,44 @@
+:root {
+  --bg: #ffffff;
+  --sidebar: #f6f7f9;
+  --panel: #eef1f5;
+  --user-bg: #e3ecfa;
+  --border: #d9dde3;
+  --text: #1d2330;
+  --muted: #6b7484;
+  --accent: #2f6fdd;
+  --ok: #2e9d5b;
+  --warn: #c98a12;
+  --warn-bg: #fff7e6;
+  --bad: #d04545;
+  --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1e24;
+    --sidebar: #16191e;
+    --panel: #262a32;
+    --user-bg: #23324d;
+    --border: #333843;
+    --text: #dfe3ea;
+    --muted: #8a93a3;
+    --accent: #5b8ff0;
+    --ok: #4cbb78;
+    --warn: #e0a33a;
+    --warn-bg: #3a2f17;
+    --bad: #e86464;
+    color-scheme: dark;
+  }
+}
+
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Ubuntu, sans-serif;
+}
+button { font: inherit; color: inherit; cursor: pointer; padding: 4px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); }
+button:disabled { opacity: 0.5; cursor: default; }
+input, textarea { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; }
