@@ -47,6 +47,18 @@ ALTER TABLE work_items ADD COLUMN role TEXT NOT NULL DEFAULT 'author';
 -- The user opened it, so it stays listed (and polled) even when no query finds it.
 ALTER TABLE work_items ADD COLUMN tracked INTEGER NOT NULL DEFAULT 0;
 "#,
+    r#"
+-- 'pr' or 'issue'. An issue item becomes a PR item (new number) when its branch is pushed.
+ALTER TABLE work_items ADD COLUMN kind TEXT NOT NULL DEFAULT 'pr';
+-- For a PR item that started as an issue: the issue's number.
+ALTER TABLE work_items ADD COLUMN issue_number INTEGER;
+-- Ariekei created the worktree (cleanup may delete it); adopted ones are only detached.
+ALTER TABLE work_items ADD COLUMN worktree_created INTEGER NOT NULL DEFAULT 0;
+-- Cleaned up or marked done: not shown in the Inbox until the user opens it again.
+ALTER TABLE work_items ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;
+-- Why automatic cleanup could not run (JSON array of messages), if it could not.
+ALTER TABLE work_items ADD COLUMN cleanup_blockers TEXT;
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -78,12 +90,19 @@ pub struct WorkItem {
     pub ui_state: Option<serde_json::Value>,
     pub role: String,
     pub tracked: bool,
+    pub kind: String,
+    pub issue_number: Option<i64>,
+    pub worktree_created: bool,
+    pub hidden: bool,
+    pub cleanup_blockers: Option<Vec<String>>,
 }
 
 /// One PR as found by a poll.
 #[derive(Debug, Clone)]
 pub struct PolledPr {
     pub number: i64,
+    /// "pr" or "issue".
+    pub kind: &'static str,
     pub role: &'static str,
     pub open: bool,
     pub snapshot: serde_json::Value,
@@ -98,7 +117,8 @@ fn err(e: rusqlite::Error) -> String {
 }
 
 const ITEM_COLUMNS: &str = "id, repo_id, number, snapshot, open, worktree_path, branch, session_id, \
-     session_started, transcript_path, reviewed_sha, last_seen, ui_state, role, tracked";
+     session_started, transcript_path, reviewed_sha, last_seen, ui_state, role, tracked, kind, \
+     issue_number, worktree_created, hidden, cleanup_blockers";
 
 fn item_from_row(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
     let json = |s: Option<String>| s.and_then(|s| serde_json::from_str(&s).ok());
@@ -118,6 +138,13 @@ fn item_from_row(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
         ui_state: json(r.get(12)?),
         role: r.get(13)?,
         tracked: r.get(14)?,
+        kind: r.get(15)?,
+        issue_number: r.get(16)?,
+        worktree_created: r.get(17)?,
+        hidden: r.get(18)?,
+        cleanup_blockers: r
+            .get::<_, Option<String>>(19)?
+            .and_then(|s| serde_json::from_str(&s).ok()),
     })
 }
 
@@ -252,9 +279,9 @@ impl Store {
         .map_err(err)?;
         for pr in prs {
             tx.execute(
-                "INSERT INTO work_items (repo_id, number, snapshot, open, role) VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT (repo_id, number) DO UPDATE SET snapshot = ?3, open = ?4, role = ?5",
-                params![repo_id, pr.number, pr.snapshot.to_string(), pr.open, pr.role],
+                "INSERT INTO work_items (repo_id, number, snapshot, open, role, kind) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT (repo_id, number) DO UPDATE SET snapshot = ?3, open = ?4, role = ?5, kind = ?6",
+                params![repo_id, pr.number, pr.snapshot.to_string(), pr.open, pr.role, pr.kind],
             )
             .map_err(err)?;
         }
@@ -265,15 +292,16 @@ impl Store {
     pub fn track(&self, repo_id: i64, pr: &PolledPr) -> Result<i64, String> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO work_items (repo_id, number, snapshot, open, role, tracked, last_seen)
-             VALUES (?1, ?2, ?3, ?4, ?5, 1, '')
-             ON CONFLICT (repo_id, number) DO UPDATE SET snapshot = ?3, open = ?4, tracked = 1",
+            "INSERT INTO work_items (repo_id, number, snapshot, open, role, tracked, last_seen, kind)
+             VALUES (?1, ?2, ?3, ?4, ?5, 1, '', ?6)
+             ON CONFLICT (repo_id, number) DO UPDATE SET snapshot = ?3, open = ?4, tracked = 1, hidden = 0",
             params![
                 repo_id,
                 pr.number,
                 pr.snapshot.to_string(),
                 pr.open,
-                pr.role
+                pr.role,
+                pr.kind
             ],
         )
         .map_err(err)?;
@@ -289,12 +317,17 @@ impl Store {
         self.update(id, "tracked = ?2", true)
     }
 
-    pub fn tracked_numbers(&self, repo_id: i64) -> Result<Vec<i64>, String> {
+    /// Numbers of the tracked items of `kind` ("pr" or "issue").
+    pub fn tracked_numbers(&self, repo_id: i64, kind: &str) -> Result<Vec<i64>, String> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT number FROM work_items WHERE repo_id = ?1 AND tracked = 1")
+            .prepare(
+                "SELECT number FROM work_items WHERE repo_id = ?1 AND tracked = 1 AND kind = ?2",
+            )
             .map_err(err)?;
-        let rows = stmt.query_map([repo_id], |r| r.get(0)).map_err(err)?;
+        let rows = stmt
+            .query_map(params![repo_id, kind], |r| r.get(0))
+            .map_err(err)?;
         rows.collect::<Result<_, _>>().map_err(err)
     }
 
@@ -329,16 +362,60 @@ impl Store {
         .map_err(err)
     }
 
+    /// `created`: Ariekei made the worktree (cleanup may delete it) rather than adopting it.
     pub fn set_worktree(
         &self,
         id: i64,
         path: Option<&Path>,
         branch: Option<&str>,
+        created: bool,
     ) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE work_items SET worktree_path = ?2, branch = ?3 WHERE id = ?1",
-            params![id, path.map(path_str), branch],
+            "UPDATE work_items SET worktree_path = ?2, branch = ?3, worktree_created = ?4 WHERE id = ?1",
+            params![id, path.map(path_str), branch, created],
+        )
+        .map(|_| ())
+        .map_err(err)
+    }
+
+    /// The issue item `id` now is PR `number` (opened for its branch).
+    pub fn convert_to_pr(
+        &self,
+        id: i64,
+        number: i64,
+        snapshot: &serde_json::Value,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE work_items SET issue_number = number, number = ?2, kind = 'pr', role = 'author',
+             snapshot = ?3, tracked = 1, open = 1 WHERE id = ?1",
+            params![id, number, snapshot.to_string()],
+        )
+        .map(|_| ())
+        .map_err(err)
+    }
+
+    pub fn delete_item(&self, id: i64) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM work_items WHERE id = ?1", [id])
+            .map(|_| ())
+            .map_err(err)
+    }
+
+    pub fn set_cleanup_blockers(&self, id: i64, blockers: Option<&[String]>) -> Result<(), String> {
+        let value = blockers.map(|b| serde_json::to_string(b).unwrap_or_default());
+        self.update(id, "cleanup_blockers = ?2", value)
+    }
+
+    /// After cleanup: forget the worktree, agent session and review marker, and hide the item.
+    pub fn mark_cleaned(&self, id: i64) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE work_items SET worktree_path = NULL, branch = NULL, worktree_created = 0, session_id = NULL,
+             session_started = 0, transcript_path = NULL, reviewed_sha = NULL, cleanup_blockers = NULL,
+             hidden = 1 WHERE id = ?1",
+            [id],
         )
         .map(|_| ())
         .map_err(err)
@@ -391,6 +468,7 @@ mod tests {
     fn polled(number: i64, snapshot: serde_json::Value) -> PolledPr {
         PolledPr {
             number,
+            kind: "pr",
             role: "author",
             open: true,
             snapshot,
@@ -456,7 +534,7 @@ mod tests {
             .find(|i| i.number == 1)
             .unwrap();
         store
-            .set_worktree(one.id, Some(Path::new("/src/besu_pr1")), Some("feat"))
+            .set_worktree(one.id, Some(Path::new("/src/besu_pr1")), Some("feat"), true)
             .unwrap();
         store.set_reviewed(one.id, "abc").unwrap();
 
@@ -484,7 +562,7 @@ mod tests {
         };
         store.sync_prs(repo.id, &[requested]).unwrap();
         assert_eq!(store.items(repo.id).unwrap()[0].role, "requested");
-        assert!(store.tracked_numbers(repo.id).unwrap().is_empty());
+        assert!(store.tracked_numbers(repo.id, "pr").unwrap().is_empty());
 
         // The user opens a PR found by search: it is added and tracked, unseen so far.
         let found = PolledPr {
@@ -493,7 +571,7 @@ mod tests {
         };
         let id = store.track(repo.id, &found).unwrap();
         assert_eq!(store.item(id).unwrap().last_seen.as_deref(), Some(""));
-        assert_eq!(store.tracked_numbers(repo.id).unwrap(), [9]);
+        assert_eq!(store.tracked_numbers(repo.id, "pr").unwrap(), [9]);
 
         // Next poll: #9 is found by number (merged now), #5 is no longer requested.
         let merged = PolledPr {

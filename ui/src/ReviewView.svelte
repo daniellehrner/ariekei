@@ -345,14 +345,16 @@
           {:else}
             <div class="actions">
               {#if canSendToAgent}<button onclick={sendToAgent}>Send to the agent</button>{/if}
-              <button class="primary" onclick={openSubmit}>Submit to GitHub…</button>
+              {#if review?.prHead}<button class="primary" onclick={openSubmit}>Submit to GitHub…</button>{/if}
             </div>
           {/if}
         </div>
       {:else}
-        <div class="comments quiet">
-          <button onclick={openSubmit} disabled={!review}>Review on GitHub…</button>
-        </div>
+        {#if review?.prHead}
+          <div class="comments quiet">
+            <button onclick={openSubmit}>Review on GitHub…</button>
+          </div>
+        {/if}
       {/if}
     </div>
   </div>

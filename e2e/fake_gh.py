@@ -5,13 +5,18 @@ Serves the PRs described in $FAKE_GH_DIR/data.json and appends every write (REST
 GraphQL mutations) to $FAKE_GH_DIR/writes.jsonl, so a test can check what would have been
 sent to GitHub. Supports only the calls Ariekei makes.
 
-data.json: {"viewer": "me", "prs": [{number, title, author, head_ref, head_sha, base_ref,
-            requested (bool), body_html, comments: [...], threads: [...]}]}
+data.json: {"viewer": "me", "upstream": <path of the "GitHub" git repo, optional>,
+            "prs": [{number, title, author, head_ref, head_sha, base_ref, state, requested (bool),
+                     body_html, comments: [...], threads: [...]}],
+            "issues": [{number, title, author, body, assigned (bool), state}]}
+Creating a PR (POST .../pulls) adds it to data.json, so later polls see it; a test can set
+a PR's "state" to MERGED in data.json.
 """
 
 import json
 import os
 import re
+import subprocess
 import sys
 
 DIR = os.environ["FAKE_GH_DIR"]
@@ -28,11 +33,33 @@ def nodes(items):
     return {"nodes": items}
 
 
+def save():
+    with open(os.path.join(DIR, "data.json"), "w") as f:
+        json.dump(DATA, f)
+
+
+def head_sha(pr):
+    upstream = DATA.get("upstream")
+    if pr.get("head_sha") or not upstream:
+        return pr.get("head_sha", "")
+    out = subprocess.run(["git", "-C", upstream, "rev-parse", pr["head_ref"]], capture_output=True, text=True)
+    return out.stdout.strip()
+
+
+def issue_summary(i):
+    return {
+        "number": i["number"], "title": i["title"], "url": f"https://github.com/owner/proj/issues/{i['number']}",
+        "state": i.get("state", "OPEN"), "updatedAt": "2026-10-13T09:00:00Z", "author": {"login": i["author"]},
+        "labels": nodes([{"name": "bug"}]), "comments": {"totalCount": 0, "nodes": []},
+        "createdAt": "2026-10-12T09:00:00Z", "body": i.get("body", ""), "bodyHTML": f"<p>{i.get('body', '')}</p>",
+    }
+
+
 def summary(pr):
     return {
         "number": pr["number"], "title": pr["title"], "url": f"https://github.com/owner/proj/pull/{pr['number']}",
         "state": pr.get("state", "OPEN"), "isDraft": False, "updatedAt": "2026-10-13T10:00:00Z",
-        "author": {"login": pr["author"]}, "headRefName": pr["head_ref"], "headRefOid": pr["head_sha"],
+        "author": {"login": pr["author"]}, "headRefName": pr["head_ref"], "headRefOid": head_sha(pr),
         "baseRefName": pr["base_ref"], "reviewDecision": "REVIEW_REQUIRED",
         "headRepository": {"name": "proj", "owner": {"login": "owner"}, "sshUrl": "git@github.com:owner/proj.git", "url": "https://github.com/owner/proj"},
         "reviews": nodes([]), "comments": nodes([]),
@@ -63,17 +90,31 @@ def graphql(fields):
     if query.lstrip().startswith("mutation"):
         record({"graphql": query.split("(")[1].split("{")[-1].strip() if "{" in query else query, "vars": {k: v for k, v in fields.items() if k != "query"}})
         return {"data": {}}
+    if "defaultBranchRef" in query:
+        return {"data": {"repository": {"defaultBranchRef": {"name": "main"}}}}
     if "search(" in query:
         q = fields["q"]
-        if f"author:{ME}" in q:
-            found = [p for p in DATA["prs"] if p["author"] == ME]
+        if "is:issue" in q:
+            found = [i for i in DATA.get("issues", []) if i.get("assigned") and i.get("state", "OPEN") == "OPEN"]
+            return {"data": {"search": {"nodes": [issue_summary(i) for i in found]}}}
+        head = re.search(r"head:(\S+)", q)
+        if head:
+            found = [p for p in DATA["prs"] if p["head_ref"] == head.group(1) and p.get("state", "OPEN") == "OPEN"]
+        elif f"author:{ME}" in q:
+            found = [p for p in DATA["prs"] if p["author"] == ME and p.get("state", "OPEN") == "OPEN"]
         elif f"review-requested:{ME}" in q:
-            found = [p for p in DATA["prs"] if p.get("requested")]
+            found = [p for p in DATA["prs"] if p.get("requested") and p.get("state", "OPEN") == "OPEN"]
         else:
             words = [w for w in q.split() if not re.match(r"^(repo|is|sort):", w)]
             found = [p for p in DATA["prs"] if all(w.lower() in (p["title"] + " " + p["author"] + " " + str(p["number"])).lower() for w in words)]
         return {"data": {"search": {"nodes": [summary(p) for p in found]}}}
     by_number = {p["number"]: p for p in DATA["prs"]}
+    issues = {i["number"]: i for i in DATA.get("issues", [])}
+    if "issue(number: $number)" in query:
+        return {"data": {"repository": {"issue": issue_summary(issues[int(fields["number"])])}}}
+    issue_aliases = re.findall(r"i(\d+): issue\(number: (\d+)\)", query)
+    if issue_aliases:
+        return {"data": {"repository": {f"i{n}": issue_summary(issues[int(n)]) for n, _ in issue_aliases if int(n) in issues}}}
     if "pullRequest(number: $number)" in query:
         return {"data": {"repository": {"pullRequest": conversation(by_number[int(fields["number"])])}}}
     aliases = re.findall(r"p(\d+): pullRequest\(number: (\d+)\)", query)
@@ -99,6 +140,13 @@ def main(argv):
         path = next(a for a in argv[1:] if "/" in a)
         body = json.loads(sys.stdin.read() or "{}")
         record({"post": path, "body": body})
+        if path.endswith("/pulls"):
+            number = max([p["number"] for p in DATA["prs"]] + [99]) + 1
+            DATA["prs"].append({"number": number, "title": body["title"], "author": ME, "head_ref": body["head"].split(":")[-1],
+                                "base_ref": body["base"], "state": "OPEN", "body_html": body.get("body", "")})
+            save()
+            print(json.dumps({"number": number, "html_url": f"https://github.com/owner/proj/pull/{number}"}))
+            return 0
         print(json.dumps({"html_url": f"https://github.com/{path}"}))
         return 0
     if argv[0] == "api" and "/actions/jobs/" in argv[1]:

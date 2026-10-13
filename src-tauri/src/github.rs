@@ -265,6 +265,157 @@ pub fn parse_prs(list: &Value, viewer: &str) -> Vec<PrSummary> {
         .collect()
 }
 
+// --- issues ---------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueSummary {
+    pub number: i64,
+    pub title: String,
+    pub url: String,
+    pub author: String,
+    /// OPEN or CLOSED.
+    pub state: String,
+    pub updated_at: String,
+    pub labels: Vec<String>,
+    pub comments: i64,
+    /// Newest comment by someone other than the viewer.
+    pub latest_activity: Option<String>,
+}
+
+const ISSUE_FIELDS: &str = r#"
+  number title url state updatedAt author { login }
+  labels(first: 20) { nodes { name } }
+  comments(last: 20) { totalCount nodes { author { login } createdAt } }
+"#;
+
+pub fn parse_issues(list: &Value, viewer: &str) -> Vec<IssueSummary> {
+    list.as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter(|i| i["number"].is_i64())
+        .map(|i| IssueSummary {
+            number: i["number"].as_i64().unwrap_or_default(),
+            title: s(&i["title"]),
+            url: s(&i["url"]),
+            author: s(&i["author"]["login"]),
+            state: i["state"].as_str().unwrap_or("OPEN").to_owned(),
+            updated_at: s(&i["updatedAt"]),
+            labels: nodes(&i["labels"]).iter().map(|l| s(&l["name"])).collect(),
+            comments: i["comments"]["totalCount"].as_i64().unwrap_or_default(),
+            latest_activity: nodes(&i["comments"])
+                .iter()
+                .filter(|c| c["author"]["login"].as_str().is_some_and(|a| a != viewer))
+                .filter_map(|c| c["createdAt"].as_str())
+                .max()
+                .map(str::to_owned),
+        })
+        .collect()
+}
+
+/// Open issues in `owner/name` assigned to the viewer.
+pub fn assigned_issues(owner: &str, name: &str, viewer: &str) -> Result<Vec<IssueSummary>, String> {
+    let query = format!(
+        "query($q: String!) {{ search(query: $q, type: ISSUE, first: 50) {{ nodes {{ ... on Issue {{ {ISSUE_FIELDS} }} }} }} }}"
+    );
+    let q = format!("repo:{owner}/{name} is:issue is:open assignee:{viewer} sort:updated-desc");
+    let v = graphql(&query, &[("q", &q)], &[])?;
+    Ok(parse_issues(&v["data"]["search"]["nodes"], viewer))
+}
+
+/// Issues by number (any state), e.g. ones with a worktree that are no longer assigned.
+pub fn issues_by_number(
+    owner: &str,
+    name: &str,
+    viewer: &str,
+    numbers: &[i64],
+) -> Result<Vec<IssueSummary>, String> {
+    if numbers.is_empty() {
+        return Ok(vec![]);
+    }
+    let fields: String = numbers
+        .iter()
+        .map(|n| format!("i{n}: issue(number: {n}) {{ {ISSUE_FIELDS} }}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let query = format!(
+        "query($owner: String!, $name: String!) {{ repository(owner: $owner, name: $name) {{ {fields} }} }}"
+    );
+    let v = graphql(&query, &[("owner", owner), ("name", name)], &[])?;
+    let found: Vec<Value> = numbers
+        .iter()
+        .map(|n| v["data"]["repository"][format!("i{n}")].clone())
+        .collect();
+    Ok(parse_issues(&Value::Array(found), viewer))
+}
+
+const ISSUE_CONVERSATION: &str = r#"query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { issue(number: $number) {
+    number title url state createdAt body bodyHTML author { login }
+    labels(first: 20) { nodes { name } }
+    comments(first: 100) { nodes { databaseId author { login } body bodyHTML createdAt url } }
+  } } }"#;
+
+/// An issue as a `Conversation` (no branches, reviews, threads or checks).
+pub fn issue_conversation(
+    owner: &str,
+    name: &str,
+    number: i64,
+) -> Result<(Conversation, Value), String> {
+    let v = graphql(
+        ISSUE_CONVERSATION,
+        &[("owner", owner), ("name", name)],
+        &[("number", number)],
+    )?;
+    let issue = v["data"]["repository"]["issue"].clone();
+    Ok((parse_conversation(&issue), issue))
+}
+
+pub fn default_branch(owner: &str, name: &str) -> Result<String, String> {
+    let v = graphql(
+        "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { defaultBranchRef { name } } }",
+        &[("owner", owner), ("name", name)],
+        &[],
+    )?;
+    v["data"]["repository"]["defaultBranchRef"]["name"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| format!("{owner}/{name} has no default branch"))
+}
+
+/// The open PR whose head is `head_owner:branch`, if any.
+pub fn pull_for_head(
+    owner: &str,
+    name: &str,
+    viewer: &str,
+    head_owner: &str,
+    branch: &str,
+) -> Result<Option<PrSummary>, String> {
+    Ok(search_prs(owner, name, viewer, &format!("head:{branch}"))?
+        .into_iter()
+        .find(|p| p.head_ref == branch && p.head_owner.eq_ignore_ascii_case(head_owner)))
+}
+
+/// Opens a draft PR from `head` (`branch`, or `owner:branch` from a fork) into `base`;
+/// returns its number.
+pub fn create_draft_pull(
+    owner: &str,
+    name: &str,
+    head: &str,
+    base: &str,
+    title: &str,
+    body: &str,
+) -> Result<i64, String> {
+    let v = post(
+        &format!("repos/{owner}/{name}/pulls"),
+        &json!({ "title": title, "head": head, "base": base, "body": body, "draft": true }),
+    )?;
+    v["number"]
+        .as_i64()
+        .ok_or_else(|| format!("GitHub did not return a PR number: {v}"))
+}
+
 // --- PR context for the agent ----------------------------------------------------
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -780,6 +931,27 @@ mod tests {
     }
 
     #[test]
+    fn parses_issues() {
+        let list = json!([{
+            "number": 7, "title": "Crash on start", "url": "U", "state": "OPEN", "updatedAt": "2026-10-01T00:00:00Z",
+            "author": { "login": "carol" }, "labels": { "nodes": [ { "name": "bug" } ] },
+            "comments": { "totalCount": 3, "nodes": [
+                { "author": { "login": "me" }, "createdAt": "2026-10-03T00:00:00Z" },
+                { "author": { "login": "carol" }, "createdAt": "2026-10-02T00:00:00Z" } ] }
+        }, null]);
+        let issues = parse_issues(&list, "me");
+        assert_eq!(issues.len(), 1);
+        let i = &issues[0];
+        assert_eq!((i.number, i.author.as_str(), i.comments), (7, "carol", 3));
+        assert_eq!(i.labels, ["bug"]);
+        assert_eq!(
+            i.latest_activity.as_deref(),
+            Some("2026-10-02T00:00:00Z"),
+            "own comments do not count"
+        );
+    }
+
+    #[test]
     fn review_payload_has_line_and_range_comments() {
         let comments = [
             LineComment {
@@ -895,6 +1067,13 @@ mod live {
         (o.to_owned(), n.to_owned())
     }
 
+    /// Any open issue of the repo, to exercise the issue queries.
+    fn search_issue_numbers(owner: &str, name: &str) -> Option<i64> {
+        let q = format!("repo:{owner}/{name} is:issue is:open");
+        let v = graphql("query($q: String!) { search(query: $q, type: ISSUE, first: 1) { nodes { ... on Issue { number } } } }", &[("q", &q)], &[]).ok()?;
+        v["data"]["search"]["nodes"][0]["number"].as_i64()
+    }
+
     #[test]
     #[ignore]
     fn live_open_prs_and_detail() {
@@ -902,6 +1081,21 @@ mod live {
         let me = viewer().unwrap();
         let prs = search_prs(&owner, &name, &me, &format!("author:{me}")).unwrap();
         let requested = search_prs(&owner, &name, &me, &format!("review-requested:{me}")).unwrap();
+        println!("default branch: {}", default_branch(&owner, &name).unwrap());
+        let issues = assigned_issues(&owner, &name, &me).unwrap();
+        println!("{} issues assigned to me", issues.len());
+        let any_issue = search_issue_numbers(&owner, &name);
+        if let Some(n) = any_issue {
+            let (c, _) = issue_conversation(&owner, &name, n).unwrap();
+            let by_number = issues_by_number(&owner, &name, &me, &[n]).unwrap();
+            println!(
+                "issue #{n}: {:?} by {}, {} comments; by number: {:?}",
+                c.title,
+                c.author,
+                c.comments.len(),
+                by_number.first().map(|i| &i.state)
+            );
+        }
         println!("{} PRs request my review", requested.len());
         let others = search_prs(&owner, &name, &me, &format!("-author:{me}")).unwrap();
         println!(

@@ -60,6 +60,13 @@ pub fn agent_status(app: &AppHandle, key: &str, previous: AgentStatus, status: A
     }
 }
 
+/// A work item started or ended its life (draft PR opened, cleaned up, cleanup blocked).
+pub fn lifecycle(app: &AppHandle, key: &str, title: &str, message: &str) {
+    if !watching(app, key) {
+        show(app, title, message);
+    }
+}
+
 /// What changed on GitHub between two snapshots of the same PR that the user should hear about.
 fn pr_messages(before: &PrSummary, after: &PrSummary) -> Vec<String> {
     let mut messages = vec![];

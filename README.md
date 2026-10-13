@@ -4,7 +4,7 @@ A desktop IDE where the unit of work is a GitHub pull request: each one gets its
 its own Claude Code session and its own review progress, and an Inbox orders them by what needs
 you. Tauri 2 (Rust) + Svelte 5.
 
-- What works today: [docs/m1.md](docs/m1.md)
+- What works today: [docs/m1.md](docs/m1.md) (Inbox, PRs, review) and [docs/m2.md](docs/m2.md) (issues, cleanup)
 - Spike results and the agent integration: [docs/spike-results.md](docs/spike-results.md)
 
 ## Requirements

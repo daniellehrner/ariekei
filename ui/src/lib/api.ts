@@ -17,9 +17,12 @@ export interface Repo {
 export interface Row {
   id: number;
   number: number;
+  kind: "pr" | "issue";
+  issueNumber: number | null;
+  cleanupBlockers: string[] | null;
   title: string;
   author: string;
-  role: "author" | "requested" | "other";
+  role: "author" | "requested" | "assignee" | "other";
   url: string;
   isDraft: boolean;
   open: boolean;
@@ -62,6 +65,8 @@ export interface ReviewState {
   dirty: boolean;
   own: boolean;
 }
+
+export type Cleanup = { outcome: "cleaned"; removed: string[] } | { outcome: "blocked"; blockers: string[] };
 
 export interface SearchHit {
   number: number;
@@ -156,6 +161,7 @@ export const api = {
   replyComment: (id: number, commentId: number, body: string) => invoke<void>("reply_comment", { id, commentId, body }),
   postComment: (id: number, body: string) => invoke<void>("post_comment", { id, body }),
   resolveThread: (threadId: string, resolved: boolean) => invoke<void>("resolve_thread", { threadId, resolved }),
+  markDone: (id: number) => invoke<Cleanup>("mark_done", { id }),
   saveFile: (id: number, path: string, content: string) => invoke<void>("save_file", { id, path, content }),
   selfRssKib: () => invoke<number | null>("self_rss_kib"),
 };

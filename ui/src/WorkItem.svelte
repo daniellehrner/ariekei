@@ -70,7 +70,7 @@
     api.markSeen(current).then(onchanged);
     api.setActiveItem(current);
     loadConversation(current);
-    if (!row.worktree) fetchHead(current);
+    if (!row.worktree && row.kind === "pr") fetchHead(current);
   }
 
   // GitHub changes (including the user's own comments) arrive with the next poll.
@@ -114,6 +114,29 @@
     }
   }
 
+  // Done: clean up now (same safety checks as the automatic cleanup).
+  let blockers = $state<string[] | null>(null);
+  let confirmDone = $state(false);
+  async function done() {
+    if (!confirmDone) {
+      confirmDone = true;
+      return;
+    }
+    confirmDone = false;
+    try {
+      const result = await api.markDone(id);
+      if (result.outcome === "blocked") {
+        blockers = result.blockers;
+      } else {
+        blockers = null;
+        notice = result.removed.length ? `Cleaned up: ${result.removed.join(", ")}.` : "Marked done.";
+        onchanged();
+      }
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   function changed() {
     loadConversation(id);
     onchanged();
@@ -129,6 +152,13 @@
       <span class="num">#{row.number}</span>
       <span>{row.title}</span>
       <span class="spacer"></span>
+      {#if confirmDone}
+        <span class="confirm">Clean up {row.worktree ? "the worktree, agent and " : ""}this item?</span>
+        <button onclick={done}>Yes, clean up</button>
+        <button onclick={() => (confirmDone = false)}>Cancel</button>
+      {:else}
+        <button onclick={done} title="Remove this item's worktree, agent session and refs, and hide it — only if nothing would be lost">Done</button>
+      {/if}
       {#if !row.worktree}
         <button class="primary" onclick={start} disabled={preparing}
           title="Create (or reuse) a worktree for the PR's branch and open Claude Code in it with the PR as context">
@@ -137,6 +167,8 @@
       {/if}
     </div>
     <div class="meta">
+      {#if row.kind === "issue"}<span>issue</span>{/if}
+      {#if row.issueNumber}<span>from issue #{row.issueNumber}</span>{/if}
       {#if row.role !== "author"}<span>by {row.author}</span>{/if}
       {#if row.ci}<span class="ci {row.ci}">{CI_LABEL[row.ci] ?? row.ci}{row.failingChecks.length ? `: ${row.failingChecks.join(", ")}` : ""}</span>{/if}
       {#if row.reviewDecision}<span>{row.reviewDecision.toLowerCase().replaceAll("_", " ")}</span>{/if}
@@ -148,18 +180,25 @@
 
   {#if error}<p class="error">{error}</p>{/if}
   {#if notice}<p class="notice">{notice}</p>{/if}
+  {#if blockers ?? row.cleanupBlockers}
+    <div class="blocked">
+      <strong>{row.open ? "Not cleaned up" : "Finished, but not cleaned up"}</strong> — this would lose work:
+      <ul>{#each blockers ?? row.cleanupBlockers ?? [] as b}<li>{b}</li>{/each}</ul>
+      Resolve these (commit and push, or discard), then press Done.
+    </div>
+  {/if}
 
   {#if ui}
     <nav>
       {#each TABS as [value, label]}
-        {#if value !== "terminal" || row.worktree}
+        {#if (value !== "terminal" || row.worktree) && (value !== "review" || row.kind === "pr" || row.worktree)}
           <button class:on={tab === value} onclick={() => ui && (ui.tab = value)}>
             {label}{#if value === "comments" && conv}<span class="badge">{conv.threads.filter((t) => !t.resolved).length || ""}</span>{/if}
           </button>
         {/if}
       {/each}
       <span class="spacer"></span>
-      {#if row.worktree}
+      {#if row.worktree && row.kind === "pr"}
         <button onclick={sendPrFeedback} title="Send the PR's current review threads, review summaries and failing checks to the agent">Send PR feedback to agent</button>
       {/if}
     </nav>
@@ -207,5 +246,8 @@
   .pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .hint { color: var(--muted); margin: 24px; }
   .error { color: var(--bad); margin: 6px 14px; }
+  .confirm { font-weight: 400; font-size: 13px; color: var(--warn); }
+  .blocked { margin: 6px 14px; padding: 8px 12px; border: 1px solid var(--warn); border-radius: 6px; background: var(--warn-bg); font-size: 0.9em; }
+  .blocked ul { margin: 4px 0; padding-left: 20px; }
   .notice { color: var(--ok); margin: 6px 14px; font-size: 0.9em; }
 </style>

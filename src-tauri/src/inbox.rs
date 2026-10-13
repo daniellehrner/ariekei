@@ -8,6 +8,10 @@ use serde::Serialize;
 pub struct Row {
     pub id: i64,
     pub number: i64,
+    /// "pr" or "issue".
+    pub kind: String,
+    /// For a PR that started as an issue: the issue's number.
+    pub issue_number: Option<i64>,
     pub title: String,
     pub author: String,
     /// "author", "requested" or "other" (see `store`).
@@ -28,16 +32,21 @@ pub struct Row {
     pub unreviewed: bool,
     /// Why the row is where it is (for the UI), most urgent first.
     pub attention: Option<&'static str>,
+    /// Why the finished item was not cleaned up, if it was not.
+    pub cleanup_blockers: Option<Vec<String>>,
 }
 
 /// Rank of the row's most urgent reason; lower is more urgent.
 fn attention(row: &Row) -> (u8, Option<&'static str>) {
     use AgentStatus::*;
-    if !row.open {
+    if !row.open && row.cleanup_blockers.is_none() {
         return (7, None);
     }
     if row.agent == Some(WaitingForPermission) {
         return (0, Some("agent needs you"));
+    }
+    if row.cleanup_blockers.is_some() {
+        return (1, Some("finished, cleanup blocked"));
     }
     if matches!(row.ci.as_deref(), Some("FAILURE" | "ERROR")) {
         return (1, Some("CI failing"));
@@ -76,6 +85,8 @@ mod tests {
         Row {
             id: number,
             number,
+            kind: "pr".into(),
+            issue_number: None,
             title: String::new(),
             author: String::new(),
             role: "author".into(),
@@ -92,6 +103,7 @@ mod tests {
             worktree: None,
             unreviewed: false,
             attention: None,
+            cleanup_blockers: None,
         }
     }
 

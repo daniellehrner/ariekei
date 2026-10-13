@@ -20,10 +20,11 @@
     onadded: () => void;
   } = $props();
 
-  const SECTIONS: { role: Row["role"]; title: string }[] = [
-    { role: "author", title: "Mine" },
-    { role: "requested", title: "Review requested" },
-    { role: "other", title: "Opened" },
+  const SECTIONS: { key: string; title: string; has: (r: Row) => boolean }[] = [
+    { key: "mine", title: "Mine", has: (r) => r.kind === "pr" && r.role === "author" },
+    { key: "requested", title: "Review requested", has: (r) => r.kind === "pr" && r.role === "requested" },
+    { key: "issues", title: "Issues", has: (r) => r.kind === "issue" },
+    { key: "opened", title: "Opened", has: (r) => r.kind === "pr" && r.role === "other" },
   ];
   const CI: Record<string, [string, string]> = {
     SUCCESS: ["✓", "ok"],
@@ -130,9 +131,9 @@
     </ul>
   {:else}
     <div class="sections">
-      {#each SECTIONS as section (section.role)}
-        {@const list = rows.filter((r) => r.role === section.role)}
-        {#if list.length || section.role === "author"}
+      {#each SECTIONS as section (section.key)}
+        {@const list = rows.filter(section.has)}
+        {#if list.length || section.key === "mine"}
           <h3>{section.title} <span class="count">{list.length}</span></h3>
           <ul>
             {#each list as row (row.id)}
@@ -146,7 +147,8 @@
                     {#if row.newActivity}<span class="new" title="new reviews or comments">●</span>{/if}
                   </span>
                   <span class="line2">
-                    {#if section.role !== "author"}<span class="author">{row.author}</span>{/if}
+                    {#if section.key !== "mine"}<span class="author">{row.author}</span>{/if}
+                    {#if row.issueNumber}<span class="tag">from #{row.issueNumber}</span>{/if}
                     {#if ci}<span class="ci {ci[1]}" title="CI: {row.ci}{row.failingChecks.length ? ` (${row.failingChecks.join(', ')})` : ''}">{ci[0]}</span>{/if}
                     {#if row.isDraft}<span class="tag">draft</span>{/if}
                     {#if !row.open}<span class="tag">closed</span>{/if}

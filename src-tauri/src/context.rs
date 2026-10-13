@@ -89,6 +89,41 @@ pub fn render(number: i64, pr: &PrDetail, logs: &[(String, String)]) -> String {
     md
 }
 
+/// Markdown for the agent working on an issue (`comments` are `(author, body)`).
+pub fn render_issue(
+    number: i64,
+    title: &str,
+    url: &str,
+    body: &str,
+    comments: &[(String, String)],
+    branch: &str,
+    base: &str,
+) -> String {
+    let mut md = String::new();
+    let _ = writeln!(md, "# Work item: issue #{number}: {title}");
+    let _ = writeln!(md);
+    let _ = writeln!(
+        md,
+        "You are working on this issue in a git worktree opened from the Ariekei IDE, on the new \
+         branch `{branch}` (from `{base}`). The user reviews your changes there. When the branch \
+         is pushed (`git push` is set up for it), Ariekei opens a draft pull request that closes \
+         the issue. This context was captured when the conversation started. Wait for the \
+         user's instructions before changing anything."
+    );
+    let _ = writeln!(md, "\nURL: {url}");
+    let body = body.trim();
+    if !body.is_empty() {
+        let _ = writeln!(md, "\n## Description\n\n{}", truncate(body, MAX_BODY));
+    }
+    if !comments.is_empty() {
+        let _ = writeln!(md, "\n## Comments");
+        for (author, text) in comments {
+            let _ = writeln!(md, "\n**{author}:** {}", truncate(text.trim(), MAX_BODY));
+        }
+    }
+    md
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +172,23 @@ mod tests {
         assert!(md.contains(
             "### unit-tests: 2 failed\n\nU\n\nEnd of the job log:\n\n```\nFooTest > bar FAILED\n```"
         ));
+    }
+
+    #[test]
+    fn renders_an_issue_with_its_branch_and_comments() {
+        let md = render_issue(
+            7,
+            "Crash",
+            "U",
+            "It crashes.",
+            &[("bob".into(), "Me too".into())],
+            "issue-7-crash",
+            "main",
+        );
+        assert!(md.starts_with("# Work item: issue #7: Crash"));
+        assert!(md.contains("branch `issue-7-crash` (from `main`)"));
+        assert!(md.contains("## Description\n\nIt crashes."));
+        assert!(md.contains("**bob:** Me too"));
     }
 
     #[test]

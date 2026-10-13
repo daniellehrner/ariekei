@@ -19,7 +19,11 @@
   <h2>{conv.title} <span class="num">#{conv.number}</span></h2>
   <p class="meta">
     <span class="state {conv.state}">{conv.isDraft && conv.state === "OPEN" ? "draft" : conv.state.toLowerCase()}</span>
-    <span><strong>{conv.author}</strong> wants to merge <code>{conv.headRef}</code> into <code>{conv.baseRef}</code></span>
+    {#if conv.headRef}
+      <span><strong>{conv.author}</strong> wants to merge <code>{conv.headRef}</code> into <code>{conv.baseRef}</code></span>
+    {:else}
+      <span>opened by <strong>{conv.author}</strong></span>
+    {/if}
     <span>opened {date(conv.createdAt)}</span>
     <a href={conv.url}>on GitHub</a>
   </p>
@@ -36,6 +40,7 @@
       {/if}
     </div>
     <aside class="side">
+      {#if conv.headRef}
       <h3>Reviews</h3>
       <p>{conv.reviewDecision ? conv.reviewDecision.toLowerCase().replaceAll("_", " ") : "no decision"}</p>
       <ul>
@@ -50,6 +55,7 @@
           <li class="muted">No checks.</li>
         {/each}
       </ul>
+      {/if}
       <h3>Discussion</h3>
       <p>{conv.comments.length} comment{conv.comments.length === 1 ? "" : "s"}, {conv.threads.filter((t) => !t.resolved).length} unresolved of {conv.threads.length} review thread{conv.threads.length === 1 ? "" : "s"}</p>
     </aside>

@@ -7,7 +7,15 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
-const INTERVAL: Duration = Duration::from_secs(60);
+/// Seconds between polls; `ARIEKEI_POLL_SECS` shortens it for tests.
+fn interval() -> Duration {
+    Duration::from_secs(
+        std::env::var("ARIEKEI_POLL_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(60),
+    )
+}
 
 pub struct Poller {
     wake: Sender<()>,
@@ -43,7 +51,7 @@ fn run(app: AppHandle, wake: Receiver<()>) {
                 let _ = app.emit("inbox-error", e);
             }
         }
-        match wake.recv_timeout(INTERVAL) {
+        match wake.recv_timeout(interval()) {
             Ok(()) | Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
         }
@@ -65,7 +73,7 @@ pub fn poll(app: &AppHandle) -> Result<(), String> {
     let known: Vec<i64> = mine.iter().chain(&requested).map(|p| p.number).collect();
     let tracked: Vec<i64> = state
         .store
-        .tracked_numbers(repo.id)?
+        .tracked_numbers(repo.id, "pr")?
         .into_iter()
         .filter(|t| !known.contains(t))
         .collect();
@@ -80,23 +88,59 @@ pub fn poll(app: &AppHandle) -> Result<(), String> {
         prs.push((pr, role));
     }
 
+    // Issues: the ones assigned to the viewer, plus tracked ones (e.g. with a worktree).
+    let assigned = github::assigned_issues(o, n, me)?;
+    let assigned_numbers: Vec<i64> = assigned.iter().map(|i| i.number).collect();
+    let tracked_issues: Vec<i64> = state
+        .store
+        .tracked_numbers(repo.id, "issue")?
+        .into_iter()
+        .filter(|t| !assigned_numbers.contains(t))
+        .collect();
+    let issues: Vec<_> = assigned
+        .into_iter()
+        .chain(github::issues_by_number(o, n, me, &tracked_issues)?)
+        .collect();
+
     let before = state.store.items(repo.id)?;
     let polled: Vec<PolledPr> = prs
         .iter()
         .map(|(p, role)| PolledPr {
             number: p.number,
+            kind: "pr",
             role,
             open: p.state == "OPEN",
             snapshot: serde_json::to_value(p).unwrap_or_default(),
         })
+        .chain(issues.iter().map(|i| PolledPr {
+            number: i.number,
+            kind: "issue",
+            role: if assigned_numbers.contains(&i.number) {
+                "assignee"
+            } else {
+                "other"
+            },
+            open: i.state == "OPEN",
+            snapshot: serde_json::to_value(i).unwrap_or_default(),
+        }))
         .collect();
     state.store.sync_prs(repo.id, &polled)?;
 
     for item in state.store.items(repo.id)? {
+        let old = before.iter().find(|b| b.id == item.id);
+        if item.kind == "issue" {
+            if old.is_none()
+                && let Some(i) = issues.iter().find(|i| i.number == item.number)
+            {
+                state
+                    .store
+                    .set_last_seen(item.id, i.latest_activity.as_deref().unwrap_or(""))?;
+            }
+            continue;
+        }
         let Some((pr, _)) = prs.iter().find(|(p, _)| p.number == item.number) else {
             continue;
         };
-        let old = before.iter().find(|b| b.id == item.id);
         match old.and_then(|o| serde_json::from_value::<PrSummary>(o.snapshot.clone()).ok()) {
             Some(previous) => crate::notify::pr_changed(app, &item.id.to_string(), &previous, pr),
             // First sight of this PR: what is there now counts as seen, so only later
@@ -106,6 +150,7 @@ pub fn poll(app: &AppHandle) -> Result<(), String> {
                 .set_last_seen(item.id, pr.latest_activity.as_deref().unwrap_or(""))?,
         }
     }
+    crate::lifecycle::after_poll(&state, app)?;
     Ok(())
 }
 

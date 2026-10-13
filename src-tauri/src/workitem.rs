@@ -25,6 +25,41 @@ fn item_repo(state: &AppState, id: i64) -> Result<(WorkItem, Repo), String> {
     Ok((item, repo))
 }
 
+fn issue_summary(item: &WorkItem) -> Result<github::IssueSummary, String> {
+    serde_json::from_value(item.snapshot.clone())
+        .map_err(|e| format!("issue #{}: bad snapshot: {e}", item.number))
+}
+
+/// The repo's default branch, from the clone's `<remote>/HEAD` (set by `git clone`), or
+/// GitHub if the clone does not know it.
+pub fn default_branch(repo: &Repo) -> Result<String, String> {
+    let head = git::git_str(
+        &repo.path,
+        &[
+            "symbolic-ref",
+            "--short",
+            &format!("refs/remotes/{}/HEAD", repo.base_remote),
+        ],
+    );
+    match head
+        .ok()
+        .and_then(|h| h.split_once('/').map(|(_, b)| b.to_owned()))
+    {
+        Some(branch) => Ok(branch),
+        None => github::default_branch(&repo.owner, &repo.name),
+    }
+}
+
+/// The branch the item's changes are compared to: a PR's base, or the default branch for
+/// an issue.
+fn base_ref_of(item: &WorkItem, repo: &Repo) -> Result<String, String> {
+    if item.kind == "issue" {
+        default_branch(repo)
+    } else {
+        Ok(summary(item)?.base_ref)
+    }
+}
+
 fn worktree_of(item: &WorkItem) -> Result<PathBuf, String> {
     item.worktree_path
         .clone()
@@ -63,7 +98,7 @@ pub fn reconcile(state: &AppState) -> Result<(), String> {
     for item in state.store.items(repo.id)? {
         if item.worktree_path.as_deref().is_some_and(|p| !p.exists()) {
             tracing::info!("worktree of PR #{} is gone", item.number);
-            state.store.set_worktree(item.id, None, None)?;
+            state.store.set_worktree(item.id, None, None, false)?;
         }
     }
     Ok(())
@@ -75,17 +110,12 @@ fn reviewed_marker(cwd: &Path, item: &WorkItem) -> Option<String> {
         .filter(|sha| git::commit_exists(cwd, sha))
 }
 
-fn unreviewed(cwd: &Path, item: &WorkItem, pr: &PrSummary, repo: &Repo) -> bool {
+fn unreviewed(cwd: &Path, item: &WorkItem, base_ref: &str, repo: &Repo) -> bool {
     let Ok(head) = git::head(cwd) else {
         return false;
     };
     let marker = reviewed_marker(cwd, item).or_else(|| {
-        git::merge_base(
-            cwd,
-            "HEAD",
-            &format!("{}/{}", repo.base_remote, pr.base_ref),
-        )
-        .ok()
+        git::merge_base(cwd, "HEAD", &format!("{}/{}", repo.base_remote, base_ref)).ok()
     });
     marker.as_deref() != Some(head.as_str()) || git::is_dirty(cwd).unwrap_or(false)
 }
@@ -94,41 +124,85 @@ pub fn inbox(state: &AppState) -> Result<Vec<Row>, String> {
     let Some(repo) = state.store.active_repo()? else {
         return Ok(vec![]);
     };
+    let default = default_branch(&repo).unwrap_or_else(|_| "main".into());
     let rows = state
         .store
         .items(repo.id)?
         .into_iter()
-        // Closed items stay listed only while they still have a worktree (cleanup is later).
-        .filter(|item| item.open || item.worktree_path.is_some())
-        .filter_map(|item| {
-            let pr = summary(&item).ok()?;
-            let worktree = item.worktree_path.clone().filter(|p| p.exists());
-            Some(Row {
-                id: item.id,
-                number: item.number,
-                title: pr.title.clone(),
-                author: pr.author.clone(),
-                role: item.role.clone(),
-                url: pr.url.clone(),
-                is_draft: pr.is_draft,
-                open: item.open,
-                updated_at: pr.updated_at.clone(),
-                ci: pr.ci.clone(),
-                failing_checks: pr.failing_checks.clone(),
-                review_decision: pr.review_decision.clone(),
-                unresolved_threads: pr.unresolved_threads,
-                new_activity: pr.latest_activity.as_deref().unwrap_or("")
-                    > item.last_seen.as_deref().unwrap_or(""),
-                agent: state.terminals.status(&item.id.to_string()),
-                unreviewed: worktree
-                    .as_deref()
-                    .is_some_and(|w| unreviewed(w, &item, &pr, &repo)),
-                worktree: worktree.map(|p| p.to_string_lossy().into_owned()),
-                attention: None,
-            })
-        })
+        // Finished items stay listed only while cleanup is blocked (they keep a worktree).
+        .filter(|item| !item.hidden && (item.open || item.worktree_path.is_some()))
+        .filter_map(|item| row(state, &repo, &default, item))
         .collect();
     Ok(inbox::order(rows))
+}
+
+fn row(state: &AppState, repo: &Repo, default_branch: &str, item: WorkItem) -> Option<Row> {
+    let worktree = item.worktree_path.clone().filter(|p| p.exists());
+    let agent = state.terminals.status(&item.id.to_string());
+    let seen = item.last_seen.clone().unwrap_or_default();
+    let mut row = if item.kind == "issue" {
+        let issue = issue_summary(&item).ok()?;
+        Row {
+            id: item.id,
+            number: item.number,
+            kind: "issue".into(),
+            title: issue.title,
+            author: issue.author,
+            role: item.role.clone(),
+            url: issue.url,
+            is_draft: false,
+            open: item.open,
+            updated_at: issue.updated_at,
+            ci: None,
+            failing_checks: vec![],
+            review_decision: None,
+            unresolved_threads: 0,
+            new_activity: issue.latest_activity.unwrap_or_default() > seen,
+            agent,
+            worktree: None,
+            unreviewed: worktree
+                .as_deref()
+                .is_some_and(|w| unreviewed(w, &item, default_branch, repo)),
+            attention: None,
+            cleanup_blockers: None,
+            issue_number: None,
+        }
+    } else {
+        let pr = summary(&item).ok()?;
+        Row {
+            id: item.id,
+            number: item.number,
+            kind: "pr".into(),
+            title: pr.title.clone(),
+            author: pr.author.clone(),
+            role: item.role.clone(),
+            url: pr.url.clone(),
+            is_draft: pr.is_draft,
+            open: item.open,
+            updated_at: pr.updated_at.clone(),
+            ci: pr.ci.clone(),
+            failing_checks: pr.failing_checks.clone(),
+            review_decision: pr.review_decision.clone(),
+            unresolved_threads: pr.unresolved_threads,
+            new_activity: pr.latest_activity.clone().unwrap_or_default() > seen,
+            agent,
+            worktree: None,
+            unreviewed: worktree
+                .as_deref()
+                .is_some_and(|w| unreviewed(w, &item, &pr.base_ref, repo)),
+            attention: None,
+            cleanup_blockers: None,
+            issue_number: item.issue_number,
+        }
+    };
+    row.worktree = worktree.map(|p| p.to_string_lossy().into_owned());
+    row.cleanup_blockers = item.cleanup_blockers;
+    Some(row)
+}
+
+/// Marks an item done: cleans it up now if nothing would be lost.
+pub fn mark_done(state: &AppState, id: i64) -> Result<crate::lifecycle::Cleanup, String> {
+    crate::lifecycle::clean_up(state, id)
 }
 
 /// Opening an item counts as seeing its current GitHub activity, and keeps it in the
@@ -138,9 +212,11 @@ pub fn mark_seen(state: &AppState, id: i64) -> Result<(), String> {
     if !item.tracked {
         state.store.set_tracked(id)?;
     }
-    if let Ok(pr) = summary(&item)
-        && let Some(at) = pr.latest_activity
-    {
+    let latest = match item.kind.as_str() {
+        "issue" => issue_summary(&item).ok().and_then(|i| i.latest_activity),
+        _ => summary(&item).ok().and_then(|p| p.latest_activity),
+    };
+    if let Some(at) = latest {
         state.store.set_last_seen(id, &at)?;
     }
     Ok(())
@@ -156,10 +232,18 @@ pub fn prepare(state: &AppState, id: i64) -> Result<Prepared, String> {
             note: None,
         });
     }
-    let prepared = worktree::prepare(&repo, &summary(&item)?)?;
-    state
-        .store
-        .set_worktree(id, Some(&prepared.path), Some(&prepared.branch))?;
+    let prepared = if item.kind == "issue" {
+        let issue = issue_summary(&item)?;
+        worktree::prepare_issue(&repo, item.number, &issue.title, &default_branch(&repo)?)?
+    } else {
+        worktree::prepare(&repo, &summary(&item)?)?
+    };
+    state.store.set_worktree(
+        id,
+        Some(&prepared.path),
+        Some(&prepared.branch),
+        !prepared.adopted,
+    )?;
     Ok(prepared)
 }
 
@@ -182,7 +266,12 @@ pub fn session_plan(state: &AppState, data_dir: &Path, id: i64) -> Result<Sessio
         None => uuid::Uuid::new_v4().to_string(),
     };
     state.store.set_session(id, &session_id)?;
-    let context_file = match write_context(data_dir, &repo, item.number) {
+    let written = if item.kind == "issue" {
+        write_issue_context(data_dir, &repo, &item)
+    } else {
+        write_context(data_dir, &repo, item.number)
+    };
+    let context_file = match written {
         Ok(file) => Some(file),
         Err(e) => {
             tracing::warn!(
@@ -221,6 +310,40 @@ fn write_context(data_dir: &Path, repo: &Repo, number: i64) -> Result<PathBuf, S
     let file = dir.join(format!("{}-{}-pr{number}.md", repo.owner, repo.name));
     std::fs::write(&file, crate::context::render(number, &detail, &logs))
         .map_err(|e| e.to_string())?;
+    Ok(file)
+}
+
+fn write_issue_context(data_dir: &Path, repo: &Repo, item: &WorkItem) -> Result<PathBuf, String> {
+    let (_, raw) = github::issue_conversation(&repo.owner, &repo.name, item.number)?;
+    let comments: Vec<(String, String)> = raw["comments"]["nodes"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .map(|c| {
+            (
+                c["author"]["login"].as_str().unwrap_or_default().to_owned(),
+                c["body"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    let branch = item.branch.clone().unwrap_or_default();
+    let md = crate::context::render_issue(
+        item.number,
+        raw["title"].as_str().unwrap_or_default(),
+        raw["url"].as_str().unwrap_or_default(),
+        raw["body"].as_str().unwrap_or_default(),
+        &comments,
+        &branch,
+        &default_branch(repo)?,
+    );
+    let dir = data_dir.join("context");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let file = dir.join(format!(
+        "{}-{}-issue{}.md",
+        repo.owner, repo.name, item.number
+    ));
+    std::fs::write(&file, md).map_err(|e| e.to_string())?;
     Ok(file)
 }
 
@@ -300,6 +423,7 @@ pub fn track(state: &AppState, number: i64) -> Result<i64, String> {
         repo.id,
         &PolledPr {
             number,
+            kind: "pr",
             role,
             open: pr.state == "OPEN",
             snapshot: serde_json::to_value(&pr).unwrap_or_default(),
@@ -309,6 +433,9 @@ pub fn track(state: &AppState, number: i64) -> Result<i64, String> {
 
 pub fn conversation(state: &AppState, id: i64) -> Result<github::Conversation, String> {
     let (item, repo) = item_repo(state, id)?;
+    if item.kind == "issue" {
+        return github::issue_conversation(&repo.owner, &repo.name, item.number).map(|(c, _)| c);
+    }
     github::conversation(&repo.owner, &repo.name, item.number)
 }
 
@@ -366,20 +493,25 @@ pub struct ReviewState {
 
 pub fn review_state(state: &AppState, id: i64) -> Result<ReviewState, String> {
     let (item, repo) = item_repo(state, id)?;
-    let pr = summary(&item)?;
+    let base_ref = base_ref_of(&item, &repo)?;
     let worktree = item.worktree_path.clone().filter(|p| p.exists());
+    // An issue has no PR yet: its review needs the worktree, and nothing goes to GitHub.
+    if worktree.is_none() && item.kind == "issue" {
+        return Err("start working on the issue to review its changes".into());
+    }
+    let pr_head = if item.kind == "issue" {
+        String::new()
+    } else {
+        summary(&item)?.head_sha
+    };
     let dir = review_dir(&item, &repo);
     let head = match &worktree {
         Some(w) => git::head(w)?,
         None => git::git_str(&dir, &["rev-parse", &pull_ref(item.number)])
             .map_err(|_| "the PR head is not fetched yet".to_owned())?,
     };
-    let base = git::merge_base(
-        &dir,
-        &head,
-        &format!("{}/{}", repo.base_remote, pr.base_ref),
-    )
-    .unwrap_or_else(|_| head.clone());
+    let base = git::merge_base(&dir, &head, &format!("{}/{}", repo.base_remote, base_ref))
+        .unwrap_or_else(|_| head.clone());
     let reviewed = reviewed_marker(&dir, &item);
     let after: Vec<String> = match &reviewed {
         Some(r) => git::commits_between(&dir, r, &head)?
@@ -407,11 +539,14 @@ pub fn review_state(state: &AppState, id: i64) -> Result<ReviewState, String> {
             .map(git::is_dirty)
             .transpose()?
             .unwrap_or(false),
-        own: pr.author.eq_ignore_ascii_case(&repo.viewer),
+        own: item.kind == "issue"
+            || item.snapshot["author"]
+                .as_str()
+                .is_some_and(|a| a.eq_ignore_ascii_case(&repo.viewer)),
         base,
-        base_ref: pr.base_ref,
+        base_ref,
         reviewed,
-        pr_head: pr.head_sha,
+        pr_head,
         head,
         commits,
     })

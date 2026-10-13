@@ -4,6 +4,7 @@ mod git;
 mod github;
 mod hooks;
 mod inbox;
+mod lifecycle;
 mod notify;
 mod poller;
 mod store;
@@ -250,6 +251,12 @@ async fn resolve_thread(app: tauri::AppHandle, thread_id: String, resolved: bool
     .await
 }
 
+/// Cleans the item up now if nothing would be lost; otherwise says what blocks it.
+#[tauri::command]
+async fn mark_done(app: tauri::AppHandle, id: i64) -> Res<lifecycle::Cleanup> {
+    blocking(app, move |s| workitem::mark_done(s, id)).await
+}
+
 // --- review ---
 
 #[tauri::command]
@@ -394,6 +401,7 @@ pub fn run() {
             reply_comment,
             post_comment,
             resolve_thread,
+            mark_done,
             self_rss_kib,
         ])
         .build(tauri::generate_context!())

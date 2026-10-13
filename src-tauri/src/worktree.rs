@@ -79,6 +79,116 @@ fn find_existing(
         }))
 }
 
+/// Branch name for an issue: `issue-<N>-<words of the title>`.
+pub fn issue_branch(number: i64, title: &str) -> String {
+    let mut slug = String::new();
+    for word in title
+        .to_lowercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+    {
+        if slug.len() + word.len() + 1 > 40 {
+            break;
+        }
+        if !slug.is_empty() {
+            slug.push('-');
+        }
+        slug.push_str(word);
+    }
+    if slug.is_empty() {
+        format!("issue-{number}")
+    } else {
+        format!("issue-{number}-{slug}")
+    }
+}
+
+/// Where pushes of new branches go: the viewer's fork if the clone has a remote for it,
+/// else the base remote.
+pub fn push_remote(repo: &Repo) -> Result<String, String> {
+    Ok(git::remote_for(&repo.path, &repo.viewer, &repo.name)?
+        .unwrap_or_else(|| repo.base_remote.clone()))
+}
+
+/// A worktree for working on issue `number`: a new branch from the base remote's
+/// `default_branch`, set up so that a plain `git push` creates it on the push remote.
+/// Safe to call again (finds the worktree it created before).
+pub fn prepare_issue(
+    repo: &Repo,
+    number: i64,
+    title: &str,
+    default_branch: &str,
+) -> Result<Prepared, String> {
+    let branch = issue_branch(number, title);
+    let base = fetch(&repo.path, &repo.base_remote, default_branch)?;
+    if let Some(w) = git::worktrees(&repo.path)?
+        .into_iter()
+        .find(|w| !w.main && w.branch.as_deref() == Some(&branch))
+    {
+        return Ok(Prepared {
+            path: w.path,
+            branch,
+            adopted: true,
+            note: None,
+        });
+    }
+    let dir = repo
+        .path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| repo.name.clone());
+    let path = repo
+        .path
+        .parent()
+        .unwrap_or(&repo.path)
+        .join(format!("{dir}_issue{number}"));
+    if path.exists() {
+        return Err(format!(
+            "{} already exists; move it away to start working on the issue",
+            path.display()
+        ));
+    }
+    let path_arg = path.to_string_lossy().into_owned();
+    if git::branch_exists(&repo.path, &branch) {
+        git(
+            &repo.path,
+            &["worktree", "add", "--quiet", &path_arg, &branch],
+        )?;
+    } else {
+        git(
+            &repo.path,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "--no-track",
+                "-b",
+                &branch,
+                &path_arg,
+                &base,
+            ],
+        )?;
+    }
+    let remote = push_remote(repo)?;
+    git(
+        &repo.path,
+        &["config", &format!("branch.{branch}.remote"), &remote],
+    )?;
+    git(
+        &repo.path,
+        &[
+            "config",
+            &format!("branch.{branch}.merge"),
+            &format!("refs/heads/{branch}"),
+        ],
+    )?;
+    Ok(Prepared {
+        path,
+        branch,
+        adopted: false,
+        note: None,
+    })
+}
+
 /// Where a PR's head is fetched for reviewing without a worktree.
 pub fn pull_ref(number: i64) -> String {
     format!("refs/ariekei/pull/{number}/head")
@@ -357,6 +467,79 @@ mod tests {
         assert!(
             git::worktrees(&repo.path).unwrap().len() == 1,
             "no worktree was created"
+        );
+    }
+
+    #[test]
+    fn issue_branches_have_a_short_slug() {
+        assert_eq!(
+            issue_branch(7, "Crash on start-up (Windows)!"),
+            "issue-7-crash-on-start-up-windows"
+        );
+        assert_eq!(issue_branch(8, "???"), "issue-8");
+        let long = issue_branch(
+            9,
+            "Make the snap sync pipeline survive a lost wakeup under heavy load",
+        );
+        assert!(long.len() <= "issue-9-".len() + 40, "{long}");
+        assert_eq!(long, "issue-9-make-the-snap-sync-pipeline-survive-a");
+    }
+
+    #[test]
+    fn issue_worktree_branches_from_the_default_branch_and_pushes_to_the_fork() {
+        let (root, repo, _pr) = setup();
+        // A fork remote of the viewer ("me"), also mapped to the local upstream.
+        let up = git_str(
+            &repo.path,
+            &["config", "--get-regexp", "^url\\..*\\.insteadof$"],
+        )
+        .unwrap();
+        let upstream = up
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .trim_start_matches("url.")
+            .trim_end_matches(".insteadof")
+            .to_owned();
+        git(
+            &repo.path,
+            // --add: keep the existing mapping of origin (a second plain set would replace it).
+            &[
+                "config",
+                "--add",
+                &format!("url.{upstream}.insteadOf"),
+                "git@github.com:me/proj.git",
+            ],
+        )
+        .unwrap();
+        git(
+            &repo.path,
+            &["remote", "add", "mine", "git@github.com:me/proj.git"],
+        )
+        .unwrap();
+
+        let p = prepare_issue(&repo, 7, "Crash on start", "main").unwrap();
+        assert_eq!(canon(&p.path), canon(&root.path().join("proj_issue7")));
+        assert_eq!(
+            (p.branch.as_str(), p.adopted),
+            ("issue-7-crash-on-start", false)
+        );
+        assert_eq!(
+            git::head(&p.path).unwrap(),
+            git_str(&repo.path, &["rev-parse", "origin/main"]).unwrap()
+        );
+        assert_eq!(
+            git_str(
+                &repo.path,
+                &["config", "branch.issue-7-crash-on-start.remote"]
+            )
+            .unwrap(),
+            "mine"
+        );
+        assert!(
+            prepare_issue(&repo, 7, "Crash on start", "main")
+                .unwrap()
+                .adopted
         );
     }
 
