@@ -21,8 +21,20 @@ code navigation or debugging, use your IDE on the same worktree. Tauri 2 (Rust) 
 - **Lifecycle:** an issue gets a branch and worktree; its first push opens a draft PR. Merged
   or closed items are cleaned up automatically, never losing uncommitted or unpushed work.
 
+Language-agnostic: the review diff comes from git, any file type is syntax-highlighted, and the
+agent works in any language. Code navigation and debugging are left to your IDE.
+
 Details: [docs/m1.md](docs/m1.md) (Inbox, PRs, review) and [docs/m2.md](docs/m2.md) (issues,
 cleanup). How the agent integration came about: [docs/spike-results.md](docs/spike-results.md).
+
+## Roadmap
+
+- **Checks for what you're reviewing:** run the repo's build/test command in the worktree
+  (presets detected for Gradle, Maven, npm, Cargo, Go, Make; editable), with per-test results
+  from JUnit XML reports next to the diff, and failures sendable to the agent.
+- **Open in editor:** jump from the review to the same file and line in your IDE (configurable
+  command, e.g. `idea --line {line} {file}` or `code -g {file}:{line}`).
+- **Accept/reject single hunks** in the review, reverting rejected ones and telling the agent.
 
 ## Requirements
 

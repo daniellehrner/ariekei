@@ -12,7 +12,6 @@
 
 <script lang="ts">
   import { MergeView } from "@codemirror/merge";
-  import { java } from "@codemirror/lang-java";
   import { EditorState, type Extension } from "@codemirror/state";
   import { EditorView } from "@codemirror/view";
   import { oneDark } from "@codemirror/theme-one-dark";
@@ -20,6 +19,7 @@
   import { api, type ChangedFile, type ReviewState } from "./lib/api";
   import { gitOverride } from "./lib/gitDiff";
   import { externalLinks } from "./lib/html";
+  import { languageFor } from "./lib/languages";
   import { classify, feedbackMessage, reviewBody, type LineComment, type Ranges } from "./lib/reviewComments";
 
   let {
@@ -92,12 +92,11 @@
   }
 
   const prefersDark = () => matchMedia("(prefers-color-scheme: dark)").matches;
-  const language = (path: string): Extension[] => (path.endsWith(".java") ? [java()] : []);
 
   async function show(path: string) {
     if (!range || !host) return;
     const [from, to] = range;
-    const d = await api.reviewFile(id, from, to, path);
+    const [d, lang] = await Promise.all([api.reviewFile(id, from, to, path), languageFor(path)]);
     merge?.destroy();
     merge = null;
     selection = null;
@@ -107,7 +106,7 @@
       return;
     }
     host.textContent = "";
-    const common = [basicSetup, ...language(path), ...(prefersDark() ? [oneDark] : [])];
+    const common: Extension[] = [basicSetup, ...lang, ...(prefersDark() ? [oneDark] : [])];
     merge = new MergeView({
       parent: host,
       a: { doc: d.old, extensions: [...common, EditorState.readOnly.of(true)] },

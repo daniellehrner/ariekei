@@ -63,6 +63,7 @@ sha42 = branch(upstream, "feature/x", 42, lambda: write(os.path.join(upstream, "
 sha43 = branch(upstream, "feature/y", 43, lambda: (
     write(os.path.join(upstream, "a.txt"), "\n".join(lines[:9] + ["line10 changed"] + lines[10:]) + "\n"),
     write(os.path.join(upstream, "b.txt"), "new file\n"),
+    write(os.path.join(upstream, "c.rs"), "fn main() {\n    let answer = 42; // highlighted\n}\n"),
 ))
 sha44 = branch(upstream, "feature/z", 44, lambda: write(os.path.join(upstream, "c.txt"), "z\n"))
 subprocess.run(["git", "clone", "-q", upstream, clone], check=True)
@@ -167,6 +168,10 @@ try:
           "| scopes:", s.js("return [...document.querySelectorAll('.scopes li')].map(l => l.textContent.trim())"),
           "| files:", s.js("return [...document.querySelectorAll('.files li button')].map(b => b.textContent.trim())"))
     print("[review] worktrees in the clone:", len(git(clone, "worktree", "list").splitlines()))
+    # Any language is highlighted, not just Java: a Rust file gets syntax-styled tokens.
+    s.click(s.wait(".files button", text="c.rs"))
+    s.wait_js("return document.querySelectorAll('.cm-mergeViewEditor .cm-line span[class]').length > 0", timeout=20)
+    print("[review] c.rs styled tokens:", s.js("return document.querySelectorAll('.cm-mergeViewEditor .cm-line span[class]').length"))
     s.click(s.wait(".files button", text="a.txt"))
     s.wait(".cm-mergeViewEditor", timeout=20)
     time.sleep(0.5)
