@@ -201,6 +201,12 @@ mod tests {
     use super::*;
     use crate::git::tests::{commit, repo as git_repo};
 
+    /// `git worktree list` spells paths its own way (`/private/var/…` on macOS,
+    /// `C:/Users/RUNNER~1/…` on Windows); compare where they point.
+    fn canon(p: &Path) -> PathBuf {
+        std::fs::canonicalize(p).unwrap()
+    }
+
     /// A "GitHub" repo with a PR branch, and a clone of it whose origin points there.
     fn setup() -> (tempfile::TempDir, Repo, PrSummary) {
         let root = tempfile::tempdir().unwrap();
@@ -212,7 +218,19 @@ mod tests {
         git(up, &["checkout", "-q", "main"]).unwrap();
 
         let clone = root.path().join("proj");
-        git(root.path(), &["clone", "-q", &up.to_string_lossy(), "proj"]).unwrap();
+        // Keep LF in checkouts so file contents compare the same on Windows runners.
+        git(
+            root.path(),
+            &[
+                "clone",
+                "-q",
+                "-c",
+                "core.autocrlf=false",
+                &up.to_string_lossy(),
+                "proj",
+            ],
+        )
+        .unwrap();
         // origin looks like GitHub's owner/proj; insteadOf maps it to the local upstream.
         let github = "git@github.com:owner/proj.git";
         git(
@@ -261,7 +279,7 @@ mod tests {
         let (root, repo, pr) = setup();
 
         let first = prepare(&repo, &pr).unwrap();
-        assert_eq!(first.path, root.path().join("proj_pr42"));
+        assert_eq!(canon(&first.path), canon(&root.path().join("proj_pr42")));
         assert_eq!((first.branch.as_str(), first.adopted), ("feature/x", false));
         assert_eq!(
             std::fs::read_to_string(first.path.join("a.txt")).unwrap(),
@@ -273,7 +291,10 @@ mod tests {
         );
 
         let again = prepare(&repo, &pr).unwrap();
-        assert_eq!((again.path, again.adopted), (first.path, true));
+        assert_eq!(
+            (canon(&again.path), again.adopted),
+            (canon(&first.path), true)
+        );
     }
 
     #[test]
@@ -359,8 +380,8 @@ mod tests {
 
         let p = prepare(&repo, &pr).unwrap();
         assert_eq!(
-            (p.path, p.branch.as_str(), p.adopted),
-            (mine, "pr-42", true)
+            (canon(&p.path), p.branch.as_str(), p.adopted),
+            (canon(&mine), "pr-42", true)
         );
     }
 }
