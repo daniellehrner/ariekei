@@ -174,7 +174,7 @@ try:
     s.wait(".inbox .row", timeout=30)
     print("[inbox]", [r.split("\n")[0] for r in s.js("return [...document.querySelectorAll('.inbox .row')].map(r => r.innerText)")])
     select(s, 42)
-    s.click(s.wait(".start button"))
+    s.click(s.wait(".item header .title button.primary", text="Start working"))
     s.wait(".terminal", timeout=120)
     print("[start]", s.js("return document.querySelector('.notice')?.textContent"), "| branch:", git(worktree, "rev-parse", "--abbrev-ref", "HEAD"),
           "| upstream:", git(worktree, "rev-parse", "--abbrev-ref", "@{upstream}"))
@@ -219,13 +219,13 @@ try:
     time.sleep(1)
     print("[review]", review_marker(s), "| scopes:", s.js("return [...document.querySelectorAll('.scopes li')].map(l => l.textContent.trim())"))
     state = invoke(s, "review_state", {"id": item_id})
-    diff = invoke(s, "review_file", {"id": item_id, "from": state["marker"], "to": None, "path": "a.txt"})
+    diff = invoke(s, "review_file", {"id": item_id, "from": state["reviewed"], "to": None, "path": "a.txt"})
     print("[review] a.txt since review: hunks", diff["hunks"], "| new side ends with:", diff["new"].splitlines()[-2:])
     s.screenshot(os.path.join(shots, "m1-review-since.png"))
 
     # Leave #42 (its terminal detaches); with ARIEKEI_IDLE_SECS=5 the idle agent closes.
     select(s, 43)
-    s.wait(".start button", timeout=10)
+    s.wait(".item header .title button.primary", timeout=10, text="Start working")
     t0 = time.monotonic()
     wait_agent(s, 42, {"none"}, timeout=90)
     print(f"[idle] #42's agent closed {time.monotonic() - t0:.0f}s after it was left idle")

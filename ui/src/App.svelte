@@ -7,18 +7,9 @@
   import { listenToAgents } from "./lib/agent.svelte";
   import { api, type Repo, type Row } from "./lib/api";
 
-  const SELECTED = "ariekei.selected";
-  const remembered = () => {
-    try {
-      return Number(localStorage.getItem(SELECTED)) || null;
-    } catch {
-      return null;
-    }
-  };
-
   let repo: Repo | null | undefined = $state(undefined);
   let rows: Row[] = $state([]);
-  let selected: number | null = $state(remembered());
+  let selected: number | null = $state(null);
   let pollError: string | null = $state(null);
 
   const current = $derived(rows.find((r) => r.id === selected) ?? null);
@@ -35,13 +26,10 @@
     }, 150);
   }
 
+  // The work item view tells the backend which item is shown (set_active_item), which
+  // also remembers it for the next launch.
   function select(id: number) {
     selected = id;
-    try {
-      localStorage.setItem(SELECTED, String(id));
-    } catch {
-      // Only a convenience: the next launch starts without a selection.
-    }
   }
 
   onMount(() => {
@@ -55,9 +43,12 @@
       // Agent status feeds the Inbox's ordering.
       listen("agent-event", reload),
     ];
-    api.repo().then((r) => {
+    api.repo().then(async (r) => {
       repo = r;
-      if (r) reload();
+      if (r) {
+        selected = await api.selectedItem();
+        reload();
+      }
     });
     return () => unlisten.forEach((p) => p.then((f) => f()));
   });
@@ -67,7 +58,7 @@
   <Connect onconnected={(r) => { repo = r; reload(); }} />
 {:else if repo}
   <div class="app">
-    <Inbox {repo} {rows} {selected} error={pollError} onselect={select} onrefresh={() => api.refresh()} />
+    <Inbox {repo} {rows} {selected} error={pollError} onselect={select} onrefresh={() => api.refresh()} onadded={reload} />
     {#if current}
       <WorkItem row={current} onchanged={reload} />
     {:else}

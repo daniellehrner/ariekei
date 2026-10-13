@@ -80,9 +80,22 @@ fn mark_seen(state: State<'_, AppState>, id: i64) -> Res<()> {
     workitem::mark_seen(&state, id)
 }
 
+/// The item shown in the UI; remembered so the next launch opens it again.
 #[tauri::command]
-fn set_active_item(state: State<'_, AppState>, id: Option<i64>) {
+fn set_active_item(state: State<'_, AppState>, id: Option<i64>) -> Res<()> {
     *state.active_item.lock().unwrap() = id.map(|i| i.to_string());
+    match id {
+        Some(id) => state.store.set_setting("selected_item", &id.to_string()),
+        None => Ok(()),
+    }
+}
+
+#[tauri::command]
+fn selected_item(state: State<'_, AppState>) -> Res<Option<i64>> {
+    Ok(state
+        .store
+        .setting("selected_item")?
+        .and_then(|v| v.parse().ok()))
 }
 
 #[tauri::command]
@@ -303,6 +316,7 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             // ARIEKEI_DATA_DIR keeps test runs away from the real database and state.
             let data_dir = match std::env::var_os("ARIEKEI_DATA_DIR") {
@@ -355,6 +369,7 @@ pub fn run() {
             refresh,
             mark_seen,
             set_active_item,
+            selected_item,
             ui_state,
             set_ui_state,
             prepare_item,
