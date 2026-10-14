@@ -1,23 +1,43 @@
 <script lang="ts">
+  import Button from "./controls/Button.svelte";
+  import Icon from "./controls/Icon.svelte";
+  import Pill from "./controls/Pill.svelte";
   import { api, type Conversation, type Thread } from "./lib/api";
+  import { hunkTail } from "./lib/hunk";
   import { externalLinks, sanitize } from "./lib/html";
 
-  let { id, conv, onchanged }: { id: number; conv: Conversation; onchanged: () => void } = $props();
+  let {
+    id,
+    conv,
+    viewer,
+    onchanged,
+    onshow,
+  }: { id: number; conv: Conversation; viewer: string; onchanged: () => void; onshow?: (path: string) => void } = $props();
 
   let replyTo: string | null = $state(null);
   let replyText = $state("");
   let newComment = $state("");
   let busy = $state(false);
   let error: string | null = $state(null);
-  let showResolved = $state(false);
+  // Resolved threads the user unfolded.
+  let opened: string[] = $state([]);
 
-  const date = (iso: string) => (iso ? new Date(iso).toLocaleString() : "");
-  const REVIEW_STATE: Record<string, string> = {
-    APPROVED: "approved",
-    CHANGES_REQUESTED: "requested changes",
-    COMMENTED: "reviewed",
-    DISMISSED: "review dismissed",
+  const ago = (iso: string) => {
+    if (!iso) return "";
+    const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+    if (days < 1) return new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    if (days === 1) return "yesterday";
+    if (days < 7) return `${days} days ago`;
+    return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
   };
+  const REVIEW_STATE: Record<string, [string, "ok" | "bad" | "neutral" | null]> = {
+    APPROVED: ["Approved", "ok"],
+    CHANGES_REQUESTED: ["Changes requested", "bad"],
+    COMMENTED: ["", null],
+    DISMISSED: ["Dismissed", "neutral"],
+  };
+  const short = (path: string) => (path.split("/").length > 3 ? `…/${path.split("/").slice(-3).join("/")}` : path);
+  const text = (html: string) => new DOMParser().parseFromString(html, "text/html").body.textContent?.trim() ?? "";
 
   // Conversation comments and reviews (with text or a decision), oldest first.
   const timeline = $derived.by(() => {
@@ -32,6 +52,7 @@
 
   const unresolved = $derived(conv.threads.filter((t) => !t.resolved));
   const resolved = $derived(conv.threads.filter((t) => t.resolved));
+  const me = (who: string) => who === viewer;
 
   async function act(f: () => Promise<void>) {
     busy = true;
@@ -60,95 +81,181 @@
     });
 </script>
 
-{#snippet thread(t: Thread)}
-  <article class="thread" class:resolved={t.resolved} data-thread={t.id}>
-    <header>
-      <code>{t.path}{t.line ? `:${t.line}` : ""}</code>
-      {#if t.outdated}<span class="tag">outdated</span>{/if}
-      {#if t.resolved}<span class="tag">resolved</span>{/if}
-      <span class="spacer"></span>
-      <button onclick={() => toggleResolved(t)} disabled={busy}>{t.resolved ? "Unresolve" : "Resolve"}</button>
-    </header>
-    {#if t.diffHunk}<pre class="hunk">{t.diffHunk.split("\n").slice(-6).join("\n")}</pre>{/if}
-    {#each t.comments as c (c.id)}
-      <div class="comment">
-        <div class="who"><strong>{c.author}</strong> <span class="muted">{date(c.createdAt)}</span></div>
+{#snippet avatar(who: string)}
+  <span class="avatar" class:mine={me(who)}>{who.slice(0, 1).toUpperCase()}</span>
+{/snippet}
+
+{#snippet comments(t: Thread)}
+  {#each t.comments as c (c.id)}
+    <div class="comment">
+      {@render avatar(c.author)}
+      <div class="said">
+        <span class="who"><strong>{c.author}</strong> <span class="muted">· {ago(c.createdAt)}</span></span>
         <div class="markdown">{@html sanitize(c.bodyHtml)}</div>
       </div>
-    {/each}
+    </div>
+  {/each}
+{/snippet}
+
+{#snippet thread(t: Thread)}
+  {@const lines = hunkTail(t.diffHunk, 4)}
+  <section class="thread" data-thread={t.id}>
+    <header>
+      <Icon name="comment" size={14} />
+      <code title={t.path}>{short(t.path)}{t.line ? `:${t.line}` : ""}</code>
+      {#if t.outdated}<Pill size="sm">outdated</Pill>{/if}
+      {#if onshow}<Button variant="quiet" size="sm" class="show" onclick={() => onshow(t.path)} data-show-in-review>Show in Review</Button>{/if}
+    </header>
+    {#if lines.length}
+      <pre class="hunk">{#each lines as l}<span class="l {l.kind}"><span class="n">{l.number ?? ""}</span>{l.text}</span>{/each}</pre>
+    {/if}
+    {@render comments(t)}
     {#if replyTo === t.id}
-      <div class="compose">
-        <textarea bind:value={replyText} rows="3" placeholder="Reply (markdown)"></textarea>
-        <div class="actions">
-          <button onclick={() => (replyTo = null)}>Cancel</button>
-          <button class="primary" onclick={() => sendReply(t)} disabled={busy || !replyText.trim()}>Reply on GitHub</button>
+      <div class="compose reply">
+        <textarea bind:value={replyText} rows="3" placeholder="Reply — Markdown supported"></textarea>
+        <div class="buttons">
+          <Button variant="quiet" onclick={() => (replyTo = null)}>Cancel</Button>
+          <Button variant="gh" icon="submit-github" onclick={() => sendReply(t)} disabled={busy || !replyText.trim()} data-send-reply>Reply on GitHub</Button>
         </div>
       </div>
     {:else}
-      <button class="link" onclick={() => { replyTo = t.id; replyText = ""; }}>Reply</button>
+      <div class="thread-actions">
+        <Button icon="reply" size="sm" onclick={() => { replyTo = t.id; replyText = ""; }} data-reply>Reply</Button>
+        <Button variant="quiet" size="sm" icon="check" onclick={() => toggleResolved(t)} disabled={busy} data-resolve>Resolve</Button>
+      </div>
     {/if}
-  </article>
+  </section>
 {/snippet}
 
-<section class="comments" use:externalLinks>
-  {#if error}<p class="error">{error}</p>{/if}
+<div class="comments" role="tabpanel" aria-label="Comments" use:externalLinks>
+  <div class="column">
+    {#if error}<p class="error">{error}</p>{/if}
 
-  <h3>Review threads <span class="muted">{unresolved.length} unresolved, {resolved.length} resolved</span></h3>
-  {#each unresolved as t (t.id)}{@render thread(t)}{:else}<p class="muted">No unresolved review threads.</p>{/each}
-  {#if resolved.length}
-    <button class="link" onclick={() => (showResolved = !showResolved)}>{showResolved ? "Hide" : "Show"} {resolved.length} resolved</button>
-    {#if showResolved}{#each resolved as t (t.id)}{@render thread(t)}{/each}{/if}
-  {/if}
+    {#if conv.threads.length}
+      <h2>Review threads · {unresolved.length} unresolved</h2>
+      {#each unresolved as t (t.id)}{@render thread(t)}{/each}
+      {#each resolved as t (t.id)}
+        {@const open = opened.includes(t.id)}
+        <div class="folded" class:open data-thread={t.id}>
+          <button class="fold" onclick={() => (opened = open ? opened.filter((o) => o !== t.id) : [...opened, t.id])} aria-expanded={open}>
+            <span class="chev" class:open><Icon name="chevron-right" size={14} /></span>
+            <code>{short(t.path)}{t.line ? `:${t.line}` : ""}</code>
+            {#if t.outdated}<Pill size="sm">outdated</Pill>{/if}
+            <Pill size="sm" tone="ok">resolved</Pill>
+            <span class="summary">{t.comments[0] ? `${t.comments[0].author}: ${text(t.comments[0].bodyHtml)}` : ""}</span>
+          </button>
+          {#if open}
+            <div class="unfolded">
+              {@render comments(t)}
+              <Button variant="quiet" size="sm" onclick={() => toggleResolved(t)} disabled={busy} data-unresolve>Unresolve</Button>
+            </div>
+          {/if}
+        </div>
+      {/each}
+    {:else if conv.headRef}
+      <div class="none"><strong>No review threads yet</strong><span>Line comments from GitHub show up here, unresolved first.</span></div>
+    {/if}
 
-  <h3>Conversation</h3>
-  {#each timeline as item}
-    <div class="comment entry">
-      <div class="who">
-        <strong>{item.author}</strong>
-        {#if item.kind === "review"}<span class="rv {item.state}">{REVIEW_STATE[item.state] ?? item.state.toLowerCase()}</span>{/if}
-        <span class="muted">{date(item.at)}</span>
-      </div>
-      {#if item.html.trim()}<div class="markdown">{@html sanitize(item.html)}</div>{/if}
-    </div>
-  {:else}
-    <p class="muted">No comments yet.</p>
-  {/each}
+    <h2 class="conversation">Conversation</h2>
+    {#if timeline.length}
+      <ol class="timeline">
+        {#each timeline as item}
+          {@const look = item.kind === "review" ? REVIEW_STATE[item.state] : null}
+          <li>
+            {@render avatar(item.author)}
+            <div class="said">
+              <span class="who">
+                <strong>{item.author}</strong>
+                <span class="muted">{item.kind === "review" ? "reviewed" : "commented"} · {ago(item.at)}</span>
+                {#if look?.[1]}<Pill size="sm" tone={look[1]}>{look[0]}</Pill>{/if}
+              </span>
+              {#if item.html.trim()}<div class="markdown">{@html sanitize(item.html)}</div>{/if}
+            </div>
+          </li>
+        {/each}
+      </ol>
+    {:else}
+      <p class="muted">No comments yet.</p>
+    {/if}
 
-  <div class="compose">
-    <textarea bind:value={newComment} rows="4" placeholder="Leave a comment on the pull request (markdown)"></textarea>
-    <div class="actions">
-      <button class="primary" onclick={sendComment} disabled={busy || !newComment.trim()}>Comment on GitHub</button>
-    </div>
+    <label class="compose">
+      <span class="label">New comment</span>
+      <textarea bind:value={newComment} rows="3" placeholder="Comment on the {conv.headRef ? 'pull request' : 'issue'} — Markdown supported"></textarea>
+      <span class="buttons">
+        <Button icon="submit-github" onclick={sendComment} disabled={busy || !newComment.trim()} data-send-comment>Comment on GitHub</Button>
+      </span>
+    </label>
   </div>
-</section>
+</div>
 
 <style>
-  .comments { padding: 12px 18px; overflow-y: auto; height: 100%; box-sizing: border-box; }
-  h3 { font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.05em; margin: 16px 0 8px; }
-  h3 .muted { text-transform: none; letter-spacing: 0; font-weight: 400; }
-  .thread { border: 1px solid var(--border); border-radius: 6px; margin: 0 0 10px; padding: 8px 10px; }
-  .thread.resolved { opacity: 0.75; }
-  .thread header { display: flex; gap: 8px; align-items: center; }
-  .spacer { flex: 1; }
-  .hunk { font-family: var(--mono); font-size: 0.8em; background: var(--panel); padding: 6px 8px; margin: 6px 0; overflow-x: auto; border-radius: 4px; }
-  .comment { padding: 6px 0; border-top: 1px solid var(--border); }
-  .comment:first-of-type { border-top: 0; }
-  .entry { border-top: 1px solid var(--border); }
-  .who { font-size: 0.9em; display: flex; gap: 8px; align-items: baseline; }
-  .rv { font-size: 0.9em; }
-  .rv.APPROVED { color: var(--ok); }
-  .rv.CHANGES_REQUESTED { color: var(--bad); }
-  .tag { border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; font-size: 0.8em; color: var(--muted); }
-  .muted { color: var(--muted); }
-  .compose { margin-top: 8px; }
-  .compose textarea { width: 100%; box-sizing: border-box; font: inherit; }
-  .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
-  .primary { border-color: var(--accent); }
-  .link { border: 0; background: none; color: var(--accent); padding: 2px 0; }
-  .error { color: var(--bad); }
-  .markdown :global(pre) { background: var(--panel); padding: 8px; overflow-x: auto; border-radius: 4px; }
-  .markdown :global(code) { font-family: var(--mono); font-size: 0.9em; }
-  .markdown :global(a) { color: var(--accent); }
+  .comments { flex: 1; min-height: 0; height: 100%; box-sizing: border-box; overflow: auto; padding: var(--sp-8) var(--sp-9) 40px; }
+  .column { max-width: 820px; display: flex; flex-direction: column; gap: 14px; }
+  h2 {
+    margin: 0; font-size: var(--fs-11); line-height: var(--lh-11); font-weight: var(--fw-semibold);
+    letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted);
+  }
+  h2.conversation { margin-top: var(--sp-6); }
+  .thread { border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden; background: var(--surface-raised); }
+  .thread header {
+    display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-3) var(--sp-5);
+    background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: var(--fs-12); color: var(--text-muted);
+  }
+  .thread header code { flex: 1; min-width: 0; font-size: 11.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .thread header :global(.show) { color: var(--you); }
+  .hunk {
+    margin: 0; padding: var(--sp-3) 0; font-size: 11.5px; line-height: 18px; background: var(--surface-editor);
+    border-bottom: 1px solid var(--border); overflow-x: auto;
+  }
+  .hunk .l { display: block; padding: 0 var(--sp-5); white-space: pre; }
+  .hunk .add { background: var(--diff-add-line); }
+  .hunk .del { background: var(--diff-del-line); }
+  .hunk .n { display: inline-block; width: 4ch; margin-right: 1ch; text-align: right; color: var(--diff-gutter-text); }
+  .comment { display: flex; gap: var(--sp-5); padding: var(--sp-5) var(--sp-6) 0; }
+  .comment:last-of-type { padding-bottom: var(--sp-5); }
+  .avatar {
+    flex: none; width: 22px; height: 22px; border-radius: 11px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border);
+    display: inline-grid; place-items: center; font-size: 10px; font-weight: var(--fw-semibold); color: var(--text-muted);
+  }
+  .avatar.mine { background: var(--you-bg); box-shadow: none; color: var(--you-strong); }
+  .said { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
+  .who { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-12); }
+  .who strong { font-weight: var(--fw-semibold); }
+  .muted { color: var(--text-muted); }
+  .thread-actions { display: flex; gap: var(--sp-3); padding: var(--sp-4) var(--sp-6); border-top: 1px solid var(--border); }
+  .compose.reply { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4) var(--sp-6); border-top: 1px solid var(--border); }
+  .folded { border: 1px solid var(--border); border-radius: var(--r-lg); }
+  .fold {
+    width: 100%; display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-5);
+    border: 0; border-radius: var(--r-lg); background: transparent; color: var(--text-muted); font-size: var(--fs-12); text-align: left;
+  }
+  .fold code { font-size: 11.5px; }
+  .fold .summary { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chev { display: flex; transition: transform var(--dur-fast) var(--ease); }
+  .chev.open { transform: rotate(90deg); }
+  .unfolded { padding: 0 var(--sp-6) var(--sp-5) var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-4); align-items: flex-start; }
+  .unfolded .comment { padding: 0; }
+  .none { padding: var(--sp-6) 0; display: flex; flex-direction: column; gap: var(--sp-2); color: var(--text-muted); }
+  .none strong { color: var(--text); font-weight: var(--fw-semibold); }
+  .timeline {
+    list-style: none; margin: 0; padding: 0 0 0 11px; display: flex; flex-direction: column; gap: 14px;
+    border-left: 1px solid var(--border);
+  }
+  .timeline li { display: flex; gap: var(--sp-5); margin-left: -11px; }
+  .timeline .avatar { background: var(--surface-0); }
+  .timeline .avatar.mine { background: var(--you-bg); }
+  .compose { display: flex; flex-direction: column; gap: var(--sp-3); }
+  label.compose { margin-top: var(--sp-4); }
+  .compose .label { font-size: var(--fs-12); font-weight: var(--fw-semibold); }
+  .compose textarea { width: 100%; font-size: var(--fs-13); line-height: var(--lh-13); padding: var(--sp-4) var(--sp-5); }
+  .buttons { display: flex; gap: var(--sp-3); justify-content: flex-end; }
+  .error { color: var(--bad); margin: 0; }
+  .markdown { font-size: var(--fs-13); line-height: var(--lh-13); overflow-wrap: anywhere; }
+  .markdown :global(p) { margin: 0 0 var(--sp-2); text-wrap: pretty; }
+  .markdown :global(p:last-child) { margin-bottom: 0; }
+  .markdown :global(pre) { background: var(--surface-2); padding: var(--sp-4); overflow-x: auto; border-radius: var(--r-md); font-size: 12px; }
+  .markdown :global(code) { font-family: var(--font-mono); font-size: 12px; padding: 1px 4px; border-radius: var(--r-sm); background: var(--surface-2); }
+  .markdown :global(pre code) { padding: 0; background: none; }
+  .markdown :global(a) { color: var(--you); }
   .markdown :global(img) { max-width: 100%; }
-  .markdown :global(p) { margin: 4px 0; }
 </style>

@@ -1,37 +1,52 @@
 <script lang="ts">
+  import Icon from "./controls/Icon.svelte";
+  import Pill from "./controls/Pill.svelte";
   import type { Conversation } from "./lib/api";
   import { externalLinks, sanitize } from "./lib/html";
 
   let { conv }: { conv: Conversation } = $props();
 
   const FAILED = ["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"];
-  const outcomeClass = (o: string) => (FAILED.includes(o) ? "bad" : o === "SUCCESS" ? "ok" : o === "SKIPPED" || o === "NEUTRAL" ? "muted" : "warn");
-  const date = (iso: string) => (iso ? new Date(iso).toLocaleString() : "");
-  const latestReviews = $derived.by(() => {
-    // Latest review per reviewer that expresses a decision.
+  const outcome = (o: string) => (FAILED.includes(o) ? "bad" : o === "SUCCESS" ? "ok" : o === "SKIPPED" || o === "NEUTRAL" ? "muted" : "warn");
+  const OUTCOME_TEXT: Record<string, string> = { bad: "failed", ok: "passed", muted: "skipped", warn: "running" };
+  const date = (iso: string) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "");
+  const REVIEW: Record<string, ["ok" | "warn" | "neutral", string]> = {
+    APPROVED: ["ok", "Approved"],
+    CHANGES_REQUESTED: ["warn", "Changes requested"],
+    DISMISSED: ["neutral", "Dismissed"],
+  };
+  // Latest review per reviewer that expresses a decision, then the reviewers still asked.
+  const reviewers = $derived.by(() => {
     const by = new Map<string, string>();
     for (const r of conv.reviews) if (r.state !== "COMMENTED" && r.state !== "PENDING") by.set(r.author, r.state);
-    return [...by.entries()];
+    const decided = [...by.entries()].map(([who, state]) => ({ who, state }));
+    return [...decided, ...conv.requestedReviewers.filter((w) => !by.has(w)).map((who) => ({ who, state: "REQUESTED" }))];
   });
+  const state = $derived.by((): ["ok" | "gh" | "bad" | "neutral", string] => {
+    if (conv.state === "MERGED") return ["gh", "Merged"];
+    if (conv.state === "CLOSED") return ["bad", "Closed"];
+    return conv.isDraft ? ["neutral", "Draft"] : ["ok", "Open"];
+  });
+  const unresolved = $derived(conv.threads.filter((t) => !t.resolved).length);
 </script>
 
-<section class="overview" use:externalLinks>
-  <h2>{conv.title} <span class="num">#{conv.number}</span></h2>
-  <p class="meta">
-    <span class="state {conv.state}">{conv.isDraft && conv.state === "OPEN" ? "draft" : conv.state.toLowerCase()}</span>
-    {#if conv.headRef}
-      <span><strong>{conv.author}</strong> wants to merge <code>{conv.headRef}</code> into <code>{conv.baseRef}</code></span>
-    {:else}
-      <span>opened by <strong>{conv.author}</strong></span>
+<div class="overview" role="tabpanel" aria-label="Overview" use:externalLinks>
+  <article>
+    <div class="meta">
+      <Pill tone={state[0]} data-state={conv.state}>{state[1]}</Pill>
+      {#if conv.headRef}
+        <span><strong>{conv.author}</strong> wants to merge <code>{conv.headRef}</code> into <code>{conv.baseRef}</code></span>
+      {:else}
+        <span><strong>{conv.author}</strong> opened this issue</span>
+      {/if}
+      <span>· opened {date(conv.createdAt)}</span>
+      <a class="gh-link" href={conv.url}>GitHub<Icon name="external" size={12} /></a>
+    </div>
+    {#if conv.labels.length}
+      <div class="labels">{#each conv.labels as l}<span class="label">{l}</span>{/each}</div>
     {/if}
-    <span>opened {date(conv.createdAt)}</span>
-    <a href={conv.url}>on GitHub</a>
-  </p>
-  {#if conv.labels.length}
-    <p class="labels">{#each conv.labels as l}<span class="label">{l}</span>{/each}</p>
-  {/if}
-
-  <div class="columns">
+    <hr />
+    <h2 class="sr-only">{conv.title} #{conv.number}</h2>
     <div class="body markdown">
       {#if conv.bodyHtml.trim()}
         {@html sanitize(conv.bodyHtml)}
@@ -39,60 +54,93 @@
         <p class="muted">No description.</p>
       {/if}
     </div>
-    <aside class="side">
-      {#if conv.headRef}
-      <h3>Reviews</h3>
-      <p>{conv.reviewDecision ? conv.reviewDecision.toLowerCase().replaceAll("_", " ") : "no decision"}</p>
-      <ul>
-        {#each latestReviews as [who, state]}<li><span class="rv {state}">{state.toLowerCase().replaceAll("_", " ")}</span> {who}</li>{/each}
-        {#each conv.requestedReviewers as who}<li><span class="rv">requested</span> {who}</li>{/each}
-      </ul>
-      <h3>Checks</h3>
-      <ul class="checks">
-        {#each conv.checks as c}
-          <li><span class="dot {outcomeClass(c.outcome)}">●</span> {#if c.url}<a href={c.url}>{c.name}</a>{:else}{c.name}{/if} <span class="muted">{c.outcome.toLowerCase()}</span></li>
+  </article>
+  <aside>
+    {#if conv.headRef}
+      <section>
+        <h3>Reviews</h3>
+        {#each reviewers as r}
+          {@const look = REVIEW[r.state] ?? ["neutral", r.state === "REQUESTED" ? "Requested" : r.state.toLowerCase()]}
+          <div class="reviewer">
+            <span class="avatar">{r.who.slice(0, 1).toUpperCase()}</span>
+            <span class="who">{r.who}</span>
+            <Pill tone={look[0]}>{look[1]}</Pill>
+          </div>
         {:else}
-          <li class="muted">No checks.</li>
+          <p class="muted">{conv.reviewDecision ? conv.reviewDecision.toLowerCase().replaceAll("_", " ") : "No reviews yet."}</p>
         {/each}
-      </ul>
-      {/if}
+      </section>
+      <section>
+        <h3>Checks</h3>
+        {#each conv.checks as c}
+          {@const o = outcome(c.outcome)}
+          <svelte:element this={c.url ? "a" : "div"} class="check" href={c.url || undefined}>
+            <span class="mark {o}"><Icon name={o === "ok" ? "check" : o === "bad" ? "x" : "pending"} size={14} /></span>
+            <span class="name">{c.name}</span>
+            <span class="muted">{OUTCOME_TEXT[o]}</span>
+          </svelte:element>
+        {:else}
+          <p class="muted">No checks.</p>
+        {/each}
+      </section>
+    {/if}
+    <section>
       <h3>Discussion</h3>
-      <p>{conv.comments.length} comment{conv.comments.length === 1 ? "" : "s"}, {conv.threads.filter((t) => !t.resolved).length} unresolved of {conv.threads.length} review thread{conv.threads.length === 1 ? "" : "s"}</p>
-    </aside>
-  </div>
-</section>
+      <p class="muted">
+        {conv.comments.length} comment{conv.comments.length === 1 ? "" : "s"}{#if conv.headRef}, {unresolved} unresolved of {conv.threads.length} review thread{conv.threads.length === 1 ? "" : "s"}{/if}.
+      </p>
+    </section>
+  </aside>
+</div>
 
 <style>
-  .overview { padding: 14px 18px; overflow-y: auto; height: 100%; box-sizing: border-box; }
-  h2 { margin: 0 0 6px; font-size: 18px; }
-  .num { color: var(--muted); font-weight: 400; }
-  .meta { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; color: var(--muted); margin: 0 0 8px; }
-  .meta strong { color: var(--text); }
-  .state { border-radius: 10px; padding: 1px 8px; border: 1px solid var(--border); color: var(--text); }
-  .state.OPEN { border-color: var(--ok); }
-  .state.MERGED { border-color: var(--accent); }
-  .state.CLOSED { border-color: var(--bad); }
-  .labels { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 10px; }
-  .label { border: 1px solid var(--border); border-radius: 10px; padding: 0 8px; font-size: 0.85em; }
-  .columns { display: flex; gap: 24px; align-items: flex-start; }
-  .body { flex: 1; min-width: 0; }
-  .side { width: 260px; flex-shrink: 0; font-size: 0.9em; }
-  .side h3 { font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 14px 0 4px; }
-  .side ul { list-style: none; margin: 0; padding: 0; }
-  .side li { margin: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .rv { color: var(--muted); }
-  .rv.APPROVED { color: var(--ok); }
-  .rv.CHANGES_REQUESTED { color: var(--bad); }
-  .dot.ok { color: var(--ok); }
-  .dot.bad { color: var(--bad); }
-  .dot.warn { color: var(--warn); }
-  .dot.muted, .muted { color: var(--muted); }
-  a { color: var(--accent); }
-  .markdown :global(pre) { background: var(--panel); padding: 8px; overflow-x: auto; border-radius: 4px; }
-  .markdown :global(code) { font-family: var(--mono); font-size: 0.9em; }
+  .overview {
+    flex: 1; min-height: 0; height: 100%; box-sizing: border-box; overflow: auto;
+    display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--sp-10); padding: var(--sp-8) var(--sp-9) 40px;
+  }
+  article { flex: 999 1 520px; min-width: 0; max-width: 760px; display: flex; flex-direction: column; gap: 14px; }
+  .meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4); font-size: var(--fs-12); color: var(--text-muted); }
+  .meta strong { font-weight: var(--fw-semibold); color: var(--text); }
+  .meta code { font-size: 11.5px; padding: 1px 5px; border-radius: var(--r-sm); background: var(--surface-2); color: var(--text); }
+  .gh-link { display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--text-muted); }
+  .labels { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+  .label {
+    height: 20px; padding: 0 var(--sp-4); border-radius: 10px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border);
+    font-size: 11.5px; line-height: 20px; color: var(--text-muted);
+  }
+  hr { width: 100%; height: 1px; margin: 0; border: 0; background: var(--border); }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  aside { flex: 1 1 260px; max-width: 320px; display: flex; flex-direction: column; gap: var(--sp-8); font-size: var(--fs-12); line-height: var(--lh-12); }
+  section { display: flex; flex-direction: column; gap: var(--sp-3); }
+  h3 {
+    margin: 0 0 var(--sp-1); font-size: var(--fs-11); font-weight: var(--fw-semibold); letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--text-muted);
+  }
+  .reviewer { display: flex; align-items: center; gap: var(--sp-4); }
+  .avatar {
+    width: 20px; height: 20px; border-radius: 10px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border);
+    display: inline-grid; place-items: center; font-size: 10px; font-weight: var(--fw-semibold); color: var(--text-muted);
+  }
+  .who { flex: 1; font-weight: var(--fw-medium); }
+  .check { display: flex; align-items: center; gap: var(--sp-4); min-height: 24px; color: var(--text); text-decoration: none; }
+  a.check:hover .name { text-decoration: underline; }
+  .check .name { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mark { display: inline-flex; }
+  .mark.ok { color: var(--ok); }
+  .mark.bad { color: var(--bad); }
+  .mark.warn { color: var(--warn); }
+  .mark.muted, .muted { color: var(--text-muted); }
+  p { margin: 0; }
+  .markdown { font-size: 13.5px; line-height: 22px; overflow-wrap: anywhere; }
+  .markdown :global(h1), .markdown :global(h2), .markdown :global(h3) { font-size: var(--fs-15); line-height: var(--lh-15); font-weight: var(--fw-semibold); margin: 6px 0 10px; }
+  .markdown :global(p) { margin: 0 0 10px; text-wrap: pretty; }
+  .markdown :global(ul), .markdown :global(ol) { margin: 0 0 10px; padding-left: 20px; }
+  .markdown :global(pre) { background: var(--surface-2); padding: var(--sp-4) var(--sp-5); overflow-x: auto; border-radius: var(--r-md); font-size: 12px; line-height: 18px; }
+  .markdown :global(code) { font-family: var(--font-mono); font-size: 12px; padding: 1px 5px; border-radius: var(--r-sm); background: var(--surface-2); }
+  .markdown :global(pre code) { padding: 0; background: none; }
   .markdown :global(img) { max-width: 100%; }
-  .markdown :global(a) { color: var(--accent); }
-  .markdown :global(table) { border-collapse: collapse; }
+  .markdown :global(a) { color: var(--you); }
+  .markdown :global(table) { border-collapse: collapse; margin-bottom: 10px; }
   .markdown :global(td), .markdown :global(th) { border: 1px solid var(--border); padding: 3px 6px; }
-  .markdown :global(blockquote) { border-left: 3px solid var(--border); margin: 0; padding-left: 10px; color: var(--muted); }
+  .markdown :global(blockquote) { border-left: 3px solid var(--border); margin: 0 0 10px; padding-left: 10px; color: var(--text-muted); }
 </style>

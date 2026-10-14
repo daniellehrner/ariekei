@@ -31,7 +31,8 @@ Language-agnostic: the review diff comes from git, any file type is syntax-highl
 agent works in any language. Code navigation and debugging are left to your IDE.
 
 Details: [docs/m1.md](docs/m1.md) (Inbox, PRs, review) and [docs/m2.md](docs/m2.md) (issues,
-cleanup). How the agent integration came about: [docs/spike-results.md](docs/spike-results.md).
+cleanup). The UI's design rules: [docs/design.md](docs/design.md). How the agent integration came
+about: [docs/spike-results.md](docs/spike-results.md).
 
 ## Roadmap
 
@@ -74,10 +75,14 @@ exact command.
   restart. No agent.
 - `m1_scenario.py`: the agent in the terminal, review loop, idle shutdown and resume. Uses
   Claude Code (two short turns).
+- `gallery.py`: not a test; screenshots of every screen in light or dark and at any window size,
+  for comparing the UI with the design.
 
 All but `m1_scenario.py` run against `e2e/fake_gh.py`, a stand-in for `gh` that serves fixture
-PRs and issues and records every write instead of sending it. `review_scenario.py` gets its
-review guide from `e2e/fake_claude.py`, a canned `claude -p`. Test-only environment variables:
+PRs and issues and records every write instead of sending it. With `ARIEKEI_CLAUDE` set to
+`e2e/fake_claude.py`, the review guide is canned and the terminal runs a minimal agent that reports
+its status through the hooks like Claude Code (a line with "ask" asks for permission). Test-only
+environment variables:
 
 | Variable | Effect |
 |---|---|
@@ -89,5 +94,5 @@ review guide from `e2e/fake_claude.py`, a canned `claude -p`. Test-only environm
 | `ARIEKEI_CLAUDE_ARGS` | Extra arguments for `claude` |
 | `ARIEKEI_CLAUDE` | Use this `claude` binary |
 
-Screenshots via WebKitWebDriver are slow under Xvfb (40 s or more each); `E2E_SHOTS=0` skips
-them. The scenarios check the DOM, not the pictures.
+Screenshots via WebKitWebDriver can be slow under Xvfb; `E2E_SHOTS=0` skips them. The scenarios
+check the DOM, not the pictures.

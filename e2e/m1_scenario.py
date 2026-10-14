@@ -94,8 +94,7 @@ def row_info(s, number):
     return s.js(
         "const r = document.querySelector(`.inbox .row[data-number='${arguments[0]}']`);"
         "if (!r) return null;"
-        "const known = ['none','starting','ready','working','waitingForPermission','finished','error','stopped'];"
-        "const agent = [...r.querySelector('.agent').classList].find(c => known.includes(c)) ?? null;"
+        "const agent = r.querySelector('[data-agent]')?.dataset.agent ?? null;"
         "return {agent, attention: r.querySelector('.attention')?.textContent ?? null};",
         number,
     )
@@ -134,7 +133,7 @@ def prompt(s, number, text):
 
 
 def tab(s, name):
-    s.click(s.wait("nav button", text=name))
+    s.js("[...document.querySelectorAll('[role=tab]')].find(t => t.textContent.trim().startsWith(arguments[0]))?.click()", name)
 
 
 def review_marker(s):
@@ -154,8 +153,8 @@ s = Session(app)
 try:
     s.type(s.wait(".connect form input"), clone)
     s.click(s.wait(".connect form button"))
-    s.wait(".inbox header .repo", timeout=30)
-    print("[connect]", s.js("return document.querySelector('.inbox .repo').textContent"))
+    s.wait(".inbox [data-repo-menu]", timeout=30)
+    print("[connect]", s.js("return document.querySelector('.inbox [data-repo-menu] .name').textContent"))
 finally:
     s.quit()
 
@@ -174,9 +173,9 @@ try:
     s.wait(".inbox .row", timeout=30)
     print("[inbox]", [r.split("\n")[0] for r in s.js("return [...document.querySelectorAll('.inbox .row')].map(r => r.innerText)")])
     select(s, 42)
-    s.click(s.wait(".item header .title button.primary", text="Start working"))
+    s.click(s.wait("[data-start]"))
     s.wait(".terminal", timeout=120)
-    print("[start]", s.js("return document.querySelector('.notice')?.textContent"), "| branch:", git(worktree, "rev-parse", "--abbrev-ref", "HEAD"),
+    print("[start]", s.js("return document.querySelector('[data-notice]')?.textContent"), "| branch:", git(worktree, "rev-parse", "--abbrev-ref", "HEAD"),
           "| upstream:", git(worktree, "rev-parse", "--abbrev-ref", "@{upstream}"))
     item_id = int(s.wait_js("return Object.keys(window.__ariekeiTerminals || {})[0] || null", timeout=30))
     key = str(item_id)
@@ -202,16 +201,16 @@ try:
     s.screenshot(os.path.join(shots, "m1-terminal.png"))
 
     tab(s, "Review")
-    print("[review]", review_marker(s), "| files:", s.js("return [...document.querySelectorAll('.files li button')].map(b => b.textContent.trim())"))
+    print("[review]", review_marker(s), "| files:", s.js("return [...document.querySelectorAll('.files [data-file]')].map(b => b.dataset.file)"))
     s.screenshot(os.path.join(shots, "m1-review-base.png"))
-    s.click(s.wait("button.primary", text="Mark reviewed"))
+    s.click(s.wait("[data-mark-reviewed]"))
     if s.find(".review header .warn"):
         # Files were not marked reviewed one by one: the coverage guard asks first.
-        print("[mark] asks first:", s.js("return document.querySelector('.review header .warn').textContent"))
-        s.click(s.wait(".review header button", text="Mark anyway"))
-    s.wait(".review .notice", timeout=15)
+        print("[mark] asks first:", s.js("return document.querySelector('.review [data-guard] .text').textContent"))
+        s.click(s.wait(".review [data-guard] button", text="Mark anyway"))
+    s.wait(".review [data-notice]", timeout=15)
     marker = review_marker(s)
-    print("[mark]", s.js("return document.querySelector('.review .notice').textContent"), "|", marker,
+    print("[mark]", s.js("return document.querySelector('.review [data-notice]').textContent"), "|", marker,
           "| ref:", git(clone, "rev-parse", "--short", "refs/ariekei/reviewed/pr-42"))
     time.sleep(1)
     print("[inbox] #42 attention after review:", row_info(s, 42)["attention"])
@@ -220,9 +219,9 @@ try:
     st = prompt(s, 42, "Append a line with the word three to a.txt, then commit with the message 'add three'. Do nothing else.")
     print("[turn 2]", st, "| last commit:", git(worktree, "log", "-1", "--format=%s"))
     tab(s, "Review")
-    s.click(s.wait(".review header button", text="↻"))
+    s.click(s.wait(".review [data-reload]"))
     time.sleep(1)
-    print("[review]", review_marker(s), "| scopes:", s.js("return [...document.querySelectorAll('.scopes li')].map(l => l.textContent.trim())"))
+    print("[review]", review_marker(s), "| scopes:", s.js("return [...document.querySelectorAll('.scopes button, .scope-folded .active-scope, .scope-folded button')].map(l => l.textContent.trim())"))
     state = invoke(s, "review_state", {"id": item_id})
     diff = invoke(s, "review_file", {"id": item_id, "from": state["reviewed"], "to": None, "path": "a.txt", "ignoreWs": False})
     print("[review] a.txt since review: hunks", diff["hunks"], "| new side ends with:", diff["new"].splitlines()[-2:])
@@ -230,7 +229,7 @@ try:
 
     # Leave #42 (its terminal detaches); with ARIEKEI_IDLE_SECS=5 the idle agent closes.
     select(s, 43)
-    s.wait(".item header .title button.primary", timeout=10, text="Start working")
+    s.wait("[data-start]", timeout=10)
     t0 = time.monotonic()
     wait_agent(s, 42, {"none"}, timeout=90)
     print(f"[idle] #42's agent closed {time.monotonic() - t0:.0f}s after it was left idle")

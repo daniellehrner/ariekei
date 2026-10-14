@@ -84,12 +84,12 @@ def select_row(s, number):
 
 
 def header_button(s, text):
-    s.click(s.wait(".item header .title button", text=text))
+    s.click(s.wait(".item header .actions button", text=text))
 
 
 def press_done(s):
     header_button(s, "Done")
-    header_button(s, "Yes, clean up")
+    header_button(s, "Clean up")
 
 
 def wait_gone(s, number, timeout=60):
@@ -106,13 +106,13 @@ try:
     s.type(s.wait(".connect form input"), clone)
     s.click(s.wait(".connect form button"))
     s.wait(".inbox .row[data-number='5']", timeout=60)
-    print("[inbox]", s.js("return [...document.querySelectorAll('.inbox h3')].map(h => h.textContent.trim())"))
+    print("[inbox]", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"))
 
     # --- the issue ---
     select_row(s, 5)
-    s.wait(".overview h2", timeout=30, text="Crash on start")
+    s.wait(".item header .title", timeout=30, text="Crash on start")
     print("[issue] overview:", s.js("return document.querySelector('.overview .meta').innerText.replace(/\\n+/g, ' ')"),
-          "| tabs:", s.js("return [...document.querySelectorAll('.item nav button')].map(b => b.textContent.trim())"))
+          "| tabs:", s.js("return [...document.querySelectorAll('.item [role=tab]')].map(b => b.textContent.trim())"))
     header_button(s, "Start working")
     s.wait(".terminal", timeout=120)
     wt = os.path.join(work, "proj_issue5")
@@ -125,15 +125,15 @@ try:
     commit(wt, "Fix the crash on start")
     open(os.path.join(wt, "notes.txt"), "w").write("todo\n")
     press_done(s)
-    s.wait(".blocked", timeout=30)
-    print("[done] refused:", s.js("return [...document.querySelectorAll('.blocked li')].map(l => l.textContent)"),
+    s.wait("[data-blocked]", timeout=30)
+    print("[done] refused:", s.js("return [...document.querySelectorAll('[data-blocked] li')].map(l => l.textContent)"),
           "| worktree still there:", os.path.isdir(wt))
     os.remove(os.path.join(wt, "notes.txt"))
 
-    s.click(s.wait("nav button", text="Review"))
+    s.js("document.querySelector('[data-tab=review]').click()")
     s.wait(".review .marker", timeout=30)
     print("[review]", " ".join(s.js("return document.querySelector('.review .marker').textContent").split()),
-          "| submit to GitHub offered:", s.js("return !!document.querySelector('.review .comments.quiet button')"))
+          "| submit to GitHub offered:", s.js("return !!document.querySelector('.review [data-open-submit]')"))
 
     # Push: the next poll opens a draft PR and the item becomes that PR.
     git(wt, "push", "-q")
@@ -142,7 +142,7 @@ try:
         time.sleep(0.5)
     created = [w for w in writes() if w.get("post", "").endswith("/pulls")]
     print("[push] PR request:", json.dumps(created[-1]["body"]) if created else None)
-    print("[push] inbox now:", rows(s), "| sections:", s.js("return [...document.querySelectorAll('.inbox h3')].map(h => h.textContent.trim())"))
+    print("[push] inbox now:", rows(s), "| sections:", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"))
     s.wait(".item header .meta", timeout=20, text="from issue #5")
     print("[push] header:", s.js("return document.querySelector('.item header').innerText.replace(/\\n+/g, ' | ')"))
 
@@ -156,10 +156,10 @@ try:
 
     # --- an adopted worktree: kept when its PR is merged ---
     select_row(s, 42)
-    s.wait(".overview h2", timeout=30, text="Feature x")
+    s.wait(".item header .title", timeout=30, text="Feature x")
     header_button(s, "Start working")
-    s.wait(".notice", timeout=60)
-    print("[adopt]", s.js("return document.querySelector('.item .notice').textContent"))
+    s.wait("[data-notice]", timeout=60)
+    print("[adopt]", s.js("return document.querySelector('.item [data-notice]').textContent"))
     set_state(42, "MERGED")
     wait_gone(s, 42)
     print("[merged] adopted worktree kept:", os.path.isdir(mine), "| its branch kept:",

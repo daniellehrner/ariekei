@@ -11,27 +11,47 @@
     // Layout: the commit list expanded, the whole side panel (scopes + files) hidden.
     commitsOpen?: boolean;
     sideHidden?: boolean;
-    // Diff: unified instead of side-by-side, whitespace changes ignored; file order.
+    // Diff: unified instead of side-by-side (unset: unified when the diff column is narrow),
+    // whitespace changes ignored; file order.
     unified?: boolean;
     ignoreWs?: boolean;
     order?: Order;
-    // Sections of the file list the user opened (generated files start folded).
+    // Sections of the file list the user opened (generated files start folded) or folded.
     opened?: string[];
+    folded?: string[];
+    // The guide section of the side panel folded.
+    guideFolded?: boolean;
   }
 </script>
 
 <script lang="ts">
   import { MergeView, goToNextChunk, goToPreviousChunk, unifiedMergeView } from "@codemirror/merge";
+  import { syntaxHighlighting } from "@codemirror/language";
   import { EditorState, type Extension } from "@codemirror/state";
   import { EditorView } from "@codemirror/view";
-  import { oneDark } from "@codemirror/theme-one-dark";
   import { basicSetup } from "codemirror";
+  import { onDestroy } from "svelte";
+  import Button from "./controls/Button.svelte";
+  import Checkbox from "./controls/Checkbox.svelte";
+  import ClaimMark from "./controls/ClaimMark.svelte";
+  import Icon from "./controls/Icon.svelte";
+  import IconButton from "./controls/IconButton.svelte";
+  import InlineConfirm from "./controls/InlineConfirm.svelte";
+  import Kbd from "./controls/Kbd.svelte";
+  import Pill from "./controls/Pill.svelte";
+  import Risk from "./controls/Risk.svelte";
+  import Segmented from "./controls/Segmented.svelte";
+  import Spinner from "./controls/Spinner.svelte";
+  import Toggle from "./controls/Toggle.svelte";
   import { api, type ReviewState } from "./lib/api";
+  import { ariekeiHighlight, ariekeiTheme } from "./lib/codemirrorTheme";
+  import { currentChange } from "./lib/currentChange";
   import { gitOverride } from "./lib/gitDiff";
   import { externalLinks } from "./lib/html";
   import { SHORTCUTS, isTyping } from "./lib/keys";
   import { languageFor } from "./lib/languages";
-  import { fileGuide, flatten, nextUnreviewed, progress, sections, type Guide, type ReviewFile } from "./lib/review";
+  import { layout } from "./lib/layout.svelte";
+  import { fileGuide, flatten, nextUnreviewed, progress, rangeOf, scopeOf, sections, type Guide, type ReviewFile } from "./lib/review";
   import { classify, feedbackMessage, reviewBody, type LineComment, type Ranges } from "./lib/reviewComments";
 
   let {
@@ -39,7 +59,15 @@
     view = $bindable(),
     onchanged,
     canSendToAgent,
-  }: { id: number; view: ReviewViewState; onchanged: () => void; canSendToAgent: boolean } = $props();
+    onprogress,
+  }: {
+    id: number;
+    view: ReviewViewState;
+    onchanged: () => void;
+    canSendToAgent: boolean;
+    /// Files of the scope marked reviewed (for the Review tab's label).
+    onprogress?: (p: { reviewed: number; total: number }) => void;
+  } = $props();
 
   let review = $state<ReviewState | null>(null);
   let files: ReviewFile[] = $state([]);
@@ -48,6 +76,7 @@
   let noticeUrl: string | null = $state(null);
   let confirmMark = $state<string | null>(null);
   let host: HTMLElement | undefined = $state();
+  let main: HTMLElement | undefined = $state();
   // The diff shown: a side-by-side MergeView, or one editor with the unified merge view.
   let merge: MergeView | null = null;
   let unified: EditorView | null = null;
@@ -56,12 +85,15 @@
   let editedPath: string | null = $state(null);
   let editedFile: string | null = null;
   let showKeys = $state(false);
+  // The file shown has only whitespace changes, and they are hidden.
+  let onlyWhitespace = $state(false);
+  // Below 720 px the diff column is too narrow for two sides.
+  let mainWidth = $state(1000);
 
   // The agent's review guide.
   let guide = $state<Guide | null>(null);
   let guideStale = $state(false);
   let guideBusy = $state(false);
-  let guideOpen = $state(true);
   // The guide's line above the diff: one line, or wrapped with the whole change's focus.
   let fileGuideOpen = $state(false);
 
@@ -77,27 +109,23 @@
   const here = $derived(fileGuide(guide, view.file));
   const ordered = $derived(flatten(list));
   const done = $derived(progress(files));
+  const complete = $derived(done.total > 0 && done.reviewed === done.total);
+  const isUnified = $derived(view.unified ?? mainWidth < 720);
+  $effect(() => onprogress?.(done));
 
-  const scope = $derived.by(() => {
-    if (!review) return "all";
-    if (view.scope === "review" && review.reviewed) return "review";
-    if (view.scope && view.scope !== "all" && view.scope !== "review" && review.commits.some((c) => c.sha === view.scope)) return view.scope;
-    if (!view.scope && review.reviewed) return "review";
-    return "all";
+  // The Inbox steps aside on narrow windows while the side panel is open.
+  $effect(() => {
+    layout.reviewPanel = !view.sideHidden;
   });
+  onDestroy(() => (layout.reviewPanel = false));
 
-  // [from, to] of the diff; to = null is the working tree (worktree mode only).
-  const range = $derived.by((): [string, string | null] | null => {
-    if (!review) return null;
-    const head = review.mode === "worktree" ? null : review.head;
-    if (scope === "all") return [review.base, head];
-    if (scope === "review" && review.reviewed) return [review.sinceReviewFrom ?? review.reviewed, head];
-    return [`${scope}^`, scope];
-  });
+  const scope = $derived(scopeOf(review, view.scope));
+  const range = $derived(review ? rangeOf(review, scope) : null);
   // The commit the right side shows; null when it includes uncommitted changes.
   const shownRev = $derived(range ? (range[1] ?? (review?.dirty ? null : review?.head ?? null)) : null);
   const editable = $derived(range?.[1] === null);
   const newCommits = $derived(review?.commits.filter((c) => c.afterReview).length ?? 0);
+  const rebaseConflict = $derived(!!review?.rebaseNote && review.sinceReviewFrom === review.reviewed);
 
   async function load() {
     error = null;
@@ -130,8 +158,6 @@
     }
   }
 
-  const prefersDark = () => matchMedia("(prefers-color-scheme: dark)").matches;
-
   function destroyEditors() {
     merge?.destroy();
     unified?.destroy();
@@ -149,12 +175,14 @@
     destroyEditors();
     selection = null;
     editedPath = null;
+    onlyWhitespace = ignoreWs && !d.binary && d.hunks.length === 0 && !!files.find((f) => f.path === path)?.whitespaceOnly;
     if (d.binary) {
       host.textContent = "Binary file";
       return;
     }
     host.textContent = "";
-    const common: Extension[] = [basicSetup, ...lang, ...(prefersDark() ? [oneDark] : [])];
+    if (onlyWhitespace) return;
+    const common: Extension[] = [basicSetup, ...lang, ariekeiTheme, syntaxHighlighting(ariekeiHighlight)];
     const onUpdate = EditorView.updateListener.of((u) => {
       if (u.docChanged) {
         editedPath = path;
@@ -169,10 +197,10 @@
         }
       }
     });
-    const newDoc = [...common, EditorView.editable.of(to === null), EditorState.readOnly.of(to !== null), onUpdate];
+    const newDoc = [...common, EditorView.editable.of(to === null), EditorState.readOnly.of(to !== null), onUpdate, currentChange];
     const diffConfig = { override: gitOverride(d.old, d.new, d.hunks) };
     const collapseUnchanged = { margin: 3, minSize: 6 };
-    if (view.unified) {
+    if (isUnified) {
       unified = new EditorView({
         parent: host,
         doc: d.new,
@@ -205,10 +233,17 @@
     loadFiles();
   });
   $effect(() => {
-    void view.unified;
+    void isUnified;
     void view.ignoreWs;
     if (view.file && range) show(view.file);
     return destroyEditors;
+  });
+
+  $effect(() => {
+    if (!main) return;
+    const observer = new ResizeObserver(([entry]) => (mainWidth = entry.contentRect.width));
+    observer.observe(main);
+    return () => observer.disconnect();
   });
 
   function setScope(value: string) {
@@ -244,15 +279,22 @@
     else say("All files of this scope are reviewed.");
   }
 
+  // Shortcuts work in the review view (not in fields, the editable diff or the terminal).
   function onKeydown(e: KeyboardEvent) {
     if (e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target)) return;
+    const target = e.target as HTMLElement | null;
+    if (target && target !== document.body && !target.closest?.(".review")) return;
+    if (e.key === "Escape" && !showKeys && selection) {
+      clearSelection();
+      return;
+    }
     const actions: Record<string, () => void> = {
       "]": () => stepFile(1),
       "[": () => stepFile(-1),
       n: () => { const v = newSide(); if (v) goToNextChunk(v); },
       p: () => { const v = newSide(); if (v) goToPreviousChunk(v); },
       r: () => reviewedAndNext(),
-      u: () => (view.unified = !view.unified),
+      u: () => (view.unified = !isUnified),
       w: () => (view.ignoreWs = !view.ignoreWs),
       "?": () => (showKeys = !showKeys),
       Escape: () => (showKeys = false),
@@ -264,12 +306,18 @@
     }
   }
 
+  function clearSelection() {
+    const v = newSide();
+    if (v) v.dispatch({ selection: { anchor: v.state.selection.main.head } });
+    selection = null;
+  }
+
   async function markReviewed() {
     const unreviewed = files.filter((f) => !f.reviewed).length;
     const reason = review?.dirty
-      ? "Uncommitted changes are not part of HEAD and will still show as changed."
+      ? "Uncommitted changes are not part of HEAD and will still show as changed —"
       : unreviewed
-        ? `${unreviewed} file${unreviewed === 1 ? " is" : "s are"} not marked reviewed in this scope.`
+        ? `${unreviewed} file${unreviewed === 1 ? "" : "s"} not marked reviewed in this scope —`
         : null;
     if (reason && !confirmMark) {
       confirmMark = reason;
@@ -291,7 +339,7 @@
       const g = await api.prepareGuide(id);
       guide = g.guide;
       guideStale = g.stale;
-      guideOpen = true;
+      view.guideFolded = false;
       view.order = "guide";
     } catch (e) {
       error = `Could not prepare the review guide: ${e}`;
@@ -300,7 +348,8 @@
     }
   }
 
-  function addComment() {
+  function addComment(e?: SubmitEvent) {
+    e?.preventDefault();
     if (!selection || !view.file || !draft.trim()) return;
     // Edits not saved yet are not part of any version on disk.
     const rev = editedPath === view.file ? null : shownRev;
@@ -338,7 +387,8 @@
     }
   }
 
-  async function submit() {
+  async function submit(e?: SubmitEvent) {
+    e?.preventDefault();
     if (!preview) return;
     busy = true;
     try {
@@ -371,319 +421,563 @@
     }
   }
 
-  function toggleSection(key: string) {
-    const opened = new Set(view.opened ?? []);
-    if (opened.has(key)) opened.delete(key);
-    else opened.add(key);
-    view.opened = [...opened];
+  // Sections start open, except generated files; the user's choice is remembered either way.
+  const isOpen = (s: { key: string; folded: boolean }) =>
+    s.folded ? (view.opened ?? []).includes(s.key) : !(view.folded ?? []).includes(s.key);
+  function toggleSection(s: { key: string; folded: boolean }) {
+    const key = s.key;
+    const flip = (list: string[] | undefined) => {
+      const set = new Set(list ?? []);
+      if (set.has(key)) set.delete(key);
+      else set.add(key);
+      return [...set];
+    };
+    if (s.folded) view.opened = flip(view.opened);
+    else view.folded = flip(view.folded);
   }
-  const isOpen = (s: { key: string; folded: boolean }) => !s.folded || (view.opened ?? []).includes(s.key);
+
+  // Directory sub-headers in Review order and Tree: the directory of each run of files.
+  const dirOf = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
+  const nameOf = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+  const shortDir = (dir: string) => (dir.split("/").length > 3 ? `…/${dir.split("/").slice(-3).join("/")}` : dir);
 
   const short = (sha: string) => sha.slice(0, 8);
-  const linesOf = (c: DraftComment) => (c.fromLine === c.toLine ? `${c.fromLine}` : `${c.fromLine}-${c.toLine}`);
-  const CLAIM: Record<string, string> = { implemented: "✓", partial: "◐", missing: "✗" };
+  const linesOf = (c: DraftComment) => (c.fromLine === c.toLine ? `${c.fromLine}` : `${c.fromLine}–${c.toLine}`);
   const reviewedOf = (path: string) => files.find((f) => f.path === path)?.reviewed ?? false;
+  const statusOf = (f: ReviewFile) => (f.status === "?" ? "U" : f.status);
+  const STATUS_TEXT: Record<string, string> = { A: "added", D: "deleted", U: "uncommitted", M: "modified" };
+  const ORDERS = $derived([
+    { value: "review" as const, label: "Review order" },
+    { value: "tree" as const, label: "Tree" },
+    ...(guide ? [{ value: "guide" as const, label: "Guide" }] : []),
+  ]);
+  const EVENTS = [
+    ["COMMENT", "Comment"],
+    ["APPROVE", "Approve"],
+    ["REQUEST_CHANGES", "Request changes"],
+  ] as const;
 </script>
 
 <svelte:window onkeydown={onKeydown} />
 
-<section class="review" use:externalLinks>
+<div class="review" use:externalLinks role="tabpanel" aria-label="Review">
   <header>
-    <button class="toggle" onclick={() => (view.sideHidden = !view.sideHidden)}
-      title={view.sideHidden ? "Show scopes and files" : "Hide scopes and files (more room for the diff)"}
-      aria-label={view.sideHidden ? "Show scopes and files" : "Hide scopes and files"} data-toggle="side">{view.sideHidden ? "»" : "«"}</button>
     {#if review}
-      <span class="marker">
-        {review.mode === "ref" ? "PR head" : "Worktree"} {short(review.head)} · {review.commits.length} commit{review.commits.length === 1 ? "" : "s"} vs {review.baseRef}
-        {#if review.reviewed} · reviewed {short(review.reviewed)}{newCommits ? `, ${newCommits} new since` : ""}{/if}
-        {review.dirty ? " · uncommitted changes" : ""}
-      </span>
-      <span class="progress" class:complete={done.total > 0 && done.reviewed === done.total} title="Files of this scope marked reviewed" data-progress>
+      <div class="marker" data-marker title="{review.mode === 'ref' ? 'PR head' : 'Worktree'} {review.head}">
+        <Icon name="branch" size={14} />
+        <span class="text">
+          {review.mode === "ref" ? "PR head" : "Worktree"} <code>{short(review.head)}</code> · {review.commits.length} commit{review.commits.length === 1 ? "" : "s"} vs {review.baseRef}{#if review.reviewed}{" · "}reviewed <code class="you">{short(review.reviewed)}</code>{newCommits ? `, ${newCommits} new since` : ""}{/if}{#if review.dirty}{" · "}<span class="warn">uncommitted changes</span>{/if}
+        </span>
+      </div>
+      <span class="progress" class:complete role="status" title="Files of this scope marked reviewed" data-progress>
+        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+          <rect class="frame" x="1" y="1" width="10" height="10" rx="2" />
+          <rect class="fill" x="1" y={1 + 10 * (1 - (done.total ? done.reviewed / done.total : 0))} width="10" height={10 * (done.total ? done.reviewed / done.total : 0)} rx="2" />
+        </svg>
         {done.reviewed}/{done.total} reviewed
       </span>
-      <button onclick={load} title="Reload">↻</button>
+      <IconButton icon="refresh" label="Reload" onclick={() => { load(); loadFiles(); }} data-reload />
       {#if confirmMark}
-        <span class="warn">{confirmMark}</span>
-        <button onclick={markReviewed}>Mark anyway</button>
-        <button onclick={() => (confirmMark = null)}>Cancel</button>
+        <InlineConfirm tone="warn" text={confirmMark} confirm="Mark anyway" onconfirm={markReviewed} oncancel={() => (confirmMark = null)} data-guard />
       {:else}
-        <button class="primary" onclick={markReviewed} disabled={review.reviewed === review.head && !review.dirty}>Mark reviewed</button>
+        <Button icon="reviewed" onclick={markReviewed} disabled={review.reviewed === review.head && !review.dirty} data-mark-reviewed>Mark reviewed</Button>
       {/if}
-      <button onclick={prepareGuide} disabled={guideBusy} title="Claude reads the change and suggests where to start, what each part does, and checks the description's claims">
+      <Button onclick={prepareGuide} loading={guideBusy} data-prepare-guide
+        title="Claude reads the change and suggests where to start, what each part does, and checks the description's claims">
+        {#if !guideBusy}<span class="agent-icon"><Icon name="guide" size={14} /></span>{/if}
         {guideBusy ? "Preparing the guide…" : guide ? "Regenerate guide" : "Prepare review guide"}
-      </button>
+      </Button>
+    {:else}
+      <span class="spacer"></span>
     {/if}
-    <button class="keys" onclick={() => (showKeys = !showKeys)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
-    {#if notice}<span class="notice">{notice}{#if noticeUrl} <a href={noticeUrl}>open</a>{/if}</span>{/if}
+    <IconButton icon="panel" label={view.sideHidden ? "Show the side panel" : "Hide the side panel"} pressed={!view.sideHidden}
+      onclick={() => (view.sideHidden = !view.sideHidden)} data-toggle="side" />
+    <IconButton icon="keyboard" label="Keyboard shortcuts (?)" onclick={() => (showKeys = !showKeys)} data-keys />
   </header>
-  {#if error}<p class="error">{error}</p>{/if}
-  {#if scope === "review" && review?.rebaseNote}<p class="rebased" data-rebase-note>{review.rebaseNote}</p>{/if}
-  {#if showKeys}
-    <div class="shortcuts" role="dialog" aria-label="Keyboard shortcuts">
-      {#each SHORTCUTS as [key, what]}<div><kbd>{key}</kbd> {what}</div>{/each}
+
+  {#if error}
+    <div class="note bad" role="alert"><Icon name="error" size={14} /><span class="grow">{error}</span>
+      <IconButton icon="x" label="Dismiss" size={22} onclick={() => (error = null)} /></div>
+  {/if}
+  {#if notice}
+    <div class="note" class:gh={!!noticeUrl} role="status" data-notice>
+      <Icon name={noticeUrl ? "submit-github" : "info"} size={14} /><span class="grow">{notice}</span>
+      {#if noticeUrl}<a href={noticeUrl}>Open</a>{/if}
+      <IconButton icon="x" label="Dismiss" size={22} onclick={() => (notice = null)} />
+    </div>
+  {/if}
+  {#if scope === "review" && review?.rebaseNote}
+    <div class="note" class:warn-bg={rebaseConflict} role={rebaseConflict ? "alert" : "status"} data-rebase-note>
+      <Icon name={rebaseConflict ? "warning" : "branch"} size={14} /><span class="grow">{review.rebaseNote}</span>
     </div>
   {/if}
 
   <div class="body">
     {#if !view.sideHidden}
-    <nav class="side">
-      {#if guide}
-        <div class="guide" data-guide>
-          <h3>
-            <button class="section" onclick={() => (guideOpen = !guideOpen)} aria-expanded={guideOpen}>{guideOpen ? "▾" : "▸"} Review guide</button>
-            {#if guideStale}<span class="stale" title="The change moved on since the guide was made">outdated</span>{/if}
-          </h3>
-          {#if guideOpen}
-            <p class="focus">{guide.focus}</p>
-            {#if guide.claims.length}
-              <ul class="claims">
-                {#each guide.claims as c}
-                  <li class={c.status} title={c.files.join("\n")}><span class="mark">{CLAIM[c.status] ?? "?"}</span> {c.claim}</li>
-                {/each}
-              </ul>
-            {/if}
-            {#if guide.unexplained.length}
-              <p class="unexplained">Not explained by the description: {guide.unexplained.join(", ")}</p>
-            {/if}
-          {/if}
-        </div>
-      {/if}
-
-      <h3>
-        <button class="section" onclick={() => (view.commitsOpen = !view.commitsOpen)} aria-expanded={!!view.commitsOpen} data-toggle="commits">
-          {view.commitsOpen ? "▾" : "▸"} Scope <span class="count">{review ? `${review.commits.length} commit${review.commits.length === 1 ? "" : "s"}` : ""}</span>
-        </button>
-      </h3>
-      <ul class="scopes">
-        {#if view.commitsOpen}
-          <li><button class:active={scope === "all"} onclick={() => setScope("all")} data-scope="all">All changes vs {review?.baseRef ?? "base"}</button></li>
-          {#if review?.reviewed}
-            <li><button class:active={scope === "review"} onclick={() => setScope("review")} data-scope="review">Since your review</button></li>
-          {/if}
-          {#each review?.commits ?? [] as c (c.sha)}
-            <li>
-              <button class:active={scope === c.sha} onclick={() => setScope(c.sha)} title="{c.subject}&#10;{c.author}, {c.date}">
-                <span class="sha" class:new={c.afterReview}>{short(c.sha)}</span> {c.subject}
-              </button>
-            </li>
-          {/each}
-        {:else}
-          <!-- Collapsed: only the active scope, plus quick switches between the two main ones. -->
-          <li><button class="active" onclick={() => (view.commitsOpen = true)} title="Show all scopes and commits">{scopeLabel}</button></li>
-          {#if scope !== "all"}<li><button onclick={() => setScope("all")} data-scope="all">All changes vs {review?.baseRef ?? "base"}</button></li>{/if}
-          {#if review?.reviewed && scope !== "review"}<li><button onclick={() => setScope("review")} data-scope="review">Since your review</button></li>{/if}
-        {/if}
-      </ul>
-
-      <div class="files-head">
-        <h3>Files</h3>
-        <select bind:value={view.order} aria-label="File order" data-order>
-          <option value="review">Review order</option>
-          <option value="tree">Tree</option>
-          {#if guide}<option value="guide">Guide</option>{/if}
-        </select>
-      </div>
-      {#each list as s (s.key)}
-        <div class="group" data-group={s.key}>
-          <button class="group-title" onclick={() => toggleSection(s.key)} aria-expanded={isOpen(s)}>
-            {isOpen(s) ? "▾" : "▸"} {s.title}
-            {#if s.risk}<span class="risk {s.risk}">{s.risk}</span>{/if}
-            <span class="count">{s.files.filter((f) => f.reviewed).length}/{s.files.length}</span>
+      <aside class="side" aria-label="Review side panel">
+        <section class="guide" data-guide>
+          <button class="section-head" onclick={() => (view.guideFolded = !view.guideFolded)} aria-expanded={!view.guideFolded}>
+            <span class="chev" class:folded={view.guideFolded}><Icon name="chevron-down" size={14} /></span>
+            <span class="grow">Review guide</span>
+            {#if guide && guideStale}<Pill size="xs" tone="warn-fill">outdated</Pill>{/if}
+            <span class="by"><svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="3.5" /></svg>by the agent</span>
           </button>
-          {#if s.intent && isOpen(s)}<p class="intent">{s.intent}</p>{/if}
-          {#if isOpen(s)}
-            <ul class="files">
-              {#each s.files as f (f.path)}
-                <li class:reviewed={f.reviewed}>
-                  <input type="checkbox" checked={f.reviewed} onchange={(e) => setReviewed(f.path, (e.currentTarget as HTMLInputElement).checked)}
-                    aria-label="Reviewed {f.path}" data-reviewed={f.path} />
-                  <button class:active={f.path === view.file} onclick={() => (view.file = f.path)} title={f.path} data-file={f.path}>
-                    <span class="status s{f.status === '?' ? 'U' : f.status}">{f.status === "?" ? "U" : f.status}</span>{f.path}
-                    {#if f.whitespaceOnly}<span class="ws">whitespace</span>{/if}
-                  </button>
-                </li>
-              {/each}
-            </ul>
+          {#if !view.guideFolded}
+            <div class="section-body">
+              {#if guideBusy}
+                <div class="preparing" role="status"><span><Spinner size={12} />Preparing the guide…</span><i style:width="90%"></i><i style:width="70%"></i></div>
+              {:else if guide}
+                <p class="focus">{guide.focus}</p>
+                {#if guide.claims.length}
+                  <ul class="claims">
+                    {#each guide.claims as c}
+                      <li class={c.status}>
+                        <ClaimMark status={c.status} />
+                        <span class="claim"><span>{c.claim}</span>{#if c.files.length}<code>{c.files.map(nameOf).join(", ")}</code>{/if}</span>
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+                {#if guide.unexplained.length}
+                  <p class="unexplained"><strong>Not explained by the description:</strong> {#each guide.unexplained as path, i}<code title={path}>{nameOf(path)}</code>{i < guide.unexplained.length - 1 ? ", " : ""}{/each}</p>
+                {/if}
+              {:else}
+                <p class="muted">No guide yet. <button class="link" onclick={prepareGuide}>Prepare review guide</button> — the agent checks the description and commits against the diff.</p>
+              {/if}
+            </div>
           {/if}
-        </div>
-      {:else}
-        <p class="none">No changes.</p>
-      {/each}
-    </nav>
+        </section>
+
+        <section class="scope">
+          <button class="section-head" onclick={() => (view.commitsOpen = !view.commitsOpen)} aria-expanded={!!view.commitsOpen} data-toggle="commits">
+            <span class="chev" class:folded={!view.commitsOpen}><Icon name="chevron-down" size={14} /></span>
+            <span class="grow">Scope</span>
+            <span class="count">{review ? `${review.commits.length} commit${review.commits.length === 1 ? "" : "s"}` : ""}</span>
+          </button>
+          {#if view.commitsOpen}
+            <div class="scopes" role="listbox" aria-label="Scope">
+              <button role="option" aria-selected={scope === "all"} class:active={scope === "all"} onclick={() => setScope("all")} data-scope="all">
+                <span class="bar"></span><span class="grow">All changes vs {review?.baseRef ?? "base"}</span>
+              </button>
+              {#if review?.reviewed}
+                <button role="option" aria-selected={scope === "review"} class:active={scope === "review"} onclick={() => setScope("review")} data-scope="review">
+                  <span class="bar"></span><span class="grow">Since your review</span>
+                </button>
+              {/if}
+              {#each review?.commits ?? [] as c (c.sha)}
+                <button role="option" aria-selected={scope === c.sha} class:active={scope === c.sha} onclick={() => setScope(c.sha)}
+                  title="{c.subject}&#10;{c.author}, {c.date}" data-scope={c.sha}>
+                  <span class="bar" class:new={c.afterReview}></span>
+                  <code class="sha">{short(c.sha)}</code>
+                  <span class="grow subject">{c.subject}</span>
+                  {#if c.afterReview}<Pill size="xs" tone="you">new</Pill>{/if}
+                </button>
+              {/each}
+            </div>
+          {:else}
+            <!-- Folded: the active scope, plus quick switches between the two main ones. -->
+            <div class="scope-folded">
+              <div class="active-scope" title={scopeLabel}>{scopeLabel}</div>
+              {#if review?.reviewed}
+                <div class="quick" role="group" aria-label="Quick scope">
+                  <button aria-pressed={scope === "all"} onclick={() => setScope("all")} data-scope="all">All vs {review.baseRef}</button>
+                  <button aria-pressed={scope === "review"} onclick={() => setScope("review")} data-scope="review">Since review</button>
+                </div>
+              {/if}
+            </div>
+          {/if}
+        </section>
+
+        <section class="files-section">
+          <div class="files-head">
+            <span class="grow label-caps">Files</span>
+            <Segmented label="File order" options={ORDERS} bind:value={() => order, (v) => (view.order = v)} data-order />
+          </div>
+          {#each list as s (s.key)}
+            {@const open = isOpen(s)}
+            {@const count = s.files.filter((f) => f.reviewed).length}
+            <div class="group" data-group={s.key}>
+              <button class="group-title" onclick={() => toggleSection(s)} aria-expanded={open}>
+                <span class="chev" class:folded={!open}><Icon name="chevron-down" size={14} /></span>
+                {#if s.risk}<Risk risk={s.risk} />{/if}
+                <span class="grow title">{s.title}</span>
+                <span class="count" class:complete={count === s.files.length}>{count}/{s.files.length}</span>
+              </button>
+              {#if s.intent && open}<p class="intent">{s.intent}</p>{/if}
+              {#if open}
+                <ul class="files">
+                  {#each s.files as f, i (f.path)}
+                    {@const dir = dirOf(f.path)}
+                    {#if order !== "guide" && dir && (i === 0 || dirOf(s.files[i - 1].path) !== dir)}
+                      <li class="dir" data-dir={dir} title={dir}>{shortDir(dir)}</li>
+                    {/if}
+                    <li class="file" class:reviewed={f.reviewed} class:current={f.path === view.file} class:deleted={statusOf(f) === "D"}>
+                      <Checkbox checked={f.reviewed} label="Reviewed {f.path}" onchange={(c) => setReviewed(f.path, c)} data-reviewed={f.path} />
+                      <span class="st s{statusOf(f)}" title={STATUS_TEXT[statusOf(f)] ?? statusOf(f)}>{statusOf(f)}</span>
+                      <button class:active={f.path === view.file} onclick={() => (view.file = f.path)} title={f.path} data-file={f.path}>{order === "guide" || !dir ? f.path : nameOf(f.path)}</button>
+                      {#if f.whitespaceOnly}<span class="ws"><Pill size="xs">whitespace</Pill></span>{/if}
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            </div>
+          {:else}
+            <p class="none">No changes.</p>
+          {/each}
+        </section>
+      </aside>
     {/if}
 
-    <div class="main">
-      <div class="toolbar">
+    <div class="main" bind:this={main}>
+      <div class="toolbar" role="toolbar" aria-label="Diff">
         {#if view.sideHidden && ordered.length}
-          <button onclick={() => stepFile(-1)} title="Previous file ([)" aria-label="Previous file">‹</button>
-          <span class="current" title={view.file ?? ""}>{view.file ?? ""} <span class="muted">{fileIndex + 1}/{ordered.length} · {scopeLabel}</span></span>
-          <button onclick={() => stepFile(1)} title="Next file (])" aria-label="Next file">›</button>
+          <IconButton icon="chevron-up" label="Previous file ([)" size={24} onclick={() => stepFile(-1)} />
+          <IconButton icon="chevron-down" label="Next file (])" size={24} onclick={() => stepFile(1)} />
+          <span class="current-file" title={view.file ?? ""}><strong>{view.file ? nameOf(view.file) : ""}</strong> <span class="muted">{fileIndex + 1}/{ordered.length} · {scopeLabel}</span></span>
         {/if}
-        {#if editedPath}<button class="primary" onclick={save}>Save {editedPath}</button>{/if}
+        {#if editedPath}<Button variant="primary" onclick={save} data-save>Save {nameOf(editedPath)}</Button>{/if}
         {#if selection && view.file}
-          <span class="sel">Lines {selection.fromLine}{selection.toLine !== selection.fromLine ? `–${selection.toLine}` : ""}:</span>
-          <input bind:value={draft} placeholder="Review comment" onkeydown={(e) => e.key === "Enter" && addComment()} />
-          <button onclick={addComment} disabled={!draft.trim()}>Add comment</button>
+          <form class="composer" onsubmit={addComment} data-composer>
+            <label for="composer-{id}">Lines {selection.fromLine}{selection.toLine !== selection.fromLine ? `–${selection.toLine}` : ""}:</label>
+            <input id="composer-{id}" bind:value={draft} placeholder="Comment on these lines" />
+            <Button type="submit" variant="primary" disabled={!draft.trim()} data-add-comment>Add comment</Button>
+            <IconButton icon="x" label="Cancel comment" size={24} type="button" onclick={clearSelection} />
+          </form>
         {:else}
-          <span class="hint">Select code to comment on it{editable ? "; edit it to change the file" : ""}.</span>
+          <span class="hint">Select code to comment on it{editable ? "; edit it to change the file" : ""}</span>
         {/if}
-        <span class="spacer"></span>
-        <label class="opt" title="Ignore whitespace (w)"><input type="checkbox" bind:checked={view.ignoreWs} data-opt="ws" /> whitespace</label>
-        <label class="opt" title="Unified diff (u)"><input type="checkbox" bind:checked={view.unified} data-opt="unified" /> unified</label>
+        <Toggle pressed={!!view.ignoreWs} icon="whitespace" kbd="w" title="Hide whitespace (w)" onclick={() => (view.ignoreWs = !view.ignoreWs)} data-opt="ws"><span class="tlabel">Whitespace</span></Toggle>
+        <Toggle pressed={isUnified} icon="unified" kbd="u" title="Unified diff (u)" onclick={() => (view.unified = !isUnified)} data-opt="unified"><span class="tlabel">Unified</span></Toggle>
         {#if view.file}
-          <button class="primary" onclick={reviewedAndNext} disabled={reviewedOf(view.file) && !ordered.some((f) => !f.reviewed)}
+          <span class="divider"></span>
+          <Button variant="you" icon="reviewed" kbd="r" onclick={reviewedAndNext} disabled={reviewedOf(view.file) && !ordered.some((f) => !f.reviewed)}
             title="Mark this file reviewed and go to the next unreviewed one (r)" data-reviewed-next>
-            {reviewedOf(view.file) ? "Next unreviewed (r)" : "Reviewed, next (r)"}
-          </button>
+            {reviewedOf(view.file) ? "Next unreviewed" : "Reviewed, next"}
+          </Button>
         {/if}
       </div>
       {#if here && guide}
         <!-- The guide for the file shown, where it is seen with the side panel closed too. -->
         <div class="file-guide" class:open={fileGuideOpen} data-file-guide>
           <button class="expand" onclick={() => (fileGuideOpen = !fileGuideOpen)} aria-expanded={fileGuideOpen}
-            title={fileGuideOpen ? "Show one line" : "Show all of it, and the guide's focus for the whole change"}>{fileGuideOpen ? "▾" : "▸"}</button>
-          <div class="what">
+            title={fileGuideOpen ? "Show one line" : "Show all of it, and the guide's focus for the whole change"}>
+            <span class="chev" class:folded={!fileGuideOpen}><Icon name="chevron-down" size={14} /></span>
+            <span class="agent-icon"><Icon name="guide" size={14} /></span>
             {#if here.group}
-              <span class="risk {here.group.risk}">{here.group.risk}</span> <strong>{here.group.title}</strong> — {here.group.intent}
+              <Risk risk={here.group.risk} /><strong>{here.group.title}</strong><span class="muted">— {here.group.intent}</span>
             {:else}
               <span class="muted">Not in the review guide.</span>
             {/if}
-            {#each here.claims as c}<span class="claim {c.status}"> · <span class="mark">{CLAIM[c.status] ?? "?"}</span> {c.claim}</span>{/each}
-            {#if here.unexplained}<span class="warn"> · not explained by the description</span>{/if}
-            {#if guideStale}<span class="stale"> · guide outdated</span>{/if}
-            {#if fileGuideOpen}<p class="focus-all"><span class="muted">Focus for the whole change:</span> {guide.focus}</p>{/if}
-          </div>
-        </div>
-      {/if}
-      <div class="diff" bind:this={host}></div>
-
-      {#if view.comments.length || submitting}
-        <div class="comments">
-          <ol>
-            {#each view.comments as c, i}
-              <li>
-                <span class="where">{c.path}:{linesOf(c)}</span> {c.text}
-                <button class="remove" onclick={() => (view.comments = view.comments.filter((_, j) => j !== i))} aria-label="Remove comment">×</button>
-              </li>
-            {/each}
-          </ol>
-          {#if submitting}
-            <div class="submit">
-              <textarea bind:value={summary} rows="3" placeholder="Review summary (optional for a comment review)"></textarea>
-              <div class="events">
-                <label><input type="radio" bind:group={event} value="COMMENT" /> Comment</label>
-                {#if !review?.own}
-                  <label><input type="radio" bind:group={event} value="APPROVE" /> Approve</label>
-                  <label><input type="radio" bind:group={event} value="REQUEST_CHANGES" /> Request changes</label>
-                {/if}
-              </div>
-              {#if preview}
-                <p class="hint">
-                  {preview.line.length} as line comment{preview.line.length === 1 ? "" : "s"} on the PR diff{#if preview.body.length}; {preview.body.length} in the review text (not on lines of the PR diff at its head commit){/if}.
-                </p>
+            {#each here.claims as c}<span class="claim"><ClaimMark status={c.status} />{c.claim}</span>{/each}
+            {#if here.unexplained}<Pill size="sm" tone="warn-fill">not explained by the description</Pill>{/if}
+            {#if guideStale}<Pill size="sm">guide outdated</Pill>{/if}
+          </button>
+          {#if fileGuideOpen}
+            <div class="focus-all">
+              <p><strong>Focus for the whole change:</strong> {guide.focus}</p>
+              {#if guide.claims.length}
+                <ul>{#each guide.claims as c}<li><ClaimMark status={c.status} /> {c.claim}</li>{/each}</ul>
               {/if}
-              <div class="actions">
-                <button onclick={() => (submitting = false)}>Cancel</button>
-                <button class="primary" onclick={submit} disabled={busy || !preview}>Submit to GitHub</button>
-              </div>
-            </div>
-          {:else}
-            <div class="actions">
-              {#if canSendToAgent}<button onclick={sendToAgent}>Send to the agent</button>{/if}
-              {#if review?.prHead}<button class="primary" onclick={openSubmit}>Submit to GitHub…</button>{/if}
             </div>
           {/if}
         </div>
-      {:else}
-        {#if review?.prHead}
-          <div class="comments quiet">
-            <button onclick={openSubmit}>Review on GitHub…</button>
+      {/if}
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <div class="diff" bind:this={host} tabindex="0" role="region"
+        aria-label="Diff of {view.file ?? 'no file'}. Shortcuts: r reviewed and next, ] and [ files, n and p changes, u unified, w whitespace, ? help"></div>
+      {#if onlyWhitespace}
+        <div class="ws-only">
+          <strong>Only whitespace changed in this file</strong>
+          <span class="muted">Whitespace changes are hidden.</span>
+          <Button onclick={() => (view.ignoreWs = false)} kbd="w">Show whitespace</Button>
+        </div>
+      {/if}
+
+      <div class="dock" data-dock>
+        {#if view.comments.length || submitting}
+          <div class="drafts">
+            {#if view.comments.length}
+              <div class="label-caps">Draft comments · {view.comments.length}</div>
+              <ul data-drafts>
+                {#each view.comments as c, i}
+                  <li>
+                    <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><rect width="8" height="8" rx="1.5" /></svg>
+                    <code title={c.path}>{nameOf(c.path)}:{linesOf(c)}</code>
+                    <span class="text" title={c.text}>{c.text}</span>
+                    <IconButton icon="trash" label="Remove draft" size={22} onclick={() => (view.comments = view.comments.filter((_, j) => j !== i))} />
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+            {#if submitting}
+              <form class="submit" onsubmit={submit} aria-label="Submit review to GitHub" data-submit>
+                <label><span class="field">Summary</span>
+                  <textarea bind:value={summary} rows="2" placeholder="Overall comment (optional for a comment review)"></textarea>
+                </label>
+                <div class="events" role="group" aria-label="Event">
+                  <span class="field">Event</span>
+                  {#each EVENTS as [value, label]}
+                    <Button type="button" size="sm" pressed={event === value} class="event" disabled={value !== "COMMENT" && review?.own}
+                      onclick={() => (event = value)} data-event={value}>{label}</Button>
+                  {/each}
+                  {#if review?.own}<span class="faint">No approve on your own PR</span>{/if}
+                </div>
+                {#if preview}
+                  <p class="preview" data-preview>
+                    {preview.line.length} as line comment{preview.line.length === 1 ? "" : "s"} on the PR diff{#if preview.body.length}; {preview.body.length} in the review text (not on lines of the PR diff at its head commit){/if}.
+                  </p>
+                {/if}
+                <div class="actions">
+                  <Button type="button" variant="quiet" onclick={() => (submitting = false)}>Cancel</Button>
+                  <Button type="submit" variant="gh" icon="submit-github" loading={busy} disabled={!preview} data-send-review>Submit to GitHub</Button>
+                </div>
+              </form>
+            {:else}
+              <div class="actions">
+                {#if canSendToAgent}<Button variant="agent" icon="send-to-agent" onclick={sendToAgent} data-send-agent>Send to the agent</Button>{/if}
+                {#if review?.prHead}<Button icon="submit-github" onclick={openSubmit} data-open-submit>Submit to GitHub…</Button>{/if}
+              </div>
+            {/if}
+          </div>
+        {:else}
+          <div class="empty-dock">
+            <span class="grow">No draft comments</span>
+            {#if review?.prHead}<Button variant="quiet" icon="submit-github" onclick={openSubmit} data-open-submit>Review on GitHub…</Button>{/if}
           </div>
         {/if}
-      {/if}
+      </div>
     </div>
   </div>
-</section>
+
+  {#if showKeys}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div class="scrim" role="presentation" onclick={(e) => e.target === e.currentTarget && (showKeys = false)}>
+      <div class="shortcuts" role="dialog" aria-label="Keyboard shortcuts" data-shortcuts>
+        <div class="dialog-head"><strong>Review shortcuts</strong><IconButton icon="x" label="Close" size={24} onclick={() => (showKeys = false)} /></div>
+        <dl>
+          {#each SHORTCUTS as [keys, what]}
+            <dt>{#each keys as k}<kbd>{k}</kbd>{/each}</dt>
+            <dd>{what}</dd>
+          {/each}
+        </dl>
+        <p class="faint">Shortcuts work in the review, outside text fields and the editable diff. <Kbd key="Esc" /> closes.</p>
+      </div>
+    </div>
+  {/if}
+</div>
 
 <style>
-  .review { display: flex; flex-direction: column; height: 100%; min-height: 0; position: relative; }
-  header { display: flex; gap: 10px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-  .marker { font-size: 0.9em; }
-  .progress { font-size: 0.85em; color: var(--muted); border: 1px solid var(--border); border-radius: 10px; padding: 0 8px; }
-  .progress.complete { color: var(--ok); border-color: var(--ok); }
-  .toggle, .keys { padding: 2px 8px; }
-  .side h3 .section { width: auto; border: 0; background: none; padding: 0; font: inherit; text-transform: inherit; letter-spacing: inherit; color: inherit; }
-  .count { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--muted); margin-left: auto; }
-  .current { font-family: var(--mono); font-size: 0.85em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
-  .muted { color: var(--muted); }
-  .warn { color: var(--warn); font-size: 0.85em; }
-  .notice { color: var(--ok); font-size: 0.85em; margin-left: auto; }
-  .notice a { color: var(--accent); }
-  .rebased { margin: 0; padding: 4px 12px; font-size: 0.85em; color: var(--warn); border-bottom: 1px solid var(--border); }
-  .shortcuts { position: absolute; right: 12px; top: 44px; z-index: 5; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-size: 0.85em; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3); }
-  .shortcuts kbd { font-family: var(--mono); display: inline-block; min-width: 3.5em; color: var(--accent); }
-  .primary { border-color: var(--accent); }
-  .body { flex: 1; display: flex; min-height: 0; }
-  .side { width: 320px; flex-shrink: 0; overflow-y: auto; border-right: 1px solid var(--border); padding-bottom: 12px; }
-  h3 { font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 12px 12px 4px; display: flex; gap: 6px; align-items: center; }
-  .side ul { list-style: none; margin: 0; padding: 0; }
-  .side button { width: 100%; text-align: left; border: 0; border-radius: 0; background: none; padding: 3px 12px; font-size: 0.85em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .side button.active { background: var(--panel); }
-  .guide { border-bottom: 1px solid var(--border); padding-bottom: 6px; }
-  .guide .stale { color: var(--warn); text-transform: none; letter-spacing: 0; }
-  .focus { margin: 0 12px 6px; font-size: 0.88em; }
-  .claims { margin: 0 12px 6px !important; font-size: 0.82em; }
-  .claims li { padding: 1px 0; }
-  .claims .mark { display: inline-block; width: 1.2em; }
-  .claims .implemented .mark { color: var(--ok); }
-  .claims .partial .mark { color: var(--warn); }
-  .claims .missing { color: var(--bad); }
-  .unexplained { margin: 0 12px 6px; font-size: 0.82em; color: var(--warn); }
-  .files-head { display: flex; align-items: center; justify-content: space-between; padding-right: 12px; }
-  .files-head select { font-size: 0.8em; }
-  .group-title { display: flex !important; gap: 6px; align-items: center; color: var(--muted); font-size: 0.8em !important; }
-  .risk { border-radius: 3px; padding: 0 4px; font-size: 0.9em; }
-  .risk.high { color: var(--bad); border: 1px solid var(--bad); }
-  .risk.medium { color: var(--warn); border: 1px solid var(--warn); }
-  .risk.low { color: var(--muted); border: 1px solid var(--border); }
-  .intent { margin: 0 12px 2px 26px; font-size: 0.8em; color: var(--muted); }
-  .files li { display: flex; align-items: center; padding-left: 10px; }
-  .files li input { margin: 0 2px 0 0; }
-  .files li button { padding-left: 4px; }
-  .files li.reviewed button { color: var(--muted); }
-  .files button { font-family: var(--mono); }
-  .ws { margin-left: 6px; font-family: system-ui, sans-serif; font-size: 0.85em; color: var(--muted); }
-  .sha { font-family: var(--mono); color: var(--muted); }
-  .sha.new { color: var(--accent); }
-  .status { display: inline-block; width: 1.4em; font-weight: 700; }
-  .sA, .sU { color: var(--ok); }
-  .sD { color: var(--bad); }
-  .sM { color: var(--warn); }
-  .none { padding: 4px 12px; color: var(--muted); font-size: 0.85em; margin: 0; }
-  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  .file-guide { display: flex; gap: 6px; align-items: flex-start; padding: 4px 12px; border-bottom: 1px solid var(--border); font-size: 0.85em; background: var(--sidebar); }
-  .file-guide .expand { border: 0; background: none; padding: 0 2px; color: var(--muted); }
-  .file-guide .what { flex: 1; min-width: 0; }
-  .file-guide:not(.open) .what { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .file-guide .claim.implemented .mark { color: var(--ok); }
-  .file-guide .claim.partial .mark { color: var(--warn); }
-  .file-guide .claim.missing { color: var(--bad); }
-  .file-guide .stale { color: var(--warn); }
-  .focus-all { margin: 4px 0 0; }
-  .toolbar { display: flex; gap: 8px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border); min-height: 30px; flex-wrap: wrap; }
-  .toolbar input:not([type]) { flex: 1; min-width: 120px; }
+  .review { flex: 1; display: flex; flex-direction: column; height: 100%; min-height: 0; position: relative; }
+  .grow { flex: 1; min-width: 0; }
+  .muted { color: var(--text-muted); }
+  .faint { color: var(--text-faint); }
   .spacer { flex: 1; }
-  .opt { font-size: 0.85em; color: var(--muted); display: flex; gap: 4px; align-items: center; }
-  .sel, .hint { color: var(--muted); font-size: 0.85em; }
-  .diff { flex: 1; overflow: auto; min-height: 0; }
-  .diff :global(.cm-editor) { font-size: 13px; }
-  .comments { border-top: 1px solid var(--border); padding: 8px 12px; max-height: 40%; overflow-y: auto; }
-  .comments.quiet { display: flex; justify-content: flex-end; padding: 6px 12px; }
-  .comments ol { margin: 0 0 8px; padding-left: 20px; font-size: 0.9em; }
-  .where { font-family: var(--mono); color: var(--muted); }
-  .remove { border: 0; background: none; color: var(--muted); padding: 0 6px; }
-  .submit textarea { width: 100%; box-sizing: border-box; font: inherit; }
-  .events { display: flex; gap: 14px; margin: 6px 0; font-size: 0.9em; }
-  .actions { display: flex; gap: 8px; justify-content: flex-end; }
-  .error { color: var(--bad); margin: 6px 12px; }
+  .chev { display: flex; transition: transform var(--dur-fast) var(--ease); }
+  .chev.folded { transform: rotate(-90deg); }
+  .agent-icon { display: flex; color: var(--agent); }
+
+  /* Header: what is shown, progress and the review actions. */
+  header {
+    flex: none; display: flex; align-items: center; gap: var(--sp-3); min-height: 38px;
+    padding: 0 var(--sp-4) 0 var(--sp-7); border-bottom: 1px solid var(--border); box-sizing: border-box;
+  }
+  .marker { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-12); color: var(--text-muted); white-space: nowrap; }
+  .marker :global(svg) { flex: none; }
+  .marker .text { overflow: hidden; text-overflow: ellipsis; }
+  .marker code { font-size: 11.5px; color: var(--text); }
+  .marker code.you { color: var(--you-strong); }
+  .warn { color: var(--warn); }
+  .progress {
+    flex: none; display: inline-flex; align-items: center; gap: var(--sp-3); height: 22px; padding: 0 var(--sp-4);
+    border-radius: 11px; font-size: var(--fs-12); font-weight: var(--fw-semibold); background: var(--you-bg); color: var(--you-strong);
+  }
+  .progress .frame { fill: none; stroke: currentColor; stroke-width: 1.5; }
+  .progress .fill { fill: currentColor; }
+  .progress.complete { background: var(--you); color: var(--text-on-accent); }
+
+  /* Notes under the header. */
+  .note {
+    flex: none; display: flex; align-items: center; gap: var(--sp-4); min-height: 28px; padding: var(--sp-1) var(--sp-3) var(--sp-1) var(--sp-7);
+    border-bottom: 1px solid var(--border); background: var(--info-bg); font-size: var(--fs-12); box-sizing: border-box;
+  }
+  .note > :global(svg) { flex: none; color: var(--info); }
+  .note.gh { background: var(--gh-bg); }
+  .note.gh > :global(svg), .note.gh a { color: var(--gh-strong); }
+  .note a { font-weight: var(--fw-medium); text-decoration: none; padding: 0 var(--sp-4); }
+  .note.bad { background: var(--bad-bg); }
+  .note.bad > :global(svg) { color: var(--bad); }
+  .note.warn-bg { background: var(--warn-bg); }
+  .note.warn-bg > :global(svg) { color: var(--warn); }
+
+  .body { flex: 1; display: flex; min-height: 0; }
+
+  /* Side panel: guide, scope, files. */
+  .side {
+    flex: none; width: var(--w-panel); display: flex; flex-direction: column; min-height: 0; overflow-y: auto;
+    border-right: 1px solid var(--border); background: var(--surface-2); font-size: var(--fs-12); line-height: var(--lh-12);
+  }
+  @media (max-width: 1100px) { .side { width: var(--w-panel-compact); } }
+  .side > section { flex: none; display: flex; flex-direction: column; border-bottom: 1px solid var(--border); }
+  .side > section.files-section { flex: 1 0 auto; border-bottom: 0; }
+  .section-head {
+    display: flex; align-items: center; gap: var(--sp-3); height: 30px; padding: 0 var(--sp-5); flex: none;
+    border: 0; border-radius: 0; background: transparent; color: var(--text-muted); text-align: left;
+    font-size: var(--fs-11); font-weight: var(--fw-semibold); letter-spacing: 0.04em; text-transform: uppercase;
+  }
+  .section-head:focus-visible, .group-title:focus-visible { outline-offset: -2px; }
+  .section-head .count { letter-spacing: 0; text-transform: none; font-weight: var(--fw-regular); }
+  .by { display: inline-flex; align-items: center; gap: var(--sp-2); letter-spacing: 0; text-transform: none; font-weight: var(--fw-medium); color: var(--agent-strong); }
+  .by svg { fill: var(--agent); }
+  .section-body { padding: 0 var(--sp-6) var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-5); }
+  .section-body p { margin: 0; }
+  .focus { color: var(--text); text-wrap: pretty; }
+  .claims { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
+  .claims li { display: flex; gap: var(--sp-3); }
+  .claims li > :global(svg) { margin-top: 3px; }
+  .claim { display: flex; flex-direction: column; min-width: 0; }
+  .claim code { font-size: var(--fs-11); color: var(--text-muted); overflow-wrap: anywhere; }
+  .unexplained { padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); background: var(--surface-0); box-shadow: inset 0 0 0 1px var(--border); color: var(--text-muted); }
+  .unexplained strong { font-weight: var(--fw-semibold); color: var(--text); }
+  .unexplained code { font-size: var(--fs-11); }
+  .preparing { display: flex; flex-direction: column; gap: var(--sp-3); color: var(--text-muted); }
+  .preparing span { display: inline-flex; align-items: center; gap: var(--sp-3); }
+  .preparing i { display: block; height: 8px; border-radius: 3px; background: var(--border); }
+  .link { border: 0; padding: 0; background: transparent; color: var(--you); font: inherit; }
+
+  .scopes { padding: 0 var(--sp-3) var(--sp-4); display: flex; flex-direction: column; gap: 1px; }
+  .scopes button {
+    display: flex; align-items: center; gap: var(--sp-4); min-height: 26px; padding: var(--sp-1) var(--sp-3);
+    border: 0; border-radius: var(--r-md); background: transparent; color: var(--text); font-size: var(--fs-12); text-align: left;
+  }
+  .scopes button:hover { background: var(--surface-hover); }
+  .scopes button.active { background: var(--surface-selected); font-weight: var(--fw-semibold); }
+  .scopes button:focus-visible { outline-offset: -2px; }
+  .bar { flex: none; width: 3px; align-self: stretch; border-radius: 2px; }
+  .bar.new { background: var(--you); }
+  .sha { flex: none; font-size: var(--fs-11); color: var(--text-muted); }
+  .subject { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .scope-folded { padding: 0 var(--sp-5) var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-3); }
+  .active-scope { font-weight: var(--fw-semibold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .quick { display: flex; gap: var(--sp-2); }
+  .quick button {
+    height: 22px; padding: 0 var(--sp-4); border: 0; border-radius: var(--r-md); background: transparent;
+    color: var(--text-muted); font-size: 11.5px;
+  }
+  .quick button:hover { background: var(--surface-hover); }
+  .quick button[aria-pressed="true"] { background: var(--surface-raised); box-shadow: inset 0 0 0 1px var(--border); color: var(--text); }
+
+  .files-head { display: flex; align-items: center; gap: var(--sp-3); height: 34px; padding: 0 var(--sp-4) 0 var(--sp-5); flex: none; }
+  .group { display: flex; flex-direction: column; padding-bottom: var(--sp-2); }
+  .group-title {
+    display: flex; align-items: center; gap: var(--sp-3); min-height: 26px; padding: var(--sp-1) var(--sp-5);
+    border: 0; border-radius: 0; background: transparent; color: var(--text); font-size: var(--fs-12); font-weight: var(--fw-semibold); text-align: left;
+  }
+  .group-title .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .group .count { flex: none; font-family: var(--font-mono); font-size: var(--fs-11); font-weight: var(--fw-medium); color: var(--text-muted); }
+  .group .count.complete { color: var(--you-strong); }
+  .intent { margin: 0; padding: 0 var(--sp-5) var(--sp-2) 28px; color: var(--text-muted); font-size: 11.5px; line-height: 16px; }
+  .files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+  .dir { padding: var(--sp-2) var(--sp-5) 1px var(--sp-7); font-family: var(--font-mono); font-size: var(--fs-11); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .file {
+    display: flex; align-items: center; gap: var(--sp-3); height: 24px; margin: 0 var(--sp-2); padding: 0 var(--sp-3) 0 14px;
+    border-radius: var(--r-md);
+  }
+  .file:hover { background: var(--surface-hover); }
+  .file.current { background: var(--surface-selected); box-shadow: inset 0 0 0 1px var(--you-line); }
+  .st { flex: none; width: 12px; font-family: var(--font-mono); font-size: var(--fs-11); font-weight: var(--fw-semibold); text-align: center; color: var(--text-muted); }
+  .st.sA { color: var(--ok); }
+  .st.sD { color: var(--bad); }
+  .st.sU { color: var(--warn); }
+  .file button {
+    flex: 1; min-width: 0; height: 22px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--text);
+    font-size: var(--fs-12); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .file button:focus-visible { outline-offset: 0; }
+  .file.reviewed button { color: var(--text-muted); }
+  .file.current button { font-weight: var(--fw-semibold); color: var(--text); }
+  .file.deleted button { text-decoration: line-through; color: var(--text-muted); }
+  .ws { flex: none; display: flex; }
+  .none { padding: var(--sp-2) var(--sp-6); color: var(--text-muted); margin: 0; }
+
+  /* The diff column. */
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+  .toolbar {
+    flex: none; display: flex; align-items: center; gap: var(--sp-3); min-height: var(--h-toolbar); padding: 0 var(--sp-4);
+    border-bottom: 1px solid var(--border); box-sizing: border-box;
+  }
+  .current-file { flex: 0 1 auto; display: inline-flex; align-items: baseline; gap: var(--sp-3); font-size: var(--fs-12); white-space: nowrap; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
+  .current-file strong { font-family: var(--font-mono); font-weight: var(--fw-semibold); }
+  .hint { flex: 1; min-width: 0; font-size: var(--fs-12); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .composer { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--sp-3); margin: 0; }
+  .composer label { flex: none; font-size: var(--fs-12); font-weight: var(--fw-semibold); color: var(--you-strong); }
+  .composer input { flex: 1; min-width: 120px; height: var(--h-control); }
+  .divider { flex: none; width: 1px; height: 16px; background: var(--border); }
+  @media (max-width: 1200px) { .tlabel { display: none; } }
+
+  .file-guide { flex: none; display: flex; flex-direction: column; border-bottom: 1px solid var(--border); background: var(--surface-0); }
+  .expand {
+    display: flex; align-items: center; gap: var(--sp-4); min-height: 28px; padding: 0 var(--sp-5);
+    border: 0; border-radius: 0; background: transparent; color: var(--text); font-size: var(--fs-12); text-align: left;
+    white-space: nowrap; overflow: hidden;
+  }
+  .expand:focus-visible { outline-offset: -2px; }
+  .expand > :global(*) { flex: none; }
+  .expand strong { font-weight: var(--fw-semibold); }
+  .file-guide .claim { display: inline-flex; flex-direction: row; align-items: center; gap: var(--sp-2); color: var(--text-muted); }
+  .file-guide.open .expand { white-space: normal; flex-wrap: wrap; padding-block: var(--sp-2); }
+  .focus-all { padding: 0 var(--sp-6) var(--sp-5) 50px; display: flex; flex-direction: column; gap: var(--sp-3); font-size: var(--fs-12); line-height: var(--lh-12); }
+  .focus-all p { margin: 0; max-width: 760px; text-wrap: pretty; }
+  .focus-all strong { font-weight: var(--fw-semibold); }
+  .focus-all ul { margin: 0; padding: 0; list-style: none; color: var(--text-muted); display: flex; flex-direction: column; gap: var(--sp-1); }
+
+  .diff { flex: 1; overflow: auto; min-height: 0; background: var(--surface-editor); }
+  .diff:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  .diff :global(.cm-editor) { font-size: var(--fs-code); }
+  .diff :global(.cm-editor.cm-focused) { outline: none; }
+  .ws-only { position: absolute; top: 120px; left: var(--sp-9); display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-3); }
+  .ws-only strong { font-weight: var(--fw-semibold); }
+
+  /* Drafts dock. */
+  .dock { flex: none; border-top: 1px solid var(--border); background: var(--surface-0); display: flex; flex-direction: column; }
+  .empty-dock { display: flex; align-items: center; gap: var(--sp-4); height: 32px; padding: 0 var(--sp-5); font-size: var(--fs-12); color: var(--text-faint); }
+  .drafts { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) var(--sp-5) var(--sp-4); }
+  .drafts > .label-caps { height: 22px; display: flex; align-items: center; }
+  .drafts ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); max-height: 96px; overflow: auto; }
+  .drafts li {
+    display: flex; align-items: center; gap: var(--sp-4); min-height: 24px; padding: 0 var(--sp-2) 0 var(--sp-4);
+    border-radius: var(--r-md); background: var(--you-bg); font-size: var(--fs-12);
+  }
+  .drafts li svg { flex: none; fill: var(--you); }
+  .drafts li code { flex: none; font-size: 11.5px; color: var(--you-strong); }
+  .drafts li .text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .actions { display: flex; justify-content: flex-end; gap: var(--sp-3); padding-top: var(--sp-2); }
+  .submit {
+    margin: var(--sp-2) 0 0; padding: var(--sp-5); border-radius: var(--r-lg); background: var(--surface-raised);
+    box-shadow: inset 0 0 0 1px var(--gh-line); display: flex; flex-direction: column; gap: var(--sp-4); font-size: var(--fs-12);
+  }
+  .submit label { display: flex; flex-direction: column; gap: var(--sp-2); }
+  .field { font-weight: var(--fw-semibold); }
+  .submit textarea { width: 100%; background: var(--surface-editor); }
+  .events { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+  .events .field { margin-right: var(--sp-4); }
+  .events :global(.event[aria-pressed="true"]) { border-color: var(--gh); background: var(--gh-bg); color: var(--gh-strong); }
+  .events .faint { margin-left: var(--sp-3); }
+  .preview { margin: 0; color: var(--text-muted); }
+
+  /* Shortcut overlay. */
+  .scrim { position: absolute; inset: 0; z-index: 30; display: grid; place-items: center; background: var(--scrim); }
+  .shortcuts {
+    width: 380px; max-width: calc(100% - 32px); padding: var(--sp-7) 18px; box-sizing: border-box; border-radius: var(--r-xl);
+    background: var(--surface-raised); box-shadow: var(--shadow-pop); display: flex; flex-direction: column; gap: var(--sp-5);
+  }
+  .dialog-head { display: flex; align-items: center; }
+  .dialog-head strong { flex: 1; font-size: 14px; font-weight: var(--fw-semibold); }
+  dl { margin: 0; display: grid; grid-template-columns: 64px minmax(0, 1fr); row-gap: var(--sp-3); font-size: 12.5px; }
+  dt { display: flex; gap: var(--sp-2); }
+  dd { margin: 0; }
+  dl kbd {
+    min-width: 18px; height: 20px; padding: 0 5px; box-sizing: border-box; border: 1px solid var(--border-strong); border-bottom-width: 2px;
+    border-radius: var(--r-sm); background: var(--surface-0); font-size: var(--fs-11); line-height: 17px; text-align: center;
+  }
+  .shortcuts > p { margin: 0; font-size: 11.5px; }
 </style>

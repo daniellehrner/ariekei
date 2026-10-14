@@ -24,3 +24,23 @@ export const ATTENTION_LABEL: Record<Attention, string> = {
 export function attentionKind(reason: string | null): Attention {
   return (reason && KIND[reason]) || "none";
 }
+
+export type Tab = "overview" | "comments" | "review" | "terminal";
+
+/** The tab that resolves the item's attention reason, if any: the agent needs you → Terminal,
+ *  new comments → Comments, changes to review → Review, CI failing / cleanup blocked → Overview. */
+export function landingTab(reason: string | null, has: { terminal: boolean; review: boolean }): Tab | null {
+  switch (attentionKind(reason)) {
+    case "needs-you":
+      return has.terminal ? "terminal" : null;
+    case "activity":
+      return "comments";
+    case "review":
+      return has.review ? "review" : null;
+    case "blocked":
+    case "ci-failing":
+      return "overview";
+    default:
+      return null;
+  }
+}

@@ -123,7 +123,7 @@ try:
     s.click(s.wait(f".menu [data-repo-id='{ids['proj']}']"))
     wait_repo(s, "proj", 42)
     s.js("document.querySelector(\".inbox .row[data-number='43']\").click()")
-    s.wait(".overview h2", timeout=30, text="Second in proj")
+    s.wait(".item header .title", timeout=30, text="Second in proj")
     print("[switch] back to:", header(s), rows(s), "| title:", s.s("GET", "/title"))
 
     # The other repo in a new window.
@@ -169,8 +169,8 @@ try:
         shown[header(s)] = h
     print("[restart] windows:", sorted(shown))
     to_window(s, shown["owner/proj"])
-    s.wait(".overview h2", timeout=30, text="Second in proj")
-    print("[restart] proj selection kept:", s.js("return document.querySelector('.overview h2').textContent"))
+    s.wait(".item header .title", timeout=30, text="Second in proj")
+    print("[restart] proj selection kept:", s.js("return document.querySelector('.item header .title').textContent"))
 
     # Closing the other window forgets it; the remaining one stays recorded. (Closed the
     # way the window manager does; WebDriver's own close only closes the page.)

@@ -1,12 +1,13 @@
 // Keyboard shortcuts of the review view.
 
-export const SHORTCUTS: [string, string][] = [
-  ["n / p", "next / previous change"],
-  ["] / [", "next / previous file"],
-  ["r", "mark the file reviewed and go to the next unreviewed one"],
-  ["u", "unified / side-by-side diff"],
-  ["w", "ignore whitespace"],
-  ["?", "show these shortcuts"],
+export const SHORTCUTS: [string[], string][] = [
+  [["n", "p"], "Next / previous change"],
+  [["]", "["], "Next / previous file"],
+  [["r"], "Reviewed, next unreviewed"],
+  [["u"], "Unified / side-by-side"],
+  [["w"], "Hide / show whitespace"],
+  [["?"], "Shortcuts"],
+  [["Esc"], "Close this, or the comment"],
 ];
 
 // Keys belong to whatever the user is typing in: fields, the editable diff, the terminal.

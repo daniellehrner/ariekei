@@ -2,52 +2,63 @@
   // The work item's `claude` TUI. The process lives in the backend; this view attaches to
   // it (replaying the scrollback) and detaches on unmount, so switching items is lossless.
   import { Channel } from "@tauri-apps/api/core";
-  import { Terminal, type ITheme } from "@xterm/xterm";
+  import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import { Unicode11Addon } from "@xterm/addon-unicode11";
   import { WebglAddon } from "@xterm/addon-webgl";
   import "@xterm/xterm/css/xterm.css";
   import { onMount } from "svelte";
+  import StatusDot, { AGENT_LABEL } from "./controls/StatusDot.svelte";
+  import type { AgentStatus } from "./lib/agent.svelte";
   import { api } from "./lib/api";
+  import { shortPath } from "./lib/paths";
+  import { monoFont, xtermTheme } from "./lib/xtermTheme";
 
-  let { id, visible = true }: { id: number; visible?: boolean } = $props();
+  let {
+    id,
+    visible = true,
+    status = null,
+    path = "",
+  }: { id: number; visible?: boolean; status?: AgentStatus | null; path?: string } = $props();
 
   let host: HTMLElement;
   let error: string | null = $state(null);
   let fit: FitAddon | null = null;
-
-  function theme(): ITheme {
-    const css = getComputedStyle(document.documentElement);
-    const v = (name: string) => css.getPropertyValue(name).trim();
-    return { background: v("--bg"), foreground: v("--text"), cursor: v("--text"), selectionBackground: v("--user-bg") };
-  }
+  let term: Terminal | null = null;
 
   // Fit only when the panel has a real size (it is display:none while another tab shows).
   function refit() {
     if (fit && host?.clientWidth > 0 && host.clientHeight > 0) fit.fit();
   }
 
+  // Showing the terminal (also from "Answer in Terminal") puts the keyboard there.
   $effect(() => {
-    if (visible) requestAnimationFrame(refit);
+    if (visible)
+      requestAnimationFrame(() => {
+        refit();
+        term?.focus();
+      });
   });
 
   onMount(() => {
-    const term = new Terminal({
+    const t = new Terminal({
       allowProposedApi: true,
-      fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--mono"),
-      fontSize: 13,
+      fontFamily: monoFont(),
+      fontSize: 12.5,
+      lineHeight: 1.35,
       scrollback: 10000,
-      theme: theme(),
+      theme: xtermTheme(),
     });
+    term = t;
     fit = new FitAddon();
-    term.loadAddon(fit);
-    term.loadAddon(new Unicode11Addon());
-    term.unicode.activeVersion = "11";
-    term.open(host);
+    t.loadAddon(fit);
+    t.loadAddon(new Unicode11Addon());
+    t.unicode.activeVersion = "11";
+    t.open(host);
     try {
       const webgl = new WebglAddon();
       webgl.onContextLoss(() => webgl.dispose());
-      term.loadAddon(webgl);
+      t.loadAddon(webgl);
     } catch {
       // No WebGL (e.g. some WebKitGTK setups): xterm keeps its DOM renderer.
     }
@@ -56,31 +67,31 @@
     let opened = false;
     let disposed = false;
     const output = new Channel<ArrayBuffer>();
-    output.onmessage = (data) => term.write(new Uint8Array(data));
+    output.onmessage = (data) => t.write(new Uint8Array(data));
 
     const send = (data: string) => opened && api.termWrite(id, data);
-    term.onData(send);
-    term.onBinary(send);
-    term.onResize(({ cols, rows }) => opened && api.termResize(id, cols, rows));
+    t.onData(send);
+    t.onBinary(send);
+    t.onResize(({ cols, rows }) => opened && api.termResize(id, cols, rows));
 
     const resizeObserver = new ResizeObserver(() => refit());
     resizeObserver.observe(host);
 
     api
-      .termOpen(id, term.cols, term.rows, output)
+      .termOpen(id, t.cols, t.rows, output)
       .then(() => {
         opened = true;
         if (disposed) api.termDetach(id, output.id);
         else {
           // Test handle: lets the e2e scenario read the screen buffer.
-          ((window as any).__ariekeiTerminals ??= {})[String(id)] = term;
-          term.focus();
+          ((window as any).__ariekeiTerminals ??= {})[String(id)] = t;
+          t.focus();
         }
       })
       .catch((e) => (error = String(e)));
 
     const prefersDark = matchMedia("(prefers-color-scheme: dark)");
-    const retheme = () => (term.options.theme = theme());
+    const retheme = () => (t.options.theme = xtermTheme());
     prefersDark.addEventListener("change", retheme);
 
     return () => {
@@ -91,21 +102,41 @@
         // Detach only this view: a newer view of the same item may already be attached.
         api.termDetach(id, output.id);
         const handles = (window as any).__ariekeiTerminals;
-        if (handles?.[String(id)] === term) delete handles[String(id)];
+        if (handles?.[String(id)] === t) delete handles[String(id)];
       }
-      term.dispose();
+      t.dispose();
+      term = null;
     };
   });
 </script>
 
-<section class="terminal" class:hidden={!visible}>
-  {#if error}<p class="error">{error}</p>{/if}
-  <div class="host" bind:this={host}></div>
-</section>
+<div class="terminal" class:hidden={!visible} role="tabpanel" aria-label="Terminal">
+  <div class="frame">
+    <div class="bar">
+      <StatusDot {status} size={12} />
+      <span class="status">{AGENT_LABEL[status ?? "none"]}</span>
+      <span>·</span>
+      <code title={path}>claude — {shortPath(path)}</code>
+    </div>
+    {#if error}<p class="error">{error}</p>{/if}
+    <div class="host" bind:this={host}></div>
+  </div>
+</div>
 
 <style>
-  .terminal { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+  .terminal { flex: 1; display: flex; flex-direction: column; height: 100%; min-height: 0; padding: var(--sp-4); box-sizing: border-box; }
   .terminal.hidden { display: none; }
-  .host { flex: 1; min-height: 0; padding: 6px 0 0 8px; }
-  .error { color: var(--bad); margin: 8px 12px; }
+  .frame {
+    flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
+    border-radius: var(--r-lg); background: var(--term-bg); box-shadow: inset 0 0 0 1px var(--border);
+  }
+  .bar {
+    flex: none; display: flex; align-items: center; gap: var(--sp-4); height: 28px; padding: 0 var(--sp-5);
+    border-bottom: 1px solid var(--border); font-size: 11.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden;
+  }
+  .status { font-weight: var(--fw-medium); color: var(--text); }
+  .bar code { font-size: var(--fs-11); overflow: hidden; text-overflow: ellipsis; }
+  .host { flex: 1; min-height: 0; padding: 10px 14px; }
+  .host :global(.xterm-viewport) { background-color: var(--term-bg) !important; }
+  .error { color: var(--bad); margin: var(--sp-4) var(--sp-6); font-size: var(--fs-12); }
 </style>

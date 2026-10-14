@@ -7,7 +7,7 @@ sent to GitHub. Supports only the calls Ariekei makes.
 
 data.json: {"viewer": "me", "upstream": <path of the "GitHub" git repo, optional>,
             "prs": [{number, title, author, head_ref, head_sha, base_ref, state, requested (bool),
-                     body_html, comments: [...], threads: [...]}],
+                     draft (bool), decision, ci, failing, body_html, comments: [...], threads: [...]}],
             "issues": [{number, title, author, body, assigned (bool), state}]}
 Creating a PR (POST .../pulls) adds it to data.json, so later polls see it; a test can set
 a PR's "state" to MERGED in data.json. A PR or issue with "repo": "<name>" belongs to
@@ -56,17 +56,27 @@ def issue_summary(i):
     }
 
 
+def checks(pr):
+    """CI: "ci" is the rollup state (default SUCCESS); "failing" names the failed check."""
+    state = pr.get("ci", "SUCCESS")
+    runs = [{"__typename": "CheckRun", "name": "build", "conclusion": "SUCCESS", "status": "COMPLETED", "detailsUrl": "https://example.com/build"}]
+    if state == "FAILURE":
+        runs.append({"__typename": "CheckRun", "name": pr.get("failing", "unit-tests"), "conclusion": "FAILURE", "status": "COMPLETED", "detailsUrl": ""})
+    if state == "PENDING":
+        runs.append({"__typename": "CheckRun", "name": "integration-tests", "conclusion": None, "status": "IN_PROGRESS", "detailsUrl": ""})
+    return nodes([{"commit": {"statusCheckRollup": {"state": state, "contexts": nodes(runs)}}}])
+
+
 def summary(pr):
     return {
         "number": pr["number"], "title": pr["title"], "url": f"https://github.com/owner/proj/pull/{pr['number']}",
-        "state": pr.get("state", "OPEN"), "isDraft": False, "updatedAt": "2026-10-13T10:00:00Z",
+        "state": pr.get("state", "OPEN"), "isDraft": pr.get("draft", False), "updatedAt": "2026-10-13T10:00:00Z",
         "author": {"login": pr["author"]}, "headRefName": pr["head_ref"], "headRefOid": head_sha(pr),
-        "baseRefName": pr["base_ref"], "reviewDecision": "REVIEW_REQUIRED",
+        "baseRefName": pr["base_ref"], "reviewDecision": pr.get("decision", "REVIEW_REQUIRED"),
         "headRepository": {"name": "proj", "owner": {"login": "owner"}, "sshUrl": "git@github.com:owner/proj.git", "url": "https://github.com/owner/proj"},
         "reviews": nodes([]), "comments": nodes([]),
         "reviewThreads": nodes([{"isResolved": t.get("resolved", False), "comments": nodes([])} for t in pr.get("threads", [])]),
-        "commits": nodes([{"commit": {"statusCheckRollup": {"state": "SUCCESS", "contexts": nodes([
-            {"__typename": "CheckRun", "name": "build", "conclusion": "SUCCESS", "status": "COMPLETED", "detailsUrl": "https://example.com/build"}])}}}]),
+        "commits": checks(pr),
     }
 
 

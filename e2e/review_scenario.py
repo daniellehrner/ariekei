@@ -103,7 +103,7 @@ def select_row(s, number):
 
 
 def tab(s, name):
-    s.click(s.wait("nav button", text=name))
+    s.js("[...document.querySelectorAll('[role=tab]')].find(t => t.textContent.trim().startsWith(arguments[0]))?.click()", name)
 
 
 def select_lines(s, first, last):
@@ -127,9 +127,9 @@ def dom_click(s, css):
 
 def add_comment(s, first, last, text):
     print("   select:", select_lines(s, first, last))
-    box = s.wait(".toolbar input")
+    box = s.wait("[data-composer] input")
     s.type(box, text)
-    s.click(s.wait(".toolbar button", text="Add comment"))
+    s.click(s.wait("[data-add-comment]"))
 
 
 s = Session(app)
@@ -137,7 +137,7 @@ try:
     s.type(s.wait(".connect form input"), clone)
     s.click(s.wait(".connect form button"))
     s.wait(".inbox .row[data-number='44']", timeout=60)
-    sections = s.js("return [...document.querySelectorAll('.inbox h3')].map(h => h.textContent.trim())")
+    sections = s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))")
     print("[inbox] sections:", sections)
 
     # Find another author's PR and open it.
@@ -145,25 +145,25 @@ try:
     s.wait(".hits [data-hit='43']", timeout=20)
     print("[search] hits:", s.js("return [...document.querySelectorAll('.hits .row')].map(r => r.innerText.replace(/\\n+/g, ' | '))"))
     s.click(s.wait(".hits [data-hit='43']"))
-    s.wait(".overview h2", timeout=30, text="Add y to the parser")
-    print("[overview]", s.js("return document.querySelector('.overview h2').textContent.trim()"), "|",
+    s.wait(".item header .title", timeout=30, text="Add y to the parser")
+    print("[overview]", s.js("return document.querySelector('.item header .title').textContent.trim()"), "|",
           s.js("return document.querySelector('.overview .meta').innerText.replace(/\\n+/g, ' ')"))
     print("[overview] description:", s.js("return document.querySelector('.overview .body').innerText.trim()"),
           "| scripts in it:", s.js("return document.querySelectorAll('.overview .body script, .overview .body [onerror]').length"),
           "| __pwned:", s.js("return window.__pwned ?? null"))
     s.screenshot(os.path.join(shots, "r1-overview.png"))
-    print("[inbox] after opening:", s.js("return [...document.querySelectorAll('.inbox h3')].map(h => h.textContent.trim())"))
+    print("[inbox] after opening:", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"))
 
     tab(s, "Comments")
     s.wait(".thread", timeout=20)
     print("[comments] threads:", s.js("return document.querySelectorAll('.thread').length"), "| conversation:",
-          s.js("return [...document.querySelectorAll('.entry')].map(e => e.innerText.replace(/\\n+/g, ' '))"))
+          s.js("return [...document.querySelectorAll('.timeline li')].map(e => e.innerText.replace(/\\n+/g, ' '))"))
     s.click(s.wait(".thread button", text="Resolve"))
-    s.click(s.wait(".thread .link", text="Reply"))
+    s.click(s.wait(".thread [data-reply]"))
     s.type(s.wait(".thread textarea"), "Because y needs it.")
     s.click(s.wait(".thread button", text="Reply on GitHub"))
-    s.type(s.wait(".comments > .compose textarea"), "Overall looks good.")
-    s.click(s.wait(".comments > .compose button", text="Comment on GitHub"))
+    s.type(s.wait("label.compose textarea"), "Overall looks good.")
+    s.click(s.wait("[data-send-comment]"))
     time.sleep(1.5)
     s.screenshot(os.path.join(shots, "r2-comments.png"))
     for w in writes():
@@ -172,53 +172,53 @@ try:
     tab(s, "Review")
     s.wait(".review .marker", timeout=30)
     print("[review]", " ".join(s.js("return document.querySelector('.review .marker').textContent").split()),
-          "| scopes:", s.js("return [...document.querySelectorAll('.scopes li')].map(l => l.textContent.trim())"),
-          "| files:", s.js("return [...document.querySelectorAll('.files li button')].map(b => b.textContent.trim())"))
+          "| scopes:", s.js("return [...document.querySelectorAll('.scopes button, .scope-folded .active-scope, .scope-folded button')].map(l => l.textContent.trim())"),
+          "| files:", s.js("return [...document.querySelectorAll('.files [data-file]')].map(b => b.dataset.file)"))
     print("[review] worktrees in the clone:", len(git(clone, "worktree", "list").splitlines()))
     # Any language is highlighted, not just Java: a Rust file gets syntax-styled tokens.
-    s.click(s.wait(".files button", text="c.rs"))
+    s.click(s.wait(".files [data-file='c.rs']"))
     s.wait_js("return document.querySelectorAll('.cm-mergeViewEditor .cm-line span[class]').length > 0", timeout=20)
     print("[review] c.rs styled tokens:", s.js("return document.querySelectorAll('.cm-mergeViewEditor .cm-line span[class]').length"))
-    s.click(s.wait(".files button", text="a.txt"))
+    s.click(s.wait(".files [data-file='a.txt']"))
     s.wait(".cm-mergeViewEditor", timeout=20)
     time.sleep(0.5)
     add_comment(s, 10, 10, "Name this better.")
     add_comment(s, 1, 1, "Unrelated: the header is stale.")
-    print("[draft]", s.js("return [...document.querySelectorAll('.review .comments li')].map(l => l.innerText.replace('×','').trim())"))
+    print("[draft]", s.js("return [...document.querySelectorAll('[data-drafts] li')].map(l => l.innerText.replace(/\\s+/g, ' ').trim())"))
     # WebDriver's synthesized clicks miss elements this close to the window's bottom edge
     # under Xvfb (the element at the point is the button itself), so click in the DOM.
-    dom_click(s, ".review .comments .actions button.primary")
+    dom_click(s, "[data-open-submit]")
     s.wait(".submit", timeout=10)
-    s.js("document.querySelector(\".submit input[value='REQUEST_CHANGES']\").click()")
+    s.js("document.querySelector(\"[data-event='REQUEST_CHANGES']\").click()")
     s.type(s.wait(".submit textarea"), "A couple of things.")
-    s.wait_js("return !!document.querySelector('.submit .hint')", timeout=10)
-    print("[submit] preview:", s.js("return document.querySelector('.submit .hint').textContent.trim()"))
+    s.wait_js("return !!document.querySelector('[data-preview]')", timeout=10)
+    print("[submit] preview:", s.js("return document.querySelector('[data-preview]').textContent.trim()"))
     s.screenshot(os.path.join(shots, "r3-submit.png"))
-    dom_click(s, ".submit .actions button.primary")
-    s.wait(".review .notice", timeout=15)
-    print("[submit]", s.js("return document.querySelector('.review .notice').textContent.trim()"))
+    dom_click(s, "[data-send-review]")
+    s.wait(".review [data-notice]", timeout=15)
+    print("[submit]", s.js("return document.querySelector('.review [data-notice]').textContent.trim()"))
     review_post = [w for w in writes() if w.get("post", "").endswith("/pulls/43/reviews")]
     print("[submit] request:", json.dumps(review_post[-1]["body"]) if review_post else None, "| expected commit:", sha43)
 
     # More room for the diff: collapse the Inbox, the commit list and the side panel.
     width = lambda css: s.js("return Math.round(document.querySelector(arguments[0]).getBoundingClientRect().width)", css)
     before = (width(".item"), width(".review .main"))
-    print("[layout] scope list collapsed by default:", s.js("return document.querySelectorAll('.scopes li').length"), "entries:",
-          s.js("return [...document.querySelectorAll('.scopes li')].map(l => l.textContent.trim())"))
+    print("[layout] scope list collapsed by default:", s.js("return document.querySelectorAll('.scopes button, .scope-folded .active-scope, .scope-folded button').length"), "entries:",
+          s.js("return [...document.querySelectorAll('.scopes button, .scope-folded .active-scope, .scope-folded button')].map(l => l.textContent.trim())"))
     s.click(s.wait("[data-toggle='commits']"))
-    print("[layout] expanded:", s.js("return [...document.querySelectorAll('.scopes li')].map(l => l.textContent.trim())"))
+    print("[layout] expanded:", s.js("return [...document.querySelectorAll('.scopes button, .scope-folded .active-scope, .scope-folded button')].map(l => l.textContent.trim())"))
     s.click(s.wait("[data-toggle='commits']"))
-    s.click(s.wait(".inbox header button[aria-label='Hide the Inbox']"))
+    s.click(s.wait(".inbox header button[aria-label^='Collapse Inbox']"))
     s.wait(".inbox.collapsed", timeout=5)
     s.click(s.wait("[data-toggle='side']"))
     time.sleep(0.5)
     after = (width(".item"), width(".review .main"))
     print(f"[layout] work item width {before[0]} -> {after[0]} px, diff area {before[1]} -> {after[1]} px",
           "| attention dots:", s.js("return document.querySelectorAll('.inbox.collapsed .pip').length"))
-    first = s.js("return document.querySelector('.toolbar .current')?.textContent.trim()")
+    first = s.js("return document.querySelector('.toolbar .current-file')?.textContent.trim()")
     s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: ']', bubbles: true }))")
     time.sleep(0.5)
-    print("[layout] file before/after ']':", first, "->", s.js("return document.querySelector('.toolbar .current')?.textContent.trim()"))
+    print("[layout] file before/after ']':", first, "->", s.js("return document.querySelector('.toolbar .current-file')?.textContent.trim()"))
     s.screenshot(os.path.join(shots, "r5-wide.png"))
     # Ctrl+B brings the Inbox back (the state is saved for the next launch).
     s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }))")
@@ -228,9 +228,9 @@ try:
 
     # --- review order, reviewed marks, whitespace, unified, keys (PR #43) ---
     s.click(s.wait("[data-toggle='side']")) if not s.find(".review .side") else None
-    groups = s.js("return [...document.querySelectorAll('.side .group')].map(g => [g.dataset.group, g.querySelectorAll('li').length])")
+    groups = s.js("return [...document.querySelectorAll('.side .group')].map(g => [g.dataset.group, g.querySelectorAll('li.file').length])")
     print("[order] groups:", groups)
-    print("[order] files in order:", s.js("return [...document.querySelectorAll('.side .files button')].map(b => b.dataset.file)"))
+    print("[order] files in order:", s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"))
     print("[marks] progress before:", s.js("return document.querySelector('[data-progress]').textContent.trim()"))
     s.click(s.wait("[data-file='a.txt']"))
     time.sleep(0.5)
@@ -244,7 +244,7 @@ try:
           "| now on:", s.js("return document.querySelector('.side .files button.active')?.dataset.file"))
     s.js("document.querySelector(\"[data-opt='ws']\").click()")
     time.sleep(1)
-    print("[ws] labelled whitespace-only:", s.js("return [...document.querySelectorAll('.side .files button')].filter(b => b.querySelector('.ws')).map(b => b.dataset.file)"))
+    print("[ws] labelled whitespace-only:", s.js("return [...document.querySelectorAll('.side .file')].filter(l => l.querySelector('.ws')).map(l => l.querySelector('[data-file]').dataset.file)"))
     s.js("document.querySelector(\"[data-opt='ws']\").click()")
     s.click(s.wait("[data-file='a.txt']"))
     s.js("document.querySelector(\"[data-opt='unified']\").click()")
@@ -262,7 +262,7 @@ try:
     commit(upstream, "address review")
     git(upstream, "update-ref", "refs/pull/43/head", "feature/y")
     git(upstream, "checkout", "-q", "main")
-    reviewed_before = s.js("return [...document.querySelectorAll('[data-reviewed]')].filter(c => c.checked).map(c => c.dataset.reviewed)")
+    reviewed_before = s.js("return [...document.querySelectorAll('[data-reviewed]')].filter(c => c.getAttribute('aria-checked') === 'true').map(c => c.dataset.reviewed)")
     # Items reopen on the tab they were left on, so wait for the header, not a tab.
     select_row(s, 44)
     s.wait(".item header .title", timeout=30, text="#44")
@@ -271,12 +271,12 @@ try:
     tab(s, "Review")
     s.wait("[data-progress]", timeout=30)
     s.wait_js("return document.querySelector('.review .marker').textContent.includes('2 commits')", timeout=30)
-    reviewed_after = s.js("return [...document.querySelectorAll('[data-reviewed]')].filter(c => c.checked).map(c => c.dataset.reviewed)")
+    reviewed_after = s.js("return [...document.querySelectorAll('[data-reviewed]')].filter(c => c.getAttribute('aria-checked') === 'true').map(c => c.dataset.reviewed)")
     print("[marks] reviewed before the push:", reviewed_before, "| after:", reviewed_after)
 
     t0 = time.monotonic()
-    s.click(s.wait(".review header button", text="Prepare review guide"))
-    s.wait("[data-guide]", timeout=600)
+    s.click(s.wait("[data-prepare-guide]"))
+    s.wait("[data-guide] .focus", timeout=600)
     print(f"[guide] ready after {time.monotonic() - t0:.0f}s; focus:", s.js("return document.querySelector('.guide .focus')?.textContent"))
     print("[guide] groups:", s.js("return [...document.querySelectorAll('.side .group')].map(g => g.querySelector('.group-title').textContent.trim().replace(/\\s+/g, ' '))"))
     print("[guide] claims:", s.js("return [...document.querySelectorAll('.claims li')].map(l => l.textContent.trim())"))
@@ -285,16 +285,16 @@ try:
     # The guide line above the diff: the shown file's group and claims, also with the side
     # panel hidden; expanded, it adds the focus for the whole change.
     def guide_line():
-        return " ".join(s.js("return document.querySelector('[data-file-guide] .what')?.textContent ?? ''").split())
+        return " ".join(s.js("return document.querySelector('[data-file-guide] .expand')?.innerText ?? ''").split())
     first = s.js("return document.querySelector('.side .files [data-file]').dataset.file")
     s.js("document.querySelector(`.side [data-file='${arguments[0]}']`).click()", first)
     s.wait_js("return document.querySelector('[data-file-guide]')")
     print(f"[guide line] {first}:", guide_line())
     s.js("document.querySelector(\"[data-toggle='side']\").click()")
     s.wait_js("return !document.querySelector('.side')")
-    s.js("document.querySelector('.toolbar button[aria-label=\"Next file\"]').click()")
+    s.js("document.querySelector('.toolbar button[aria-label^=\"Next file\"]').click()")
     time.sleep(0.5)
-    print("[guide line] side hidden, next file", s.js("return document.querySelector('.toolbar .current').textContent.trim()").split()[0] + ":", guide_line())
+    print("[guide line] side hidden, next file", s.js("return document.querySelector('.toolbar .current-file').textContent.trim()").split()[0] + ":", guide_line())
     s.js("document.querySelector('[data-file-guide] .expand').click()")
     print("[guide line] expanded:", s.js("return document.querySelector('[data-file-guide] .focus-all')?.textContent"))
     s.js("document.querySelector('[data-file-guide] .expand').click()")
@@ -306,11 +306,11 @@ try:
     s.wait(".item header .title", timeout=30, text="#42")
     tab(s, "Review")
     s.wait(".review .marker", timeout=30)
-    s.click(s.wait("button.primary", text="Mark reviewed"))
-    if s.find(".review header .warn"):
-        print("[own] Mark reviewed asks first:", s.js("return document.querySelector('.review header .warn').textContent"))
-        s.click(s.wait(".review header button", text="Mark anyway"))
-    s.wait(".review .notice", timeout=15)
+    s.click(s.wait("[data-mark-reviewed]"))
+    if s.find(".review [data-guard]"):
+        print("[own] Mark reviewed asks first:", s.js("return document.querySelector('.review [data-guard] .text').textContent"))
+        s.click(s.wait(".review [data-guard] button", text="Mark anyway"))
+    s.wait(".review [data-notice]", timeout=15)
     # main moves on; the branch is rebased onto it and gets one more commit.
     write(os.path.join(upstream, "base.txt"), "from main\n")
     commit(upstream, "main moves on")
@@ -330,10 +330,10 @@ try:
     time.sleep(1)
     print("[rebase]", " ".join(s.js("return document.querySelector('.review .marker').textContent").split()),
           "| note:", s.js("return document.querySelector('[data-rebase-note]')?.textContent ?? null"))
-    print("[rebase] since your review, files:", s.js("return [...document.querySelectorAll('.side .files button')].map(b => b.dataset.file)"))
+    print("[rebase] since your review, files:", s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"))
     s.click(s.wait("[data-scope='all']"))
     time.sleep(1)
-    print("[rebase] all changes vs main, files:", s.js("return [...document.querySelectorAll('.side .files button')].map(b => b.dataset.file)"),
-          "| own PR offers approve:", s.js("return !!document.querySelector(\".submit input[value='APPROVE']\")"))
+    print("[rebase] all changes vs main, files:", s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"),
+          "| own PR offers approve:", s.js("return !!document.querySelector(\"[data-event='APPROVE']:not(:disabled)\")"))
 finally:
     s.quit()

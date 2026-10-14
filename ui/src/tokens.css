@@ -139,6 +139,12 @@
   --ansi-bright-cyan: #1B95A8;
   --ansi-bright-white: #F0F1F4;
 
+  /* Mark (the same in light and dark): a circle (agent) and a square (you) overlapping */
+  --logo-ink: #1B1E25;
+  --logo-agent: #E08A4F;
+  --logo-you: #6E9BFF;
+  --logo-overlap: #F4EFE6;
+
   /* Agent status (dot = circle) */
   --agent-status-starting: var(--agent);  /* dashed ring */
   --agent-status-ready: var(--agent);     /* ring */
@@ -275,15 +281,4 @@
 :where(button, a, input, select, textarea, [tabindex]):focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 1px;
-}
-
-/* Legacy aliases — remove once every component uses the new names */
-:root {
-  --bg: var(--surface-0);
-  --sidebar: var(--surface-1);
-  --panel: var(--surface-2);
-  --user-bg: var(--you-bg);
-  --muted: var(--text-muted);
-  --accent: var(--you);
-  --mono: var(--font-mono);
 }

@@ -26,12 +26,15 @@ How the review view works, and the research it is based on.
   marked outdated when the head moves. Takes seconds and uses your Claude plan. Above the
   diff, a line shows what the guide says about the file you are looking at (its group's
   intent and risk, the claims it backs, or that no claim explains it), so the guide is there
-  with the side panel closed too; ▸ expands it and adds the focus for the whole change.
+  with the side panel closed too; the chevron expands it and adds the focus for the whole change.
 - **Noise and layout:** ignore whitespace (`w`, whitespace-only files labelled), unified or
-  side-by-side (`u`), syntax highlighting for any language, git-exact hunks, unchanged code
-  collapsed; the Inbox, the commit list and the side panel collapse.
-- **Keys:** `n`/`p` next/previous change, `]`/`[` next/previous file, `r`, `u`, `w`, `?` for
-  the list. They do nothing while you type or when the terminal has focus.
+  side-by-side (`u`; unified by default when the diff column is under 720 px), syntax
+  highlighting for any language, git-exact hunks, unchanged code collapsed; the Inbox, the
+  commit list and the side panel collapse (below a 1200 px window the Inbox steps aside by
+  itself while the side panel is open).
+- **Keys:** `n`/`p` next/previous change (the change you are on is marked in the gutter),
+  `]`/`[` next/previous file, `r`, `u`, `w`, `?` for the list, `Esc` to drop a selection. They
+  do nothing while you type or when the terminal has focus.
 - **Comments** go to GitHub as a review (line comments where GitHub accepts them) or to the
   agent.
 

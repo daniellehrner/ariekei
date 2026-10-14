@@ -1,10 +1,17 @@
 <script lang="ts">
   import RepoMenu from "./RepoMenu.svelte";
+  import AttentionPip, { URGENCY } from "./controls/AttentionPip.svelte";
+  import Icon from "./controls/Icon.svelte";
+  import IconButton from "./controls/IconButton.svelte";
+  import Pill from "./controls/Pill.svelte";
+  import StatusDot from "./controls/StatusDot.svelte";
+  import { ATTENTION_LABEL, attentionKind } from "./lib/attention";
   import { api, type Repo, type Row, type SearchHit } from "./lib/api";
 
   let {
     repo,
     rows,
+    loaded,
     selected,
     error,
     collapsed,
@@ -17,6 +24,8 @@
   }: {
     repo: Repo;
     rows: Row[];
+    /// The first Inbox load finished (until then: a skeleton).
+    loaded: boolean;
     selected: number | null;
     error: string | null;
     collapsed: boolean;
@@ -31,33 +40,34 @@
     onconnect: () => void;
   } = $props();
 
-  const SECTIONS: { key: string; title: string; has: (r: Row) => boolean }[] = [
-    { key: "mine", title: "Mine", has: (r) => r.kind === "pr" && r.role === "author" },
-    { key: "requested", title: "Review requested", has: (r) => r.kind === "pr" && r.role === "requested" },
-    { key: "issues", title: "Issues", has: (r) => r.kind === "issue" },
-    { key: "opened", title: "Opened", has: (r) => r.kind === "pr" && r.role === "other" },
+  const SECTIONS: { key: string; title: string; empty: string; has: (r: Row) => boolean }[] = [
+    { key: "mine", title: "Mine", empty: "No open pull requests.", has: (r) => r.kind === "pr" && r.role === "author" },
+    { key: "requested", title: "Review requested", empty: "Nothing here.", has: (r) => r.kind === "pr" && r.role === "requested" },
+    { key: "issues", title: "Issues", empty: "Nothing here.", has: (r) => r.kind === "issue" },
+    { key: "opened", title: "Opened", empty: "PRs you open from search appear here.", has: (r) => r.kind === "pr" && r.role === "other" },
   ];
-  const CI: Record<string, [string, string]> = {
-    SUCCESS: ["✓", "ok"],
-    FAILURE: ["✗", "bad"],
-    ERROR: ["✗", "bad"],
-    PENDING: ["●", "warn"],
-    EXPECTED: ["●", "warn"],
+  const DECISION: Record<string, [string, string]> = {
+    APPROVED: ["approved", "ok"],
+    CHANGES_REQUESTED: ["changes req.", "warn"],
+    REVIEW_REQUIRED: ["review req.", ""],
   };
-  const DECISION: Record<string, string> = {
-    APPROVED: "approved",
-    CHANGES_REQUESTED: "changes requested",
-    REVIEW_REQUIRED: "review required",
-  };
-  const AGENT: Record<string, string> = {
-    starting: "starting",
-    ready: "ready",
-    working: "working",
-    waitingForPermission: "needs you",
-    finished: "finished",
-    error: "error",
-    stopped: "stopped",
-  };
+  const CI_FAILING = new Set(["FAILURE", "ERROR"]);
+
+  // Sections the user folded (remembered across launches).
+  let folded: string[] = $state([]);
+  api.uiSetting("inboxFolded").then((v) => (folded = v ? JSON.parse(v) : []));
+  function fold(key: string) {
+    folded = folded.includes(key) ? folded.filter((k) => k !== key) : [...folded, key];
+    api.setUiSetting("inboxFolded", JSON.stringify(folded));
+  }
+
+  // The collapsed strip: one pip per item that wants something, most urgent first.
+  const pips = $derived(
+    rows
+      .map((row) => ({ row, kind: attentionKind(row.attention) }))
+      .filter((p) => p.kind !== "none")
+      .sort((a, b) => URGENCY[a.kind] - URGENCY[b.kind]),
+  );
 
   // --- search over all open PRs of the repo ---
   let query = $state("");
@@ -108,43 +118,54 @@
 </script>
 
 {#if collapsed}
-  <aside class="inbox collapsed">
-    <button class="expand" onclick={ontoggle} title="Show the Inbox (Ctrl+B)" aria-label="Show the Inbox">»</button>
-    <!-- Items that need attention stay visible as dots. -->
-    {#each rows.filter((r) => r.attention) as row (row.id)}
-      <button class="pip {row.agent ?? ''}" class:active={row.id === selected} class:bad={row.ci === "FAILURE" || row.ci === "ERROR"}
-        onclick={() => onselect(row.id)} title="#{row.number} {row.title} — {row.attention}" aria-label="#{row.number}: {row.attention}"
-        data-pip={row.number}>●</button>
+  <aside class="inbox collapsed" aria-label="Inbox, collapsed">
+    <IconButton icon="sidebar-expand" label="Expand Inbox (Ctrl+B)" size={28} onclick={ontoggle} />
+    <span class="divider"></span>
+    {#each pips as { row, kind } (row.id)}
+      {@const label = `#${row.number} ${row.title} — ${ATTENTION_LABEL[kind]}`}
+      <button class="pip" class:active={row.id === selected} onclick={() => onselect(row.id)} title={label} aria-label={label} data-pip={row.number}>
+        <AttentionPip {kind} label={ATTENTION_LABEL[kind]} />
+      </button>
     {/each}
   </aside>
 {:else}
-<aside class="inbox">
+<aside class="inbox" aria-label="Inbox">
   <header>
     <RepoMenu {repo} {onswitch} {onconnect} />
-    <button onclick={onrefresh} title="Refresh from GitHub" aria-label="Refresh">↻</button>
-    <button onclick={ontoggle} title="Hide the Inbox (Ctrl+B)" aria-label="Hide the Inbox">«</button>
+    <IconButton icon="refresh" label="Refresh from GitHub" size={28} onclick={onrefresh} />
+    <IconButton icon="sidebar-collapse" label="Collapse Inbox (Ctrl+B)" size={28} onclick={ontoggle} />
   </header>
   <div class="search">
-    <input
-      bind:value={query}
-      onkeydown={onSearchKey}
-      placeholder="Search open PRs (words, #123, author:name)"
-      aria-label="Search open pull requests"
-    />
+    <label>
+      <Icon name="search" size={14} />
+      <input
+        bind:value={query}
+        onkeydown={onSearchKey}
+        placeholder="Search PRs — words, #123, author:name"
+        aria-label="Search open pull requests"
+      />
+    </label>
   </div>
-  {#if error}<p class="error" title={error}>GitHub: {error}</p>{/if}
+  {#if error}
+    <div class="poll-error" role="status" title={error}>
+      <Icon name="warning" size={14} />
+      <span><strong>GitHub:</strong> <span class="muted">{error}</span></span>
+    </div>
+  {/if}
 
   {#if query.trim()}
-    <ul class="hits">
-      {#if searchError}<li class="error">{searchError}</li>{/if}
+    <ul class="hits" aria-label="Search results">
+      {#if searchError}<li class="empty error">{searchError}</li>{/if}
       {#each hits as hit (hit.number)}
         <li>
           <button class="row" onclick={() => pick(hit)} data-hit={hit.number}>
-            <span class="line1"><span class="num">#{hit.number}</span><span class="title">{hit.title}</span></span>
-            <span class="line2">
-              <span>{hit.author}</span>
-              {#if hit.isDraft}<span class="tag">draft</span>{/if}
-              {#if hit.itemId}<span class="tag">in inbox</span>{/if}
+            <span class="lines">
+              <span class="line1"><span class="num">#{hit.number}</span><span class="title">{hit.title}</span></span>
+              <span class="line2">
+                <span>{hit.author}</span>
+                {#if hit.isDraft}<Pill size="sm">draft</Pill>{/if}
+                {#if hit.itemId}<Pill size="sm" tone="you">in inbox</Pill>{/if}
+              </span>
             </span>
           </button>
         </li>
@@ -152,84 +173,168 @@
         <li class="empty">{searching ? "Searching…" : "No matching open PRs."}</li>
       {/each}
     </ul>
-  {:else}
-    <div class="sections">
-      {#each SECTIONS as section (section.key)}
-        {@const list = rows.filter(section.has)}
-        {#if list.length || section.key === "mine"}
-          <h3>{section.title} <span class="count">{list.length}</span></h3>
-          <ul>
-            {#each list as row (row.id)}
-              {@const ci = row.ci ? CI[row.ci] : null}
-              <li class:active={row.id === selected} class:closed={!row.open}>
-                <button class="row" onclick={() => onselect(row.id)} title={row.title} data-number={row.number}>
-                  <span class="line1">
-                    <span class="agent {row.agent ?? 'none'}" title={row.agent ? `agent: ${AGENT[row.agent]}` : "no agent running"}></span>
-                    <span class="num">#{row.number}</span>
-                    <span class="title">{row.title}</span>
-                    {#if row.newActivity}<span class="new" title="new reviews or comments">●</span>{/if}
-                  </span>
-                  <span class="line2">
-                    {#if section.key !== "mine"}<span class="author">{row.author}</span>{/if}
-                    {#if row.issueNumber}<span class="tag">from #{row.issueNumber}</span>{/if}
-                    {#if ci}<span class="ci {ci[1]}" title="CI: {row.ci}{row.failingChecks.length ? ` (${row.failingChecks.join(', ')})` : ''}">{ci[0]}</span>{/if}
-                    {#if row.isDraft}<span class="tag">draft</span>{/if}
-                    {#if !row.open}<span class="tag">closed</span>{/if}
-                    {#if row.reviewDecision}<span class="decision {row.reviewDecision}">{DECISION[row.reviewDecision] ?? row.reviewDecision}</span>{/if}
-                    {#if row.unresolvedThreads}<span class="threads" title="unresolved review threads">💬 {row.unresolvedThreads}</span>{/if}
-                    {#if row.attention}<span class="attention">{row.attention}</span>{/if}
-                  </span>
-                </button>
-              </li>
-            {:else}
-              <li class="empty">No open pull requests.</li>
-            {/each}
-          </ul>
-        {/if}
+  {:else if !loaded}
+    <div class="skeleton" aria-label="Loading the Inbox">
+      {#each [70, 58, 64] as w}
+        <div class="sk-row"><span class="sk-dot"></span><span class="sk-bar" style:width="{w}%"></span></div>
+        <div class="sk-sub"><span class="sk-bar small" style:width="{w - 25}%"></span></div>
       {/each}
     </div>
+  {:else}
+    <nav class="sections" aria-label="Work items">
+      {#each SECTIONS as section (section.key)}
+        {@const list = rows.filter(section.has)}
+        {@const open = !folded.includes(section.key)}
+        {#if list.length || section.key === "mine" || section.key === "opened"}
+          <section data-section={section.key}>
+            <button class="section-head" onclick={() => fold(section.key)} aria-expanded={open}>
+              <span class="chev" class:folded={!open}><Icon name="chevron-down" size={14} /></span>
+              <span class="label">{section.title}</span>
+              <span class="count">{list.length}</span>
+            </button>
+            {#if open}
+              <ul>
+                {#each list as row (row.id)}
+                  {@const kind = attentionKind(row.attention)}
+                  {@const decision = row.reviewDecision ? DECISION[row.reviewDecision] : null}
+                  <li class:closed={!row.open}>
+                    <button class="row" class:active={row.id === selected} aria-current={row.id === selected} onclick={() => onselect(row.id)}
+                      title={row.title} data-number={row.number}>
+                      <span class="dot"><StatusDot status={row.agent} /></span>
+                      <span class="lines">
+                        <span class="line1">
+                          <span class="num">#{row.number}</span>
+                          <span class="title" class:strong={kind === "needs-you" || row.newActivity}>{row.title}</span>
+                          {#if row.newActivity}
+                            <svg class="new" width="8" height="8" viewBox="0 0 8 8" role="img" aria-label="New reviews or comments"><path d="M4 0.5L7.5 4 4 7.5 0.5 4z" /></svg>
+                          {/if}
+                        </span>
+                        <span class="line2">
+                          {#if section.key !== "mine"}<span>{row.author}</span>{/if}
+                          {#if row.issueNumber}<span>from #{row.issueNumber}</span>{/if}
+                          {#if row.ci}
+                            {@const ci = row.ci === "SUCCESS" ? "ok" : CI_FAILING.has(row.ci) ? "bad" : "warn"}
+                            <span class="ci {ci}" title="CI: {row.ci.toLowerCase()}{row.failingChecks.length ? ` (${row.failingChecks.join(', ')})` : ''}">
+                              <Icon name={ci === "ok" ? "check" : ci === "bad" ? "x" : "pending"} size={12} label="CI {row.ci.toLowerCase()}" />
+                            </span>
+                          {/if}
+                          {#if row.isDraft}<span class="faint">draft</span>{/if}
+                          {#if !row.open}<span class="faint">closed</span>{/if}
+                          {#if decision}<span class={decision[1]}>{decision[0]}</span>{/if}
+                          {#if row.unresolvedThreads}
+                            <span class="threads" title="Unresolved review threads"><Icon name="comment" size={12} />{row.unresolvedThreads}</span>
+                          {/if}
+                          <span class="spacer"></span>
+                          {#if kind !== "none"}<span class="attention {kind}">{ATTENTION_LABEL[kind]}</span>{/if}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                {:else}
+                  <li class="empty">{section.empty}</li>
+                {/each}
+              </ul>
+            {/if}
+          </section>
+        {/if}
+      {/each}
+    </nav>
   {/if}
 </aside>
 {/if}
 
 <style>
-  .inbox.collapsed { width: 36px; align-items: center; padding-top: 8px; gap: 6px; }
-  .expand { padding: 2px 8px; margin-bottom: 6px; }
-  .pip { border: 0; background: none; padding: 2px; font-size: 12px; color: var(--accent); }
-  .pip.waitingForPermission { color: var(--warn); }
-  .pip.bad { color: var(--bad); }
-  .pip.active { outline: 1px solid var(--border); border-radius: 4px; }
-  .inbox { width: 340px; flex-shrink: 0; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--sidebar); min-height: 0; }
-  header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
-  header button { padding: 2px 8px; }
-  .search { padding: 8px 12px; border-bottom: 1px solid var(--border); }
-  .search input { width: 100%; box-sizing: border-box; }
-  .sections, .hits { overflow-y: auto; flex: 1; }
-  h3 { font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 12px 12px 4px; }
-  .count { font-weight: 400; }
-  ul { list-style: none; margin: 0; padding: 0; }
-  li.active { background: var(--panel); }
+  .inbox {
+    flex: none; width: var(--w-inbox); display: flex; flex-direction: column; min-height: 0;
+    background: var(--surface-1); border-right: 1px solid var(--border); position: relative;
+  }
+  .inbox.collapsed { width: var(--w-inbox-strip); align-items: center; gap: var(--sp-2); padding: var(--sp-3) 0; box-sizing: border-box; }
+  .divider { width: 20px; height: 1px; margin: var(--sp-2) 0; background: var(--border); }
+  .pip {
+    position: relative; width: 28px; height: 28px; padding: 0; display: inline-grid; place-items: center;
+    border: 0; border-radius: var(--r-md); background: transparent;
+  }
+  .pip:hover { background: var(--surface-hover); }
+  .pip.active { background: var(--surface-selected); }
+  .pip.active::before {
+    content: ""; position: absolute; left: -4px; top: 6px; width: 3px; height: 16px;
+    border-radius: 0 2px 2px 0; background: var(--you);
+  }
+
+  header { display: flex; align-items: center; gap: var(--sp-1); height: 40px; padding: 0 var(--sp-3) 0 var(--sp-4); flex: none; }
+  .search { padding: 0 var(--sp-4) var(--sp-4); flex: none; }
+  .search label {
+    display: flex; align-items: center; gap: var(--sp-3); height: 28px; padding: 0 var(--sp-4); box-sizing: border-box;
+    border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-raised); color: var(--text-faint);
+  }
+  .search label:focus-within { border-color: var(--you); outline: 2px solid color-mix(in srgb, var(--focus) 25%, transparent); }
+  .search input { flex: 1; min-width: 0; height: 26px; border: 0; outline: none; padding: 0; background: transparent; }
+  .search input:focus { outline: none; }
+  .poll-error {
+    margin: 0 var(--sp-4) var(--sp-4); display: flex; gap: var(--sp-4); padding: var(--sp-4) var(--sp-5);
+    border-radius: var(--r-md); background: var(--warn-bg); font-size: var(--fs-12); line-height: 16px;
+    overflow: hidden; max-height: 48px;
+  }
+  .poll-error :global(svg) { color: var(--warn); margin-top: 1px; }
+  .poll-error strong { font-weight: var(--fw-semibold); }
+  .muted { color: var(--text-muted); }
+
+  .sections, .hits, .skeleton { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: var(--sp-6); }
+  section { display: flex; flex-direction: column; }
+  .section-head {
+    display: flex; align-items: center; gap: var(--sp-2); height: 28px; padding: 0 var(--sp-6) 0 var(--sp-4);
+    border: 0; border-radius: 0; background: transparent; color: var(--text-muted); text-align: left;
+    font-size: var(--fs-11); font-weight: var(--fw-semibold); letter-spacing: 0.04em; text-transform: uppercase;
+  }
+  .section-head:focus-visible { outline-offset: -2px; }
+  .section-head .label { flex: 1; }
+  .chev { display: flex; transition: transform var(--dur-fast) var(--ease); }
+  .chev.folded { transform: rotate(-90deg); }
+  .count { font-family: var(--font-mono); font-weight: var(--fw-medium); letter-spacing: 0; }
+  ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
   li.closed { opacity: 0.6; }
-  .row { display: flex; flex-direction: column; gap: 3px; width: 100%; border: 0; border-radius: 0; background: none; text-align: left; padding: 8px 12px; }
-  .line1, .line2 { display: flex; align-items: center; gap: 6px; min-width: 0; }
-  .line2 { font-size: 0.8em; color: var(--muted); padding-left: 14px; flex-wrap: wrap; }
-  .hits .line2 { padding-left: 0; }
-  .num { color: var(--muted); font-variant-numeric: tabular-nums; }
-  .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .new { color: var(--accent); font-size: 0.8em; }
-  .agent { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: transparent; border: 1px solid var(--border); }
-  .agent.working, .agent.starting { background: var(--accent); border-color: var(--accent); }
-  .agent.waitingForPermission { background: var(--warn); border-color: var(--warn); }
-  .agent.finished, .agent.ready { background: var(--ok); border-color: var(--ok); }
-  .agent.error { background: var(--bad); border-color: var(--bad); }
-  .author { color: var(--text); }
-  .ci.ok { color: var(--ok); }
-  .ci.bad { color: var(--bad); }
-  .ci.warn { color: var(--warn); }
-  .tag { border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; }
-  .decision.CHANGES_REQUESTED { color: var(--bad); }
-  .decision.APPROVED { color: var(--ok); }
-  .attention { color: var(--text); font-weight: 600; margin-left: auto; }
-  .error { color: var(--bad); margin: 8px 12px; font-size: 0.85em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .empty { padding: 8px 12px; color: var(--muted); font-size: 0.9em; }
+
+  .row {
+    display: flex; gap: var(--sp-4); margin: 0 var(--sp-3); padding: var(--sp-3) var(--sp-4) 7px var(--sp-3);
+    width: calc(100% - 12px); box-sizing: border-box; border: 0; border-radius: var(--r-md);
+    background: transparent; color: var(--text); text-align: left; font-size: var(--fs-13);
+  }
+  .row:hover { background: var(--surface-hover); }
+  .row.active { background: var(--surface-selected); box-shadow: inset 0 0 0 1px var(--you-line); }
+  .row:focus-visible { outline-offset: -2px; }
+  .dot { padding-top: 3px; }
+  .lines { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .line1 { display: flex; align-items: baseline; gap: var(--sp-3); min-width: 0; }
+  .num { flex: none; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); }
+  .title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: var(--fw-medium); }
+  .title.strong { font-weight: var(--fw-semibold); }
+  .new { flex: none; align-self: center; fill: var(--gh); }
+  .line2 {
+    display: flex; align-items: center; gap: var(--sp-4); min-width: 0; overflow: hidden; white-space: nowrap;
+    font-size: 11.5px; line-height: 16px; color: var(--text-muted);
+  }
+  .line2 > span { flex: none; }
+  .line2 .spacer { flex: 1; }
+  .line2 .attention { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: var(--fw-medium); }
+  .ci { display: inline-flex; }
+  .ok { color: var(--ok); }
+  .bad { color: var(--bad); }
+  .warn { color: var(--warn); }
+  .faint { color: var(--text-faint); }
+  .threads { display: inline-flex; align-items: center; gap: 3px; }
+  .attention.needs-you { color: var(--agent-strong); }
+  .attention.blocked, .attention.ci-failing { color: var(--bad); }
+  .attention.activity { color: var(--gh-strong); }
+  .attention.review { color: var(--you-strong); }
+  .attention.working { color: var(--text-muted); }
+  .hits .line2 { gap: var(--sp-3); }
+  .empty { padding: var(--sp-2) var(--sp-6) var(--sp-5) var(--sp-9); font-size: var(--fs-12); line-height: 16px; color: var(--text-faint); }
+  .empty.error { color: var(--bad); }
+
+  .skeleton { padding: var(--sp-6) var(--sp-7); display: flex; flex-direction: column; gap: var(--sp-3); }
+  .sk-row { display: flex; gap: var(--sp-4); align-items: center; }
+  .sk-dot { width: 12px; height: 12px; border-radius: 6px; background: var(--border); }
+  .sk-bar { display: block; height: 10px; border-radius: 3px; background: var(--border); }
+  .sk-bar.small { height: 8px; }
+  .sk-sub { padding-left: 20px; margin-bottom: var(--sp-4); }
 </style>

@@ -1,5 +1,7 @@
 // File lists of the review view: grouping, order, progress and the next file to look at.
 
+import type { ReviewState } from "./api";
+
 export type Group = "source" | "tests" | "config" | "generated";
 
 export interface ReviewFile {
@@ -102,4 +104,22 @@ export function nextUnreviewed(ordered: ReviewFile[], current: string | null): s
     if (!f.reviewed && f.path !== current) return f.path;
   }
   return null;
+}
+
+// The scope shown: the one chosen if it still exists, else "review" (since the user's
+// review) when there is one, else "all" (vs the base branch). A commit sha is a scope too.
+export function scopeOf(review: ReviewState | null, wanted: string): string {
+  if (!review) return "all";
+  if (wanted === "review" && review.reviewed) return "review";
+  if (wanted && wanted !== "all" && wanted !== "review" && review.commits.some((c) => c.sha === wanted)) return wanted;
+  if (!wanted && review.reviewed) return "review";
+  return "all";
+}
+
+// [from, to] of a scope's diff; to = null is the working tree (worktree mode only).
+export function rangeOf(review: ReviewState, scope: string): [string, string | null] {
+  const head = review.mode === "worktree" ? null : review.head;
+  if (scope === "all") return [review.base, head];
+  if (scope === "review" && review.reviewed) return [review.sinceReviewFrom ?? review.reviewed, head];
+  return [`${scope}^`, scope];
 }
