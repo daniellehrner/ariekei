@@ -76,7 +76,9 @@ python3 e2e/run.py src-tauri/target/release/ariekei            # all scenarios
 python3 e2e/run.py src-tauri/target/release/ariekei review     # one of them
 ```
 
-On Linux without a display, prefix `xvfb-run -a`.
+On Linux the app runs on a private Xvfb display and D-Bus session (it needs `Xvfb`), so its
+windows never show up on your desktop or take focus, and its notifications stay out of yours.
+`E2E_HEADED=1` shows the windows on your display instead.
 
 - `review`: search, Overview, Comments, review without a worktree, review order and marks,
   the review guide, submitting a review, rebase-aware "since your review".

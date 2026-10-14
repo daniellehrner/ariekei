@@ -77,10 +77,10 @@ jobs:
           E2E_WORK: ${{ runner.temp }}/e2e
         run: |
           app=src-tauri/target/release/ariekei
+          # On Linux run.py starts its own Xvfb display and D-Bus session.
           case "$RUNNER_OS" in
-            Linux) xvfb-run -a -s "-screen 0 1400x900x24" python3 e2e/run.py "$app" ;;
-            macOS) python3 e2e/run.py "$app" ;;
             Windows) python e2e/run.py "$app.exe" ;;
+            *) python3 e2e/run.py "$app" ;;
           esac
 
       - name: Keep the e2e work directories

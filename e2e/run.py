@@ -4,9 +4,11 @@
   python3 e2e/run.py src-tauri/target/release/ariekei [scenario ...]
 
 Scenarios: review, windows, lifecycle, m1 (default: all). GitHub is e2e/fake_gh.py and the
-agent e2e/fake_claude.py, so nothing leaves the machine. On Linux without a display, run it
-under `xvfb-run -a`. Work directories go to $E2E_WORK (default: a new temporary directory)
-and are kept after a failure; the app's log is in <work>/<scenario>/logs.
+agent e2e/fake_claude.py, so nothing leaves the machine. On Linux the app runs on a private
+Xvfb display and D-Bus session (Xvfb and dbus-daemon), so its windows and notifications never
+reach your desktop; E2E_HEADED=1 shows them on your display instead. Work directories go to
+$E2E_WORK (default: a new temporary directory) and are kept after a failure; the app's log is
+in <work>/<scenario>/logs.
 """
 
 import os
@@ -33,6 +35,38 @@ SCENARIOS = {
 }
 
 
+def start(args):
+    """Starts a daemon that writes its address (display number, bus address) to a pipe."""
+    r, w = os.pipe()
+    proc = subprocess.Popen([a.replace("{fd}", str(w)) for a in args], pass_fds=(w,),
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    os.close(w)
+    out = b""
+    while not out.endswith(b"\n"):
+        chunk = os.read(r, 256)
+        if not chunk:
+            break
+        out += chunk
+    os.close(r)
+    return proc, out.decode().strip()
+
+
+def isolated():
+    """Linux: a private Xvfb display and D-Bus session for the app (and their environment).
+    Only DISPLAY would not do: GTK prefers Wayland while WAYLAND_DISPLAY is set."""
+    if not sys.platform.startswith("linux") or os.environ.get("E2E_HEADED") == "1":
+        return [], {}
+    if not shutil.which("Xvfb"):
+        sys.exit("The e2e tests need Xvfb (e.g. apt install xvfb), or E2E_HEADED=1 to use your display.")
+    xvfb, display = start(["Xvfb", "-displayfd", "{fd}", "-screen", "0", "1400x900x24", "-nolisten", "tcp"])
+    procs, env = [xvfb], {"DISPLAY": f":{display}", "GDK_BACKEND": "x11"}
+    if shutil.which("dbus-daemon"):
+        bus, address = start(["dbus-daemon", "--session", "--nofork", "--print-address={fd}"])
+        procs.append(bus)
+        env["DBUS_SESSION_BUS_ADDRESS"] = address
+    return procs, env
+
+
 def main():
     if len(sys.argv) < 2:
         sys.exit(__doc__)
@@ -41,6 +75,15 @@ def main():
     unknown = [n for n in names if n not in SCENARIOS]
     if unknown:
         sys.exit(f"unknown scenario(s): {', '.join(unknown)}; known: {', '.join(SCENARIOS)}")
+    daemons, display = isolated()
+    try:
+        run(app, names, display)
+    finally:
+        for d in daemons:
+            d.terminate()
+
+
+def run(app, names, display):
     root = os.environ.get("E2E_WORK") or tempfile.mkdtemp(prefix="ariekei-e2e-")
     results = []
     for name in names:
@@ -60,8 +103,11 @@ def main():
             E2E_SHOTS="0",
             PYTHONIOENCODING="utf-8",
             **GIT,
+            **display,
             **SCENARIOS[name],
         )
+        if display:
+            env.pop("WAYLAND_DISPLAY", None)
         args = [sys.executable, "-I", os.path.join(HERE, f"{name}_scenario.py"), app, work]
         if name == "m1":
             args.append(data)
