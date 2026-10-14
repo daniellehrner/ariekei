@@ -20,6 +20,10 @@ code navigation or debugging, use your IDE on the same worktree. Tauri 2 (Rust) 
   review guide (risk-ordered groups, claims checked against the diff), whitespace and unified
   toggles, keyboard navigation; works without a worktree for other people's PRs. Comments go
   to GitHub as a review or to the agent. See [docs/review.md](docs/review.md).
+- **Repos and windows:** the repo name in the Inbox header switches the window to another
+  connected repo, opens one in a new window, or connects another. Each repo is shown in one
+  window at a time; every open repo is kept current, and the windows come back after a
+  restart.
 - **Lifecycle:** an issue gets a branch and worktree; its first push opens a draft PR. Merged
   or closed items are cleaned up automatically, never losing uncommitted or unpushed work.
 
@@ -66,11 +70,13 @@ exact command.
 - `review_scenario.py`: search, Overview, Comments, review without a worktree, submitting a
   review. No agent.
 - `lifecycle_scenario.py`: issue → worktree → push → draft PR → merge → cleanup. No agent.
+- `windows_scenario.py`: two repos, switching, a window per repo, restoring windows after a
+  restart. No agent.
 - `m1_scenario.py`: the agent in the terminal, review loop, idle shutdown and resume. Uses
   Claude Code (two short turns).
 
-The first two run against `e2e/fake_gh.py`, a stand-in for `gh` that serves fixture PRs and
-issues and records every write instead of sending it. Test-only environment variables:
+All but `m1_scenario.py` run against `e2e/fake_gh.py`, a stand-in for `gh` that serves fixture
+PRs and issues and records every write instead of sending it. Test-only environment variables:
 
 | Variable | Effect |
 |---|---|

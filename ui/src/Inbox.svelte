@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RepoMenu from "./RepoMenu.svelte";
   import { api, type Repo, type Row, type SearchHit } from "./lib/api";
 
   let {
@@ -11,6 +12,8 @@
     onselect,
     onrefresh,
     onadded,
+    onswitch,
+    onconnect,
   }: {
     repo: Repo;
     rows: Row[];
@@ -22,6 +25,10 @@
     onrefresh: () => void;
     /// A PR was added to the Inbox (from search).
     onadded: () => void;
+    /// This window now shows another repo.
+    onswitch: (repo: Repo) => void;
+    /// Show the Connect screen (for another repo).
+    onconnect: () => void;
   } = $props();
 
   const SECTIONS: { key: string; title: string; has: (r: Row) => boolean }[] = [
@@ -113,7 +120,7 @@
 {:else}
 <aside class="inbox">
   <header>
-    <span class="repo" title={repo.path}>{repo.owner}/{repo.name}</span>
+    <RepoMenu {repo} {onswitch} {onconnect} />
     <button onclick={onrefresh} title="Refresh from GitHub" aria-label="Refresh">↻</button>
     <button onclick={ontoggle} title="Hide the Inbox (Ctrl+B)" aria-label="Hide the Inbox">«</button>
   </header>
@@ -194,7 +201,6 @@
   .pip.active { outline: 1px solid var(--border); border-radius: 4px; }
   .inbox { width: 340px; flex-shrink: 0; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--sidebar); min-height: 0; }
   header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
-  .repo { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   header button { padding: 2px 8px; }
   .search { padding: 8px 12px; border-bottom: 1px solid var(--border); }
   .search input { width: 100%; box-sizing: border-box; }

@@ -10,7 +10,8 @@ data.json: {"viewer": "me", "upstream": <path of the "GitHub" git repo, optional
                      body_html, comments: [...], threads: [...]}],
             "issues": [{number, title, author, body, assigned (bool), state}]}
 Creating a PR (POST .../pulls) adds it to data.json, so later polls see it; a test can set
-a PR's "state" to MERGED in data.json.
+a PR's "state" to MERGED in data.json. A PR or issue with "repo": "<name>" belongs to
+owner/<name>; without it, to owner/proj.
 """
 
 import json
@@ -85,8 +86,15 @@ def conversation(pr):
     return c
 
 
+def of_repo(items, name):
+    return [i for i in items if i.get("repo", "proj") == name]
+
+
 def graphql(fields):
     query = fields.get("query", "")
+    in_q = re.search(r"repo:[^/\s]+/(\S+)", fields.get("q", ""))
+    repo = fields.get("name") or (in_q.group(1) if in_q else "proj")
+    prs, all_issues = of_repo(DATA["prs"], repo), of_repo(DATA.get("issues", []), repo)
     if query.lstrip().startswith("mutation"):
         record({"graphql": query.split("(")[1].split("{")[-1].strip() if "{" in query else query, "vars": {k: v for k, v in fields.items() if k != "query"}})
         return {"data": {}}
@@ -95,21 +103,21 @@ def graphql(fields):
     if "search(" in query:
         q = fields["q"]
         if "is:issue" in q:
-            found = [i for i in DATA.get("issues", []) if i.get("assigned") and i.get("state", "OPEN") == "OPEN"]
+            found = [i for i in all_issues if i.get("assigned") and i.get("state", "OPEN") == "OPEN"]
             return {"data": {"search": {"nodes": [issue_summary(i) for i in found]}}}
         head = re.search(r"head:(\S+)", q)
         if head:
-            found = [p for p in DATA["prs"] if p["head_ref"] == head.group(1) and p.get("state", "OPEN") == "OPEN"]
+            found = [p for p in prs if p["head_ref"] == head.group(1) and p.get("state", "OPEN") == "OPEN"]
         elif f"author:{ME}" in q:
-            found = [p for p in DATA["prs"] if p["author"] == ME and p.get("state", "OPEN") == "OPEN"]
+            found = [p for p in prs if p["author"] == ME and p.get("state", "OPEN") == "OPEN"]
         elif f"review-requested:{ME}" in q:
-            found = [p for p in DATA["prs"] if p.get("requested") and p.get("state", "OPEN") == "OPEN"]
+            found = [p for p in prs if p.get("requested") and p.get("state", "OPEN") == "OPEN"]
         else:
             words = [w for w in q.split() if not re.match(r"^(repo|is|sort):", w)]
-            found = [p for p in DATA["prs"] if all(w.lower() in (p["title"] + " " + p["author"] + " " + str(p["number"])).lower() for w in words)]
+            found = [p for p in prs if all(w.lower() in (p["title"] + " " + p["author"] + " " + str(p["number"])).lower() for w in words)]
         return {"data": {"search": {"nodes": [summary(p) for p in found]}}}
-    by_number = {p["number"]: p for p in DATA["prs"]}
-    issues = {i["number"]: i for i in DATA.get("issues", [])}
+    by_number = {p["number"]: p for p in prs}
+    issues = {i["number"]: i for i in all_issues}
     if "issue(number: $number)" in query:
         return {"data": {"repository": {"issue": issue_summary(issues[int(fields["number"])])}}}
     issue_aliases = re.findall(r"i(\d+): issue\(number: (\d+)\)", query)

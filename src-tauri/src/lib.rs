@@ -11,12 +11,13 @@ mod poller;
 mod review_order;
 mod store;
 mod terminal;
+mod windows;
 mod workitem;
 mod worktree;
 
 use portable_pty::PtySize;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{Manager, RunEvent, State};
@@ -27,8 +28,9 @@ pub struct AppState {
     store: store::Store,
     poller: poller::Poller,
     data_dir: PathBuf,
-    /// The work item shown in the UI (no notifications for it while the window is focused).
-    active_item: Mutex<Option<String>>,
+    /// The repo and work item each window shows (no notifications for an item while its
+    /// window is focused).
+    windows: windows::Windows,
 }
 
 type Res<T> = Result<T, String>;
@@ -53,24 +55,88 @@ fn pty_size(cols: u16, rows: u16) -> PtySize {
 
 // --- repo and inbox ---
 
+/// The repo this window shows.
 #[tauri::command]
-fn repo(state: State<'_, AppState>) -> Res<Option<store::Repo>> {
-    state.store.active_repo()
+fn repo(state: State<'_, AppState>, window: tauri::Window) -> Res<Option<store::Repo>> {
+    windows::repo_of(&state, window.label())
+}
+
+/// A connected repo, and where it is shown.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RepoEntry {
+    #[serde(flatten)]
+    repo: store::Repo,
+    /// Shown in the asking window.
+    here: bool,
+    /// Shown in another window.
+    elsewhere: bool,
 }
 
 #[tauri::command]
-async fn connect_repo(app: tauri::AppHandle, path: String) -> Res<store::Repo> {
+fn repos(state: State<'_, AppState>, window: tauri::Window) -> Res<Vec<RepoEntry>> {
+    Ok(state
+        .store
+        .repos()?
+        .into_iter()
+        .map(|repo| {
+            let shown_in = state.windows.window_of(repo.id);
+            RepoEntry {
+                here: shown_in.as_deref() == Some(window.label()),
+                elsewhere: shown_in.is_some_and(|l| l != window.label()),
+                repo,
+            }
+        })
+        .collect())
+}
+
+/// What showing a repo did: `here` false means another window already shows it and got
+/// the focus instead.
+#[derive(serde::Serialize)]
+struct Shown {
+    repo: store::Repo,
+    here: bool,
+}
+
+/// Connects the clone at `path` and shows it in this window.
+#[tauri::command]
+async fn connect_repo(app: tauri::AppHandle, window: tauri::Window, path: String) -> Res<Shown> {
+    let repo = blocking(app.clone(), move |s| workitem::connect(s, &path)).await?;
+    let here = windows::show(&app, window.label(), &repo)?;
+    Ok(Shown { repo, here })
+}
+
+/// Shows a connected repo in this window.
+#[tauri::command]
+async fn switch_repo(app: tauri::AppHandle, window: tauri::Window, id: i64) -> Res<Shown> {
+    let state = app.state::<AppState>();
+    let repo = state.store.repo(id)?.ok_or("unknown repository")?;
+    let here = windows::show(&app, window.label(), &repo)?;
+    Ok(Shown { repo, here })
+}
+
+/// Opens a new window for repo `id`, or an empty one (Connect screen) without it.
+#[tauri::command]
+async fn open_window(app: tauri::AppHandle, id: Option<i64>) -> Res<()> {
+    let repo = match id {
+        Some(id) => Some(
+            app.state::<AppState>()
+                .store
+                .repo(id)?
+                .ok_or("unknown repository")?,
+        ),
+        None => None,
+    };
+    windows::open(&app, repo.as_ref())
+}
+
+#[tauri::command]
+async fn inbox(app: tauri::AppHandle, window: tauri::Window) -> Res<Vec<inbox::Row>> {
+    let label = window.label().to_owned();
     blocking(app, move |s| {
-        let repo = workitem::connect(s, &path)?;
-        s.poller.refresh();
-        Ok(repo)
+        workitem::inbox(s, windows::repo_of(s, &label)?)
     })
     .await
-}
-
-#[tauri::command]
-async fn inbox(app: tauri::AppHandle) -> Res<Vec<inbox::Row>> {
-    blocking(app, workitem::inbox).await
 }
 
 #[tauri::command]
@@ -83,13 +149,17 @@ fn mark_seen(state: State<'_, AppState>, id: i64) -> Res<()> {
     workitem::mark_seen(&state, id)
 }
 
-/// The item shown in the UI; remembered so the next launch opens it again.
+/// The item shown in this window; remembered (per repo) so the next launch opens it again.
 #[tauri::command]
-fn set_active_item(state: State<'_, AppState>, id: Option<i64>) -> Res<()> {
-    *state.active_item.lock().unwrap() = id.map(|i| i.to_string());
-    match id {
-        Some(id) => state.store.set_setting("selected_item", &id.to_string()),
-        None => Ok(()),
+fn set_active_item(state: State<'_, AppState>, window: tauri::Window, id: Option<i64>) -> Res<()> {
+    state
+        .windows
+        .set_item(window.label(), id.map(|i| i.to_string()));
+    match (id, state.windows.repo_of(window.label())) {
+        (Some(id), Some(repo)) => state
+            .store
+            .set_setting(&format!("selected_item.{repo}"), &id.to_string()),
+        _ => Ok(()),
     }
 }
 
@@ -105,11 +175,18 @@ fn set_ui_setting(state: State<'_, AppState>, key: String, value: String) -> Res
 }
 
 #[tauri::command]
-fn selected_item(state: State<'_, AppState>) -> Res<Option<i64>> {
-    Ok(state
-        .store
-        .setting("selected_item")?
-        .and_then(|v| v.parse().ok()))
+fn selected_item(state: State<'_, AppState>, window: tauri::Window) -> Res<Option<i64>> {
+    let Some(repo) = state.windows.repo_of(window.label()) else {
+        return Ok(None);
+    };
+    // "selected_item" is from before windows had repos of their own.
+    let saved = match state.store.setting(&format!("selected_item.{repo}"))? {
+        Some(v) => Some(v),
+        None => state.store.setting("selected_item")?,
+    };
+    Ok(saved
+        .and_then(|v| v.parse().ok())
+        .filter(|id| state.store.item(*id).is_ok_and(|i| i.repo_id == repo)))
 }
 
 #[tauri::command]
@@ -199,14 +276,26 @@ async fn send_pr_feedback(app: tauri::AppHandle, id: i64) -> Res<()> {
 // --- other people's PRs and the PR conversation ---
 
 #[tauri::command]
-async fn search_prs(app: tauri::AppHandle, text: String) -> Res<Vec<workitem::SearchHit>> {
-    blocking(app, move |s| workitem::search(s, &text)).await
+async fn search_prs(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    text: String,
+) -> Res<Vec<workitem::SearchHit>> {
+    let label = window.label().to_owned();
+    blocking(app, move |s| {
+        workitem::search(s, windows::repo_of(s, &label)?, &text)
+    })
+    .await
 }
 
 /// Adds a PR (e.g. a search result) to the Inbox; returns its work item id.
 #[tauri::command]
-async fn track_pr(app: tauri::AppHandle, number: i64) -> Res<i64> {
-    blocking(app, move |s| workitem::track(s, number)).await
+async fn track_pr(app: tauri::AppHandle, window: tauri::Window, number: i64) -> Res<i64> {
+    let label = window.label().to_owned();
+    blocking(app, move |s| {
+        workitem::track(s, windows::repo_of(s, &label)?, number)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -403,16 +492,25 @@ pub fn run() {
                     std::env::var_os("ARIEKEI_NO_POLL").is_none(),
                 ),
                 data_dir,
-                active_item: Mutex::new(None),
+                windows: windows::Windows::default(),
             });
             if let Err(e) = workitem::reconcile(&app.state::<AppState>()) {
                 tracing::warn!("reconcile failed: {e}");
             }
+            windows::restore(app.handle());
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                windows::closed(window.app_handle(), window.label());
+            }
         })
         .invoke_handler(tauri::generate_handler![
             repo,
+            repos,
             connect_repo,
+            switch_repo,
+            open_window,
             inbox,
             refresh,
             mark_seen,
@@ -454,6 +552,12 @@ pub fn run() {
         .expect("error while building Ariekei");
 
     app.run(|app, event| {
+        // Windows destroyed while quitting stay recorded, to come back on the next launch.
+        if let RunEvent::ExitRequested { .. } = event
+            && let Some(state) = app.try_state::<AppState>()
+        {
+            state.windows.exiting();
+        }
         if let RunEvent::Exit = event
             && let Some(state) = app.try_state::<AppState>()
         {

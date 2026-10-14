@@ -8,17 +8,12 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::NotificationExt;
 
 fn watching(app: &AppHandle, key: &str) -> bool {
-    let focused = app
-        .get_webview_window("main")
-        .and_then(|w| w.is_focused().ok())
-        .unwrap_or(false);
-    let active = app
-        .state::<crate::AppState>()
-        .active_item
-        .lock()
-        .unwrap()
-        .clone();
-    focused && active.as_deref() == Some(key)
+    app.state::<crate::AppState>()
+        .windows
+        .showing(key)
+        .iter()
+        .filter_map(|label| app.get_webview_window(label))
+        .any(|w| w.is_focused().unwrap_or(false))
 }
 
 fn show(app: &AppHandle, title: &str, body: &str) {

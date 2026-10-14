@@ -15,6 +15,18 @@ export interface Repo {
   viewer: string;
 }
 
+/** A connected repo, and whether this window or another one shows it. */
+export interface RepoEntry extends Repo {
+  here: boolean;
+  elsewhere: boolean;
+}
+
+/** `here` false: another window already shows the repo and got the focus instead. */
+export interface Shown {
+  repo: Repo;
+  here: boolean;
+}
+
 export interface Row {
   id: number;
   number: number;
@@ -133,7 +145,11 @@ export interface FileDiff {
 
 export const api = {
   repo: () => invoke<Repo | null>("repo"),
-  connectRepo: (path: string) => invoke<Repo>("connect_repo", { path }),
+  repos: () => invoke<RepoEntry[]>("repos"),
+  connectRepo: (path: string) => invoke<Shown>("connect_repo", { path }),
+  switchRepo: (id: number) => invoke<Shown>("switch_repo", { id }),
+  /** A new window for repo `id`, or an empty one (Connect screen) for null. */
+  openWindow: (id: number | null) => invoke<void>("open_window", { id }),
   inbox: () => invoke<Row[]>("inbox"),
   refresh: () => invoke<void>("refresh"),
   markSeen: (id: number) => invoke<void>("mark_seen", { id }),

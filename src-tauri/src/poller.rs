@@ -1,8 +1,9 @@
-//! Keeps the Inbox current: polls GitHub for the active repo's open PRs every minute
-//! (or right away when asked) and stores the result.
+//! Keeps the Inbox current: polls GitHub for the open PRs of every repo shown in a window
+//! every minute (or right away when asked) and stores the result.
 
 use crate::github::{self, PrSummary};
-use crate::store::PolledPr;
+use crate::store::{PolledPr, Repo};
+use serde::Serialize;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
@@ -39,16 +40,39 @@ impl Poller {
     }
 }
 
+/// A failed poll of one repo (`inbox-error`).
+#[derive(Clone, Serialize)]
+struct PollError {
+    repo: i64,
+    message: String,
+}
+
 fn run(app: AppHandle, wake: Receiver<()>) {
     loop {
-        let result = poll(&app);
-        match &result {
-            Ok(()) => {
-                let _ = app.emit("inbox-changed", ());
-            }
-            Err(e) => {
-                tracing::warn!("GitHub poll failed: {e}");
-                let _ = app.emit("inbox-error", e);
+        let state = app.state::<crate::AppState>();
+        for id in state.windows.open_repos() {
+            let Ok(Some(repo)) = state.store.repo(id) else {
+                continue;
+            };
+            // `inbox-changed` and `inbox-error` carry the repo id: each window shows one.
+            match poll(&app, &repo) {
+                Ok(()) => {
+                    let _ = app.emit("inbox-changed", repo.id);
+                }
+                Err(message) => {
+                    tracing::warn!(
+                        "GitHub poll of {}/{} failed: {message}",
+                        repo.owner,
+                        repo.name
+                    );
+                    let _ = app.emit(
+                        "inbox-error",
+                        PollError {
+                            repo: repo.id,
+                            message,
+                        },
+                    );
+                }
             }
         }
         match wake.recv_timeout(interval()) {
@@ -60,13 +84,10 @@ fn run(app: AppHandle, wake: Receiver<()>) {
     }
 }
 
-/// One poll of the active repo: the viewer's PRs, PRs requesting their review, and the
-/// PRs they track (by number, so merged/closed ones get their final state).
-pub fn poll(app: &AppHandle) -> Result<(), String> {
+/// One poll of `repo`: the viewer's PRs, PRs requesting their review, and the PRs they
+/// track (by number, so merged/closed ones get their final state).
+pub fn poll(app: &AppHandle, repo: &Repo) -> Result<(), String> {
     let state = app.state::<crate::AppState>();
-    let Some(repo) = state.store.active_repo()? else {
-        return Ok(());
-    };
     let (o, n, me) = (&repo.owner, &repo.name, &repo.viewer);
     let mine = github::search_prs(o, n, me, &format!("author:{me}"))?;
     let requested = github::search_prs(o, n, me, &format!("review-requested:{me}"))?;
@@ -150,7 +171,7 @@ pub fn poll(app: &AppHandle) -> Result<(), String> {
                 .set_last_seen(item.id, pr.latest_activity.as_deref().unwrap_or(""))?,
         }
     }
-    crate::lifecycle::after_poll(&state, app)?;
+    crate::lifecycle::after_poll(&state, app, repo)?;
     Ok(())
 }
 

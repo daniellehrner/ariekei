@@ -8,7 +8,7 @@
   import { agents } from "./lib/agent.svelte";
   import { api, type Conversation, type Row } from "./lib/api";
 
-  let { row, onchanged }: { row: Row; onchanged: () => void } = $props();
+  let { row, repoId, onchanged }: { row: Row; repoId: number; onchanged: () => void } = $props();
 
   type Tab = "overview" | "comments" | "review" | "terminal";
   // Per-item view state, stored with the work item so switching back restores it.
@@ -75,7 +75,10 @@
 
   // GitHub changes (including the user's own comments) arrive with the next poll.
   onMount(() => {
-    const unlisten = listen("inbox-changed", () => loadConversation(id));
+    // Every window hears every repo's polls; only this repo's matter here.
+    const unlisten = listen<number>("inbox-changed", (e) => {
+      if (e.payload === repoId) loadConversation(id);
+    });
     return () => unlisten.then((f) => f());
   });
 

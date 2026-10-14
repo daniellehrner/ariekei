@@ -173,13 +173,10 @@ fn remove_transcript(path: &Path) -> bool {
 
 /// Run after every poll: open draft PRs for pushed issue branches, and clean up items
 /// that are finished.
-pub fn after_poll(state: &AppState, app: &tauri::AppHandle) -> Result<(), String> {
-    let Some(repo) = state.store.active_repo()? else {
-        return Ok(());
-    };
+pub fn after_poll(state: &AppState, app: &tauri::AppHandle, repo: &Repo) -> Result<(), String> {
     for item in state.store.items(repo.id)? {
         if item.kind == "issue" && item.open && item.worktree_path.is_some() {
-            match open_draft_pr(state, &repo, &item) {
+            match open_draft_pr(state, repo, &item) {
                 Ok(Some(number)) => crate::notify::lifecycle(
                     app,
                     &item.id.to_string(),

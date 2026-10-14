@@ -273,12 +273,21 @@ impl Store {
         .map_err(err)
     }
 
-    /// The repo the Inbox shows (M1 has one).
-    pub fn active_repo(&self) -> Result<Option<Repo>, String> {
-        match self.setting("active_repo")?.and_then(|v| v.parse().ok()) {
-            Some(id) => self.repo(id),
-            None => Ok(None),
-        }
+    /// All connected repos, by name.
+    pub fn repos(&self) -> Result<Vec<Repo>, String> {
+        let ids: Vec<i64> = {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT id FROM repos ORDER BY owner, name, path")
+                .map_err(err)?;
+            stmt.query_map([], |r| r.get(0))
+                .map_err(err)?
+                .collect::<Result<_, _>>()
+                .map_err(err)?
+        };
+        ids.into_iter()
+            .filter_map(|id| self.repo(id).transpose())
+            .collect()
     }
 
     // --- work items ---
@@ -590,13 +599,12 @@ mod tests {
     }
 
     #[test]
-    fn active_repo_round_trip_and_reconnect_keeps_id() {
+    fn repos_are_listed_and_reconnect_keeps_id() {
         let (store, repo) = store_with_repo();
-        assert_eq!(store.active_repo().unwrap(), None);
-        store
-            .set_setting("active_repo", &repo.id.to_string())
+        let other = store
+            .add_repo(Path::new("/src/aaa"), "aaa", "x", "origin", "me")
             .unwrap();
-        assert_eq!(store.active_repo().unwrap(), Some(repo.clone()));
+        assert_eq!(store.repos().unwrap(), [other, repo.clone()]);
         let again = store
             .add_repo(Path::new("/src/besu"), "besu-eth", "besu", "upstream", "me")
             .unwrap();

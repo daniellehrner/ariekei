@@ -84,18 +84,20 @@ pub fn connect(state: &AppState, path: &str) -> Result<Repo, String> {
     let repo = state
         .store
         .add_repo(&main, &owner, &name, remote, &viewer)?;
-    state
-        .store
-        .set_setting("active_repo", &repo.id.to_string())?;
     Ok(repo)
 }
 
 /// Clears worktree paths that no longer exist (e.g. removed outside Ariekei).
 pub fn reconcile(state: &AppState) -> Result<(), String> {
-    let Some(repo) = state.store.active_repo()? else {
-        return Ok(());
-    };
-    for item in state.store.items(repo.id)? {
+    for item in state
+        .store
+        .repos()?
+        .iter()
+        .map(|repo| state.store.items(repo.id))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+    {
         if item.worktree_path.as_deref().is_some_and(|p| !p.exists()) {
             tracing::info!("worktree of PR #{} is gone", item.number);
             state.store.set_worktree(item.id, None, None, false)?;
@@ -120,8 +122,8 @@ fn unreviewed(cwd: &Path, item: &WorkItem, base_ref: &str, repo: &Repo) -> bool 
     marker.as_deref() != Some(head.as_str()) || git::is_dirty(cwd).unwrap_or(false)
 }
 
-pub fn inbox(state: &AppState) -> Result<Vec<Row>, String> {
-    let Some(repo) = state.store.active_repo()? else {
+pub fn inbox(state: &AppState, repo: Option<Repo>) -> Result<Vec<Row>, String> {
+    let Some(repo) = repo else {
         return Ok(vec![]);
     };
     let default = default_branch(&repo).unwrap_or_else(|_| "main".into());
@@ -385,12 +387,9 @@ pub struct SearchHit {
     pub item_id: Option<i64>,
 }
 
-/// Open PRs of the active repo matching `text` (GitHub search syntax: words, `author:x`, …).
-pub fn search(state: &AppState, text: &str) -> Result<Vec<SearchHit>, String> {
-    let repo = state
-        .store
-        .active_repo()?
-        .ok_or("no repository connected")?;
+/// Open PRs of `repo` matching `text` (GitHub search syntax: words, `author:x`, …).
+pub fn search(state: &AppState, repo: Option<Repo>, text: &str) -> Result<Vec<SearchHit>, String> {
+    let repo = repo.ok_or("no repository connected")?;
     let items = state.store.items(repo.id)?;
     let terms = text.trim().trim_start_matches('#');
     Ok(
@@ -409,11 +408,8 @@ pub fn search(state: &AppState, text: &str) -> Result<Vec<SearchHit>, String> {
 }
 
 /// Adds PR `number` to the Inbox (tracked) and returns its work item id.
-pub fn track(state: &AppState, number: i64) -> Result<i64, String> {
-    let repo = state
-        .store
-        .active_repo()?
-        .ok_or("no repository connected")?;
+pub fn track(state: &AppState, repo: Option<Repo>, number: i64) -> Result<i64, String> {
+    let repo = repo.ok_or("no repository connected")?;
     let pr = github::prs_by_number(&repo.owner, &repo.name, &repo.viewer, &[number])?
         .into_iter()
         .next()
