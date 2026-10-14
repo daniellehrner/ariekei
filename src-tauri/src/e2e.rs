@@ -122,11 +122,13 @@ fn serve(mut stream: TcpStream, app: &AppHandle, bridge: &Bridge) -> std::io::Re
         Err(e) => ("500 Internal Server Error", json!({ "error": e })),
     };
     let text = reply.to_string();
-    write!(
-        stream,
+    let response = format!(
         "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
         text.len()
-    )
+    );
+    stream.write_all(response.as_bytes())?;
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    Ok(())
 }
 
 fn handle(

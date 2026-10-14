@@ -163,7 +163,8 @@ impl HookServer {
 /// Reads one HTTP request, answers it right away, and returns the parsed event.
 /// Requests for any other path (wrong token) are rejected with 404.
 fn handle(mut stream: TcpStream, expected_path: &str) -> std::io::Result<Option<HookEvent>> {
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    // Generous for a loaded machine; Claude Code sends each event in one small request.
+    stream.set_read_timeout(Some(Duration::from_secs(15)))?;
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut request_line = String::new();
     reader.read_line(&mut request_line)?;
@@ -193,6 +194,9 @@ fn handle(mut stream: TcpStream, expected_path: &str) -> std::io::Result<Option<
         b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
     };
     stream.write_all(response)?;
+    // Close our side cleanly so the client reads the whole answer (Windows otherwise may
+    // reset a connection closed right after the write).
+    let _ = stream.shutdown(std::net::Shutdown::Write);
     if !accepted {
         return Ok(None);
     }
@@ -313,7 +317,13 @@ mod tests {
 
     fn post(port: u16, path: &str, body: &str) -> String {
         let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
-        write!(s, "POST {path} HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+        // One write, like a real HTTP client.
+        let request = format!(
+            "POST {path} HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        s.write_all(request.as_bytes()).unwrap();
         let mut out = String::new();
         s.read_to_string(&mut out).unwrap();
         out
