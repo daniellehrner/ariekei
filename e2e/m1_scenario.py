@@ -23,6 +23,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from check import equal  # noqa: E402
+from ui import open_inbox, select_row  # noqa: E402
 from wd import Session  # noqa: E402
 
 app, work, data = sys.argv[1:4]
@@ -91,6 +92,7 @@ def wait_screen(s, key, text, timeout=60):
 
 
 def row_info(s, number):
+    open_inbox(s)
     return s.js(
         "const r = document.querySelector(`.inbox .row[data-number='${arguments[0]}']`);"
         "if (!r) return null;"
@@ -111,8 +113,7 @@ def wait_agent(s, number, wanted, timeout=180):
 
 
 def select(s, number):
-    s.wait(f".inbox .row[data-number='{number}']")
-    s.js("document.querySelector(`.inbox .row[data-number='${arguments[0]}']`).click()", number)
+    select_row(s, number)
 
 
 def keys(s, text):
@@ -212,6 +213,7 @@ try:
     s.screenshot(os.path.join(shots, "m1-terminal.png"))
 
     tab(s, "Review")
+    s.wait(".files [data-file]", timeout=30)
     print("[review]", review_marker(s), "| files:", s.js("return [...document.querySelectorAll('.files [data-file]')].map(b => b.dataset.file)"))
     equal("files vs main", s.js("return [...document.querySelectorAll('.files [data-file]')].map(b => b.dataset.file)"), ["a.txt", "b.txt"])
     s.screenshot(os.path.join(shots, "m1-review-base.png"))

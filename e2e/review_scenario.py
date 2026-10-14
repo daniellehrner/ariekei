@@ -19,6 +19,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from check import check, contains, equal  # noqa: E402
+from ui import open_inbox, select_row  # noqa: E402
 from wd import Session  # noqa: E402
 
 app, work = sys.argv[1:3]
@@ -94,11 +95,6 @@ def writes():
 
 
 # --- helpers ------------------------------------------------------------------------
-def select_row(s, number):
-    s.wait(f".inbox .row[data-number='{number}']", timeout=60)
-    s.js("document.querySelector(`.inbox .row[data-number='${arguments[0]}']`).click()", number)
-
-
 def tab(s, name):
     s.js("[...document.querySelectorAll('[role=tab]')].find(t => t.textContent.trim().startsWith(arguments[0]))?.click()", name)
 
@@ -145,6 +141,7 @@ try:
     check("search finds #43", s.find(".hits [data-hit='43']"))
     s.click(s.wait(".hits [data-hit='43']"))
     s.wait(".item header .title", timeout=30, text="Add y to the parser")
+    s.wait(".overview .meta", timeout=30)
     print("[overview]", s.js("return document.querySelector('.item header .title').textContent.trim()"), "|",
           s.js("return document.querySelector('.overview .meta').innerText.replace(/\\n+/g, ' ')"))
     print("[overview] description:", s.js("return document.querySelector('.overview .body').innerText.trim()"),
@@ -182,6 +179,7 @@ try:
 
     tab(s, "Review")
     s.wait(".review .marker", timeout=30)
+    s.wait(".files [data-file]", timeout=30)
     print("[review]", " ".join(s.js("return document.querySelector('.review .marker').textContent").split()),
           "| scopes:", s.js("return [...document.querySelectorAll('.scopes button, .scope-folded .active-scope, .scope-folded button')].map(l => l.textContent.trim())"),
           "| files:", s.js("return [...document.querySelectorAll('.files [data-file]')].map(b => b.dataset.file)"))
@@ -223,6 +221,7 @@ try:
 
     # More room for the diff: collapse the Inbox, the commit list and the side panel.
     width = lambda css: s.js("return Math.round(document.querySelector(arguments[0]).getBoundingClientRect().width)", css)
+    open_inbox(s)
     before = (width(".item"), width(".review .main"))
     print("[layout] scope list collapsed by default:", s.js("return document.querySelectorAll('.scopes button, .scope-folded .active-scope, .scope-folded button').length"), "entries:",
           s.js("return [...document.querySelectorAll('.scopes button, .scope-folded .active-scope, .scope-folded button')].map(l => l.textContent.trim())"))

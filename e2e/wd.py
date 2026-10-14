@@ -104,6 +104,8 @@ class BridgeSession(_Common):
                 raise TimeoutError(f"the app did not come up; log: {self.log_path}")
             time.sleep(0.25)
         self.started_in = time.monotonic() - t0
+        size = self.js("return [innerWidth, innerHeight]")
+        print(f"   (app up in {self.started_in:.1f}s, window {size[0]}x{size[1]})", flush=True)
 
     def _eval(self, window, script, args, timeout):
         body = {"window": window, "script": script, "args": list(args), "timeout_ms": int(timeout * 1000)}

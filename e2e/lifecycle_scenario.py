@@ -19,6 +19,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from check import check, contains, equal  # noqa: E402
+from ui import select_row  # noqa: E402
 from wd import Session  # noqa: E402
 
 app, work = sys.argv[1:3]
@@ -78,11 +79,6 @@ def rows(s):
     return s.js("return [...document.querySelectorAll('.inbox .row')].map(r => r.dataset.number)")
 
 
-def select_row(s, number):
-    s.wait(f".inbox .row[data-number='{number}']", timeout=60)
-    s.js("document.querySelector(`.inbox .row[data-number='${arguments[0]}']`).click()", number)
-
-
 def header_button(s, text):
     s.click(s.wait(".item header .actions button", text=text))
 
@@ -112,6 +108,7 @@ try:
     # --- the issue ---
     select_row(s, 5)
     s.wait(".item header .title", timeout=30, text="Crash on start")
+    s.wait(".overview .meta", timeout=30)
     print("[issue] overview:", s.js("return document.querySelector('.overview .meta').innerText.replace(/\\n+/g, ' ')"),
           "| tabs:", s.js("return [...document.querySelectorAll('.item [role=tab]')].map(b => b.textContent.trim())"))
     header_button(s, "Start working")
