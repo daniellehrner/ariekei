@@ -236,7 +236,9 @@ impl TerminalManager {
         let pair = native_pty_system()
             .openpty(size)
             .map_err(|e| e.to_string())?;
-        let mut cmd = CommandBuilder::new(&launch.claude);
+        let (program, prefix) = crate::tools::program(&launch.claude);
+        let mut cmd = CommandBuilder::new(program);
+        cmd.args(prefix);
         cmd.args(claude_args(&launch, &plan));
         cmd.cwd(cwd);
         cmd.env("TERM", "xterm-256color");

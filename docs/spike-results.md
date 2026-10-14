@@ -48,6 +48,8 @@ Quitting the app leaves no adapter processes behind (the ACP crate kills the pro
    2.x → 3.3 in one week. Pin exact versions and upgrade deliberately; 3.x upgrade is pending.
 7. **E2E harness:** WebDriver via `tauri-driver` + `WebKitWebDriver` under Xvfb works for Linux
    (and CI). `tauri-driver` does not support macOS; macOS/Windows get build + unit tests only.
+   (Later replaced by a test-only bridge in the app, which runs the e2e scenarios on all three
+   platforms; see the README.)
    Quirk: WebKitWebDriver's element text omits ellipsized spans — select by attributes.
 8. **npm 10 resolver crash** (`edgesOut` null) with vitest 5's optional peers; vitest dropped for
    the spike. Revisit (npm 11 or pnpm) when adding UI tests in M1.

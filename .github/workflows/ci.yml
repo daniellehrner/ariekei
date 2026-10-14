@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
-            libjavascriptcoregtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev libxdo-dev
+            libjavascriptcoregtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev libxdo-dev xvfb
 
       - uses: actions/setup-node@v5
         with:
@@ -55,7 +55,9 @@ jobs:
 
       - name: Rust lint
         working-directory: src-tauri
-        run: cargo clippy --all-targets -- -D warnings
+        run: |
+          cargo clippy --all-targets -- -D warnings
+          cargo clippy --all-targets --features e2e -- -D warnings
 
       - name: Rust tests
         working-directory: src-tauri
@@ -63,3 +65,28 @@ jobs:
 
       - name: Build app
         run: npx tauri build --no-bundle
+
+      # The same app with the e2e bridge (src-tauri/src/e2e.rs), driven by e2e/run.py: every
+      # scenario, against the fake gh and claude in e2e/.
+      - name: Build the e2e test app
+        run: npx tauri build --no-bundle --features e2e
+
+      - name: End-to-end tests
+        shell: bash
+        env:
+          E2E_WORK: ${{ runner.temp }}/e2e
+        run: |
+          app=src-tauri/target/release/ariekei
+          case "$RUNNER_OS" in
+            Linux) xvfb-run -a -s "-screen 0 1400x900x24" python3 e2e/run.py "$app" ;;
+            macOS) python3 e2e/run.py "$app" ;;
+            Windows) python e2e/run.py "$app.exe" ;;
+          esac
+
+      - name: Keep the e2e work directories
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-${{ matrix.os }}
+          path: ${{ runner.temp }}/e2e
+          if-no-files-found: ignore

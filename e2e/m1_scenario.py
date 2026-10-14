@@ -7,12 +7,11 @@ PR branch), the agent in the terminal (slash-command autocomplete, a committing 
 Review since the PR base, Mark reviewed, a second agent commit showing up alone,
 Inbox attention, idle shutdown, and resume after an app restart.
 
-Needs a release build, the user's `claude` and `gh` (for the viewer login only), and
-tauri-driver under Xvfb started with:
-
-  ARIEKEI_DATA_DIR=<dir> ARIEKEI_NO_POLL=1 ARIEKEI_IDLE_SECS=5 \\
-    xvfb-run -a -s "-screen 0 1400x900x24" tauri-driver --port 4444 &
-  python3 -I e2e/m1_scenario.py <app-binary> <work-dir> <data-dir>
+The agent is e2e/fake_claude.py (ARIEKEI_CLAUDE): a small terminal agent that commits when
+asked and reports through the hooks like Claude Code. With ARIEKEI_CLAUDE unset the user's
+real `claude` runs instead (two short turns; answer its trust dialog). Run it with
+`python3 e2e/run.py <test-app> m1`, which sets the environment (ARIEKEI_NO_POLL=1,
+ARIEKEI_IDLE_SECS=5, fake gh).
 """
 
 import json
@@ -23,13 +22,14 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from check import equal  # noqa: E402
 from wd import Session  # noqa: E402
 
 app, work, data = sys.argv[1:4]
 shots = os.path.join(work, "shots")
 os.makedirs(shots, exist_ok=True)
 
-ENTER, DOWN, BACKSPACE = "\ue007", "\ue015", "\ue003"  # WebDriver key codes
+ENTER, DOWN, BACKSPACE = "\r", "\x1b[B", "\x7f"  # as the terminal sends them
 SCREEN = """
 const t = (window.__ariekeiTerminals || {})[arguments[0]];
 if (!t) return '';
@@ -116,7 +116,9 @@ def select(s, number):
 
 
 def keys(s, text):
-    s.type(s.wait(".terminal:not(.hidden) .xterm-helper-textarea"), text)
+    """Types into the visible terminal, as the keyboard would."""
+    s.wait(".terminal:not(.hidden) .xterm")
+    s.js("Object.values(window.__ariekeiTerminals).find(t => t.element?.isConnected && t.element.offsetParent)?.input(arguments[0])", text)
 
 
 def prompt(s, number, text):
@@ -129,7 +131,7 @@ def prompt(s, number, text):
         if st != "waitingForPermission":
             return st
         keys(s, ENTER)  # accept the highlighted "Yes"
-        wait_agent(s, number, {"working"}, timeout=30)
+        wait_agent(s, number, {"working", "finished", "error"}, timeout=30)
 
 
 def tab(s, name):
@@ -147,6 +149,11 @@ def invoke(s, cmd, args):
 
 clone = fixture()
 worktree = os.path.join(work, "proj_pr42")
+# The fake gh only has to know who the viewer is; the PRs are inserted below.
+if os.environ.get("FAKE_GH_DIR"):
+    os.makedirs(os.environ["FAKE_GH_DIR"], exist_ok=True)
+    with open(os.path.join(os.environ["FAKE_GH_DIR"], "data.json"), "w") as f:
+        json.dump({"viewer": "me", "prs": []}, f)
 
 # --- run 1: connect the fixture clone -------------------------------------------
 s = Session(app)
@@ -171,12 +178,14 @@ db.close()
 s = Session(app)
 try:
     s.wait(".inbox .row", timeout=30)
-    print("[inbox]", [r.split("\n")[0] for r in s.js("return [...document.querySelectorAll('.inbox .row')].map(r => r.innerText)")])
+    print("[inbox]", s.js("return [...document.querySelectorAll('.inbox .row .title')].map(t => t.textContent)"))
+    equal("the inserted PRs", sorted(s.js("return [...document.querySelectorAll('.inbox .row')].map(r => r.dataset.number)")), ["42", "43"])
     select(s, 42)
     s.click(s.wait("[data-start]"))
     s.wait(".terminal", timeout=120)
     print("[start]", s.js("return document.querySelector('[data-notice]')?.textContent"), "| branch:", git(worktree, "rev-parse", "--abbrev-ref", "HEAD"),
           "| upstream:", git(worktree, "rev-parse", "--abbrev-ref", "@{upstream}"))
+    equal("the worktree is on the PR branch", git(worktree, "rev-parse", "--abbrev-ref", "HEAD"), "feature/x")
     item_id = int(s.wait_js("return Object.keys(window.__ariekeiTerminals || {})[0] || null", timeout=30))
     key = str(item_id)
     wait_agent(s, 42, {"ready"}, timeout=40)
@@ -197,14 +206,17 @@ try:
 
     st = prompt(s, 42, "Append a line with the word two to a.txt, then commit with the message 'add two'. Do nothing else.")
     print("[turn 1]", st, "| last commit:", git(worktree, "log", "-1", "--format=%s"))
+    equal("turn 1 commits", (st, git(worktree, "log", "-1", "--format=%s")), ("finished", "add two"))
     print("[inbox] #42 attention:", row_info(s, 42)["attention"])
+    equal("after the turn: changes to review", row_info(s, 42)["attention"], "Changes to review")
     s.screenshot(os.path.join(shots, "m1-terminal.png"))
 
     tab(s, "Review")
     print("[review]", review_marker(s), "| files:", s.js("return [...document.querySelectorAll('.files [data-file]')].map(b => b.dataset.file)"))
+    equal("files vs main", s.js("return [...document.querySelectorAll('.files [data-file]')].map(b => b.dataset.file)"), ["a.txt", "b.txt"])
     s.screenshot(os.path.join(shots, "m1-review-base.png"))
     s.click(s.wait("[data-mark-reviewed]"))
-    if s.find(".review header .warn"):
+    if s.find(".review [data-guard]"):
         # Files were not marked reviewed one by one: the coverage guard asks first.
         print("[mark] asks first:", s.js("return document.querySelector('.review [data-guard] .text').textContent"))
         s.click(s.wait(".review [data-guard] button", text="Mark anyway"))
@@ -214,10 +226,12 @@ try:
           "| ref:", git(clone, "rev-parse", "--short", "refs/ariekei/reviewed/pr-42"))
     time.sleep(1)
     print("[inbox] #42 attention after review:", row_info(s, 42)["attention"])
+    equal("reviewed: no attention", row_info(s, 42)["attention"], None)
 
     tab(s, "Terminal")
     st = prompt(s, 42, "Append a line with the word three to a.txt, then commit with the message 'add three'. Do nothing else.")
     print("[turn 2]", st, "| last commit:", git(worktree, "log", "-1", "--format=%s"))
+    equal("turn 2 commits", (st, git(worktree, "log", "-1", "--format=%s")), ("finished", "add three"))
     tab(s, "Review")
     s.click(s.wait(".review [data-reload]"))
     time.sleep(1)
@@ -225,6 +239,8 @@ try:
     state = invoke(s, "review_state", {"id": item_id})
     diff = invoke(s, "review_file", {"id": item_id, "from": state["reviewed"], "to": None, "path": "a.txt", "ignoreWs": False})
     print("[review] a.txt since review: hunks", diff["hunks"], "| new side ends with:", diff["new"].splitlines()[-2:])
+    equal("since the review, only turn 2's line", diff["new"].splitlines()[-1], "three")
+    equal("in one hunk", len(diff["hunks"]), 1)
     s.screenshot(os.path.join(shots, "m1-review-since.png"))
 
     # Leave #42 (its terminal detaches); with ARIEKEI_IDLE_SECS=5 the idle agent closes.

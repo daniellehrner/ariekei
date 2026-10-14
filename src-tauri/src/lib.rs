@@ -1,5 +1,7 @@
 mod claude;
 mod context;
+#[cfg(feature = "e2e")]
+mod e2e;
 mod git;
 mod github;
 mod guide;
@@ -11,6 +13,7 @@ mod poller;
 mod review_order;
 mod store;
 mod terminal;
+mod tools;
 mod windows;
 mod workitem;
 mod worktree;
@@ -498,6 +501,8 @@ pub fn run() {
                 tracing::warn!("reconcile failed: {e}");
             }
             windows::restore(app.handle());
+            #[cfg(feature = "e2e")]
+            e2e::start(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {

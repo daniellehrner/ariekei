@@ -6,9 +6,7 @@ repo shown in another window being focused instead of opened twice, the selected
 remembered per repo, the open windows coming back after a restart, closing one of them,
 and an empty window (New window) picking a connected repo.
 
-  FAKE_GH_DIR=<work>/gh ARIEKEI_GH=$PWD/e2e/fake_gh.py ARIEKEI_DATA_DIR=<work>/data \\
-  ARIEKEI_POLL_SECS=3 xvfb-run -a -s "-screen 0 1400x900x24" tauri-driver --port 4444 &
-  python3 -I e2e/windows_scenario.py <app-binary> <work>
+Run it with `python3 e2e/run.py <test-app> windows` (see run.py), which sets the environment.
 """
 
 import json
@@ -19,6 +17,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from check import check, equal  # noqa: E402
 from wd import Session  # noqa: E402
 
 app, work = sys.argv[1:3]
@@ -106,6 +105,8 @@ try:
     s.click(s.wait(".connect form button"))
     wait_repo(s, "proj", 42)
     print("[connect] proj:", header(s), rows(s), "| title:", s.s("GET", "/title"))
+    equal("proj's PRs", rows(s), ["43", "42"])
+    equal("window title", s.s("GET", "/title"), "owner/proj — Ariekei")
 
     # A second repo, connected from the repo menu, replaces the first in this window.
     print("[menu]", menu(s))
@@ -116,6 +117,7 @@ try:
     s.click(s.wait(".connect form button[type=submit]"))
     wait_repo(s, "other", 7)
     print("[connect] other:", header(s), rows(s), "| title:", s.s("GET", "/title"))
+    equal("connecting another repo shows it here", (header(s), rows(s)), ("owner/other", ["7"]))
 
     # Switch back from the menu; the selection is per repo.
     ids, _ = repo_ids()
@@ -125,6 +127,7 @@ try:
     s.js("document.querySelector(\".inbox .row[data-number='43']\").click()")
     s.wait(".item header .title", timeout=30, text="Second in proj")
     print("[switch] back to:", header(s), rows(s), "| title:", s.s("GET", "/title"))
+    equal("switching back", header(s), "owner/proj")
 
     # The other repo in a new window.
     main = s.s("GET", "/window")
@@ -134,6 +137,7 @@ try:
     to_window(s, second)
     wait_repo(s, "other", 7)
     print("[new window] shows:", header(s), rows(s), "| title:", s.s("GET", "/title"))
+    equal("the new window shows other", (header(s), rows(s)), ("owner/other", ["7"]))
 
     # Both Inboxes stay current: a new PR in each repo shows up in its own window.
     d = json.load(open(os.path.join(gh_dir, "data.json")))
@@ -144,17 +148,23 @@ try:
     json.dump(d, open(os.path.join(gh_dir, "data.json"), "w"))
     s.wait(".inbox .row[data-number='8']", timeout=30)
     print("[poll] other window:", rows(s))
+    equal("polling keeps other current", rows(s), ["8", "7"])
     to_window(s, main)
     s.wait(".inbox .row[data-number='44']", timeout=30)
     print("[poll] main window:", rows(s))
+    equal("polling keeps proj current", rows(s), ["44", "43", "42"])
 
     # The main window's menu: other is open elsewhere, so picking it focuses that window.
-    print("[menu] from main:", menu(s), "| new-window button for other:",
+    menu_entries = menu(s)
+    print("[menu] from main:", menu_entries, "| new-window button for other:",
           s.js(f"return !!document.querySelector(\".menu [data-new-window='{ids['other']}']\")"))
+    check("a repo open elsewhere is marked so", any("open in another window" in e for e in menu_entries), menu_entries)
     s.click(s.wait(f".menu [data-repo-id='{ids['other']}']"))
     time.sleep(1)
     print("[focus other] main still shows:", header(s), "| windows:", len(handles(s, 2)))
+    equal("picking it focuses its window instead", (header(s), len(handles(s, 2))), ("owner/proj", 2))
     print("[db] open windows:", repo_ids()[1], "ids:", ids)
+    equal("open windows recorded", repo_ids()[1], [ids["proj"], ids["other"]])
 finally:
     s.quit()
 
@@ -168,6 +178,7 @@ try:
         s.wait(".inbox [data-repo-menu]", timeout=30)
         shown[header(s)] = h
     print("[restart] windows:", sorted(shown))
+    equal("both windows come back", sorted(shown), ["owner/other", "owner/proj"])
     to_window(s, shown["owner/proj"])
     s.wait(".item header .title", timeout=30, text="Second in proj")
     print("[restart] proj selection kept:", s.js("return document.querySelector('.item header .title').textContent"))
@@ -175,11 +186,14 @@ try:
     # Closing the other window forgets it; the remaining one stays recorded. (Closed the
     # way the window manager does; WebDriver's own close only closes the page.)
     to_window(s, shown["owner/other"])
-    s.js("window.__TAURI_INTERNALS__.invoke('plugin:window|close', { label: window.__TAURI_INTERNALS__.metadata.currentWindow.label })")
+    # Deferred, so the script returns before its window goes away.
+    s.js("const label = window.__TAURI_INTERNALS__.metadata.currentWindow.label;"
+         "setTimeout(() => window.__TAURI_INTERNALS__.invoke('plugin:window|close', { label }), 100)")
     to_window(s, shown["owner/proj"])
     handles(s, 1)
     time.sleep(0.5)
     print("[close] open windows:", repo_ids()[1])
+    equal("closing a window forgets it", repo_ids()[1], [ids["proj"]])
 
     # New window: an empty one with the Connect screen, where a connected repo is picked.
     menu(s)
@@ -193,5 +207,6 @@ try:
     s.click(s.wait(f".connect [data-recent='{ids['other']}']"))
     wait_repo(s, "other", 7)
     print("[empty window] now shows:", header(s), "| title:", s.s("GET", "/title"), "| open windows:", repo_ids()[1])
+    equal("an empty window picks a connected repo", (header(s), repo_ids()[1]), ("owner/other", [ids["proj"], ids["other"]]))
 finally:
     s.quit()

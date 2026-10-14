@@ -2,13 +2,17 @@
 
 Builds a fixture with PRs in every attention state, drives the app through the screens and
 saves one PNG per screen into <work>/shots/<theme>-<size>/. The agent is e2e/fake_claude.py,
-which reports status through the hooks like Claude Code does. For the dark theme, start the
-driver with GTK_THEME=Adwaita:dark (light: GTK_THEME=Adwaita) and pass "dark" as the third argument.
+which reports status through the hooks like Claude Code does. Screenshots need WebDriver, so
+this runs through tauri-driver (Linux). The desktop's dark preference reaches the app over
+D-Bus; to choose the theme, point D-Bus nowhere and set it in a GTK settings file:
 
+  mkdir -p <work>/xdg/gtk-3.0 && printf '[Settings]\\ngtk-application-prefer-dark-theme=1\\n' \\
+    > <work>/xdg/gtk-3.0/settings.ini       # 0 for light
   FAKE_GH_DIR=<work>/gh ARIEKEI_GH=$PWD/e2e/fake_gh.py ARIEKEI_DATA_DIR=<work>/data \\
-    ARIEKEI_CLAUDE=$PWD/e2e/fake_claude.py ARIEKEI_POLL_SECS=600 GTK_THEME=Adwaita[:dark] \\
+    ARIEKEI_CLAUDE=$PWD/e2e/fake_claude.py ARIEKEI_POLL_SECS=600 XDG_CONFIG_HOME=<work>/xdg \\
+    DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent \\
     xvfb-run -a -s "-screen 0 1600x1000x24" tauri-driver --port 4444 &
-  python3 -I e2e/gallery.py <app-binary> <work> [light|dark] [1440x900] [screen,...]
+  E2E_WEBDRIVER=http://127.0.0.1:4444 python3 -I e2e/gallery.py <app> <work> [light|dark] [1440x900] [screen,...]
 
 Screens: connect, empty (nothing selected yet), overview, menu, comments, collapsed, waiting, terminal, review, guide,
 selection, drafts, submit, shortcuts, guard, review-hidden.

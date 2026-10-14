@@ -64,25 +64,33 @@ Live, read-only checks against a real repository:
 
 ## End-to-end tests
 
-`e2e/` drives the release build through `tauri-driver` under Xvfb (Linux; needs
-`webkit2gtk-driver`, `xvfb` and `cargo install tauri-driver`). Each scenario's header has the
-exact command.
+`e2e/` drives a test build of the app on Linux, macOS and Windows; CI runs every scenario on
+all three. The test build has the e2e bridge (`--features e2e`, `src-tauri/src/e2e.rs`): with
+`ARIEKEI_E2E_PORT` set, the app runs JavaScript in its windows for `e2e/wd.py`, which starts
+the app itself. Release builds do not contain it.
 
-- `review_scenario.py`: search, Overview, Comments, review without a worktree, submitting a
-  review. No agent.
-- `lifecycle_scenario.py`: issue → worktree → push → draft PR → merge → cleanup. No agent.
-- `windows_scenario.py`: two repos, switching, a window per repo, restoring windows after a
-  restart. No agent.
-- `m1_scenario.py`: the agent in the terminal, review loop, idle shutdown and resume. Uses
-  Claude Code (two short turns).
-- `gallery.py`: not a test; screenshots of every screen in light or dark and at any window size,
-  for comparing the UI with the design.
+```
+npx tauri build --no-bundle --features e2e
+python3 e2e/run.py src-tauri/target/release/ariekei            # all scenarios
+python3 e2e/run.py src-tauri/target/release/ariekei review     # one of them
+```
 
-All but `m1_scenario.py` run against `e2e/fake_gh.py`, a stand-in for `gh` that serves fixture
-PRs and issues and records every write instead of sending it. With `ARIEKEI_CLAUDE` set to
-`e2e/fake_claude.py`, the review guide is canned and the terminal runs a minimal agent that reports
-its status through the hooks like Claude Code (a line with "ask" asks for permission). Test-only
-environment variables:
+On Linux without a display, prefix `xvfb-run -a`.
+
+- `review`: search, Overview, Comments, review without a worktree, review order and marks,
+  the review guide, submitting a review, rebase-aware "since your review".
+- `windows`: two repos, switching, a window per repo, restoring windows after a restart.
+- `lifecycle`: issue → worktree → push → draft PR → merge → cleanup.
+- `m1`: the agent in the terminal (turns that commit, a permission prompt), the review loop,
+  idle shutdown and resume after a restart.
+
+Nothing leaves the machine: GitHub is `e2e/fake_gh.py`, a stand-in for `gh` that serves fixture
+PRs and issues and records every write instead of sending it, and the agent is
+`e2e/fake_claude.py`, which writes a canned review guide for `claude -p` and otherwise is a
+small terminal agent that commits when asked and reports its status through the hooks like
+Claude Code. `e2e/gallery.py` is not a test: it takes screenshots of every screen through
+tauri-driver (Linux), in light or dark and at any window size, for comparing the UI with the
+design. Test-only environment variables:
 
 | Variable | Effect |
 |---|---|
@@ -93,6 +101,5 @@ environment variables:
 | `ARIEKEI_IDLE_SECS` | Close idle, unwatched agents after N seconds instead of 15 minutes |
 | `ARIEKEI_CLAUDE_ARGS` | Extra arguments for `claude` |
 | `ARIEKEI_CLAUDE` | Use this `claude` binary |
-
-Screenshots via WebKitWebDriver can be slow under Xvfb; `E2E_SHOTS=0` skips them. The scenarios
-check the DOM, not the pictures.
+| `ARIEKEI_PYTHON` | Interpreter for a `.py` given as `ARIEKEI_GH` or `ARIEKEI_CLAUDE` (default `python3`) |
+| `ARIEKEI_E2E_PORT` | Serve the e2e bridge on this port (test builds only) |

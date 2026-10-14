@@ -7,18 +7,18 @@ a file is uncommitted, git push → draft PR opened ("Closes #N") and the item b
 the PR merged → automatic cleanup (worktree, branch, agent, item); and an adopted worktree
 that is kept when its PR is merged. Commits are made with git directly (no agent turn).
 
-  FAKE_GH_DIR=<work>/gh ARIEKEI_GH=$PWD/e2e/fake_gh.py ARIEKEI_DATA_DIR=<work>/data \\
-  ARIEKEI_POLL_SECS=3 xvfb-run -a -s "-screen 0 1400x900x24" tauri-driver --port 4444 &
-  python3 -I e2e/lifecycle_scenario.py <app-binary> <work>
+Run it with `python3 e2e/run.py <test-app> lifecycle` (see run.py), which sets the environment.
 """
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from check import check, contains, equal  # noqa: E402
 from wd import Session  # noqa: E402
 
 app, work = sys.argv[1:3]
@@ -107,6 +107,7 @@ try:
     s.click(s.wait(".connect form button"))
     s.wait(".inbox .row[data-number='5']", timeout=60)
     print("[inbox]", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"))
+    equal("Inbox sections", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"), ["Mine 1", "Issues 1", "Opened 0"])
 
     # --- the issue ---
     select_row(s, 5)
@@ -119,6 +120,7 @@ try:
     branch = git(wt, "rev-parse", "--abbrev-ref", "HEAD")
     print("[start] worktree:", os.path.isdir(wt), "| branch:", branch, "| from main:", git(wt, "rev-parse", "HEAD") == git(clone, "rev-parse", "origin/main"),
           "| push to:", git(clone, "config", f"branch.{branch}.remote"))
+    check("Start working makes a worktree on a branch from main", os.path.isdir(wt) and branch == "issue-5-crash-on-start" and git(wt, "rev-parse", "HEAD") == git(clone, "rev-parse", "origin/main"), branch)
 
     # The fix (made directly with git), not pushed yet: Done must refuse.
     open(os.path.join(wt, "a.txt"), "a").write("fixed\n")
@@ -128,6 +130,8 @@ try:
     s.wait("[data-blocked]", timeout=30)
     print("[done] refused:", s.js("return [...document.querySelectorAll('[data-blocked] li')].map(l => l.textContent)"),
           "| worktree still there:", os.path.isdir(wt))
+    blocked = s.js("return [...document.querySelectorAll('[data-blocked] li')].map(l => l.textContent)")
+    check("Done refuses while work would be lost", len(blocked) == 2 and os.path.isdir(wt), blocked)
     os.remove(os.path.join(wt, "notes.txt"))
 
     s.js("document.querySelector('[data-tab=review]').click()")
@@ -142,9 +146,11 @@ try:
         time.sleep(0.5)
     created = [w for w in writes() if w.get("post", "").endswith("/pulls")]
     print("[push] PR request:", json.dumps(created[-1]["body"]) if created else None)
+    check("the first push opens a draft PR", created and created[-1]["body"]["draft"] and created[-1]["body"]["body"] == "Closes #5.", created)
     print("[push] inbox now:", rows(s), "| sections:", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"))
     s.wait(".item header .meta", timeout=20, text="from issue #5")
     print("[push] header:", s.js("return document.querySelector('.item header').innerText.replace(/\\n+/g, ' | ')"))
+    contains("the item became the PR", s.js("return document.querySelector('.item header .title').textContent"), "#100")
 
     # Merged on GitHub: the next poll cleans up on its own.
     set_state(100, "MERGED")
@@ -152,7 +158,8 @@ try:
     time.sleep(1)
     branch_left = subprocess.run(["git", "-C", clone, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"]).returncode == 0
     print("[merged] worktree removed:", not os.path.exists(wt), "| branch deleted:", not branch_left,
-          "| agent processes left:", subprocess.run(["pgrep", "-f", "proj_issue5"], capture_output=True, text=True).stdout.split())
+          "| agent processes left:", subprocess.run(["pgrep", "-f", "proj_issue5"], capture_output=True, text=True).stdout.split() if shutil.which("pgrep") else "n/a")
+    check("merging cleans up the worktree and the branch", not os.path.exists(wt) and not branch_left)
 
     # --- an adopted worktree: kept when its PR is merged ---
     select_row(s, 42)
@@ -160,9 +167,11 @@ try:
     header_button(s, "Start working")
     s.wait("[data-notice]", timeout=60)
     print("[adopt]", s.js("return document.querySelector('.item [data-notice]').textContent"))
+    contains("an existing worktree is adopted", s.js("return document.querySelector('.item [data-notice]').textContent"), "existing worktree")
     set_state(42, "MERGED")
     wait_gone(s, 42)
     print("[merged] adopted worktree kept:", os.path.isdir(mine), "| its branch kept:",
           subprocess.run(["git", "-C", clone, "show-ref", "--verify", "--quiet", "refs/heads/pr-42"]).returncode == 0)
+    check("an adopted worktree is kept", os.path.isdir(mine))
 finally:
     s.quit()

@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::io::Write as _;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// Diff text sent to Claude at most (the rest is summarized by `--stat`).
 const MAX_DIFF_CHARS: usize = 150_000;
@@ -155,7 +155,7 @@ pub fn parse(output: &[u8]) -> Result<Guide, String> {
 /// Runs the user's `claude` headless in `cwd` with read-only tools and returns the guide.
 pub fn run(claude: &Path, cwd: &Path, input: &Input) -> Result<Guide, String> {
     let schema = schema().to_string();
-    let mut child = Command::new(claude)
+    let mut child = crate::tools::command(claude)
         .current_dir(cwd)
         .args([
             "-p",

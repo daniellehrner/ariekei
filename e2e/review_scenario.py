@@ -6,13 +6,9 @@ requested), search and opening another author's PR, Overview (sanitized descript
 Comments (resolve, reply, new comment), reviewing without a worktree ("All changes vs
 main" from refs/pull/N/head), draft comments, Submit to GitHub (line comment inside the
 PR diff, the other one folded into the body), and "All changes" after Mark reviewed.
-No agent is started. The review guide comes from e2e/fake_claude.py (ARIEKEI_CLAUDE);
-without it, your real `claude` writes it (one headless call).
+No agent is started. The review guide comes from e2e/fake_claude.py (ARIEKEI_CLAUDE).
 
-  FAKE_GH_DIR=<work>/gh ARIEKEI_GH=$PWD/e2e/fake_gh.py ARIEKEI_DATA_DIR=<work>/data \\
-    ARIEKEI_CLAUDE=$PWD/e2e/fake_claude.py \\
-    xvfb-run -a -s "-screen 0 1400x900x24" tauri-driver --port 4444 &
-  python3 -I e2e/review_scenario.py <app-binary> <work>
+Run it with `python3 e2e/run.py <test-app> review` (see run.py), which sets the environment.
 """
 
 import json
@@ -22,6 +18,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from check import check, contains, equal  # noqa: E402
 from wd import Session  # noqa: E402
 
 app, work = sys.argv[1:3]
@@ -139,11 +136,13 @@ try:
     s.wait(".inbox .row[data-number='44']", timeout=60)
     sections = s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))")
     print("[inbox] sections:", sections)
+    equal("Inbox sections", sections, ["Mine 1", "Review requested 1", "Opened 0"])
 
     # Find another author's PR and open it.
     s.type(s.wait(".search input"), "parser")
     s.wait(".hits [data-hit='43']", timeout=20)
     print("[search] hits:", s.js("return [...document.querySelectorAll('.hits .row')].map(r => r.innerText.replace(/\\n+/g, ' | '))"))
+    check("search finds #43", s.find(".hits [data-hit='43']"))
     s.click(s.wait(".hits [data-hit='43']"))
     s.wait(".item header .title", timeout=30, text="Add y to the parser")
     print("[overview]", s.js("return document.querySelector('.item header .title').textContent.trim()"), "|",
@@ -153,18 +152,30 @@ try:
           "| __pwned:", s.js("return window.__pwned ?? null"))
     s.screenshot(os.path.join(shots, "r1-overview.png"))
     print("[inbox] after opening:", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"))
+    check("the description is sanitized", s.js("return document.querySelectorAll('.overview .body script, .overview .body [onerror]').length") == 0 and s.js("return window.__pwned ?? null") is None)
+    contains("a PR opened from search goes to Opened", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"), "Opened 1")
 
     tab(s, "Comments")
     s.wait(".thread", timeout=20)
     print("[comments] threads:", s.js("return document.querySelectorAll('.thread').length"), "| conversation:",
           s.js("return [...document.querySelectorAll('.timeline li')].map(e => e.innerText.replace(/\\n+/g, ' '))"))
-    s.click(s.wait(".thread button", text="Resolve"))
+    # Each action waits for its write: the buttons are disabled while one is in flight.
+    def wrote(what, before):
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if len([w for w in writes() if what in json.dumps(w)]) > before:
+                return
+            time.sleep(0.2)
+        raise TimeoutError(f"no {what} write")
     s.click(s.wait(".thread [data-reply]"))
     s.type(s.wait(".thread textarea"), "Because y needs it.")
     s.click(s.wait(".thread button", text="Reply on GitHub"))
+    wrote("/replies", 0)
     s.type(s.wait("label.compose textarea"), "Overall looks good.")
     s.click(s.wait("[data-send-comment]"))
-    time.sleep(1.5)
+    wrote("issues/43/comments", 0)
+    s.click(s.wait(".thread button", text="Resolve"))
+    wrote("resolveReviewThread", 0)
     s.screenshot(os.path.join(shots, "r2-comments.png"))
     for w in writes():
         print("   wrote:", json.dumps(w)[:160])
@@ -175,16 +186,20 @@ try:
           "| scopes:", s.js("return [...document.querySelectorAll('.scopes button, .scope-folded .active-scope, .scope-folded button')].map(l => l.textContent.trim())"),
           "| files:", s.js("return [...document.querySelectorAll('.files [data-file]')].map(b => b.dataset.file)"))
     print("[review] worktrees in the clone:", len(git(clone, "worktree", "list").splitlines()))
+    equal("reviewing without a worktree adds none", len(git(clone, "worktree", "list").splitlines()), 1)
+    equal("files of #43 in review order", s.js("return [...document.querySelectorAll('.files [data-file]')].map(b => b.dataset.file)"), ["a.txt", "b.txt", "c.rs", "w.txt", "tests/parser_test.rs"])
     # Any language is highlighted, not just Java: a Rust file gets syntax-styled tokens.
     s.click(s.wait(".files [data-file='c.rs']"))
     s.wait_js("return document.querySelectorAll('.cm-mergeViewEditor .cm-line span[class]').length > 0", timeout=20)
     print("[review] c.rs styled tokens:", s.js("return document.querySelectorAll('.cm-mergeViewEditor .cm-line span[class]').length"))
+    check("a Rust file is highlighted", s.js("return document.querySelectorAll('.cm-mergeViewEditor .cm-line span[class]').length") > 0)
     s.click(s.wait(".files [data-file='a.txt']"))
     s.wait(".cm-mergeViewEditor", timeout=20)
     time.sleep(0.5)
     add_comment(s, 10, 10, "Name this better.")
     add_comment(s, 1, 1, "Unrelated: the header is stale.")
     print("[draft]", s.js("return [...document.querySelectorAll('[data-drafts] li')].map(l => l.innerText.replace(/\\s+/g, ' ').trim())"))
+    equal("draft comments", s.js("return document.querySelectorAll('[data-drafts] li').length"), 2)
     # WebDriver's synthesized clicks miss elements this close to the window's bottom edge
     # under Xvfb (the element at the point is the button itself), so click in the DOM.
     dom_click(s, "[data-open-submit]")
@@ -199,6 +214,12 @@ try:
     print("[submit]", s.js("return document.querySelector('.review [data-notice]').textContent.trim()"))
     review_post = [w for w in writes() if w.get("post", "").endswith("/pulls/43/reviews")]
     print("[submit] request:", json.dumps(review_post[-1]["body"]) if review_post else None, "| expected commit:", sha43)
+    check("the review was sent", review_post)
+    body = review_post[-1]["body"]
+    equal("review event", body["event"], "REQUEST_CHANGES")
+    equal("review commit", body["commit_id"], sha43)
+    equal("line comments", [(c["path"], c["line"]) for c in body["comments"]], [("a.txt", 10)])
+    contains("the comment outside the PR diff goes to the body", body["body"], "a.txt:1")
 
     # More room for the diff: collapse the Inbox, the commit list and the side panel.
     width = lambda css: s.js("return Math.round(document.querySelector(arguments[0]).getBoundingClientRect().width)", css)
@@ -215,21 +236,25 @@ try:
     after = (width(".item"), width(".review .main"))
     print(f"[layout] work item width {before[0]} -> {after[0]} px, diff area {before[1]} -> {after[1]} px",
           "| attention dots:", s.js("return document.querySelectorAll('.inbox.collapsed .pip').length"))
+    check("collapsing the Inbox and the side panel widens the diff", after[1] > before[1] + 300, (before, after))
     first = s.js("return document.querySelector('.toolbar .current-file')?.textContent.trim()")
     s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: ']', bubbles: true }))")
     time.sleep(0.5)
     print("[layout] file before/after ']':", first, "->", s.js("return document.querySelector('.toolbar .current-file')?.textContent.trim()"))
+    contains("']' goes to the next file", s.js("return document.querySelector('.toolbar .current-file')?.textContent.trim()"), "b.txt")
     s.screenshot(os.path.join(shots, "r5-wide.png"))
     # Ctrl+B brings the Inbox back (the state is saved for the next launch).
     s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }))")
     s.wait(".inbox:not(.collapsed)", timeout=5)
     s.click(s.wait("[data-toggle='side']"))
     print("[layout] Ctrl+B restored the Inbox; side panel shown again:", bool(s.find(".review .side")))
+    check("the side panel is back", s.find(".review .side"))
 
     # --- review order, reviewed marks, whitespace, unified, keys (PR #43) ---
     s.click(s.wait("[data-toggle='side']")) if not s.find(".review .side") else None
     groups = s.js("return [...document.querySelectorAll('.side .group')].map(g => [g.dataset.group, g.querySelectorAll('li.file').length])")
     print("[order] groups:", groups)
+    equal("review order groups", [g[0] for g in groups], ["source", "tests", "generated"])
     print("[order] files in order:", s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"))
     print("[marks] progress before:", s.js("return document.querySelector('[data-progress]').textContent.trim()"))
     s.click(s.wait("[data-file='a.txt']"))
@@ -238,22 +263,28 @@ try:
     time.sleep(1)
     print("[marks] after 'reviewed, next':", s.js("return document.querySelector('[data-progress]').textContent.trim()"),
           "| now on:", s.js("return document.querySelector('.side .files button.active')?.dataset.file"))
+    contains("'Reviewed, next' marks the file", s.js("return document.querySelector('[data-progress]').textContent"), "1/6")
+    equal("and moves on", s.js("return document.querySelector('.side .files button.active')?.dataset.file"), "b.txt")
     s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', bubbles: true }))")
     time.sleep(1)
     print("[keys] after 'r':", s.js("return document.querySelector('[data-progress]').textContent.trim()"),
           "| now on:", s.js("return document.querySelector('.side .files button.active')?.dataset.file"))
+    contains("'r' marks the file", s.js("return document.querySelector('[data-progress]').textContent"), "2/6")
     s.js("document.querySelector(\"[data-opt='ws']\").click()")
     time.sleep(1)
     print("[ws] labelled whitespace-only:", s.js("return [...document.querySelectorAll('.side .file')].filter(l => l.querySelector('.ws')).map(l => l.querySelector('[data-file]').dataset.file)"))
+    equal("whitespace-only files", s.js("return [...document.querySelectorAll('.side .file')].filter(l => l.querySelector('.ws')).map(l => l.querySelector('[data-file]').dataset.file)"), ["w.txt"])
     s.js("document.querySelector(\"[data-opt='ws']\").click()")
     s.click(s.wait("[data-file='a.txt']"))
     s.js("document.querySelector(\"[data-opt='unified']\").click()")
     time.sleep(1)
     print("[unified] editors:", s.js("return document.querySelectorAll('.diff .cm-editor').length"),
           "| deleted chunks shown inline:", s.js("return document.querySelectorAll('.diff .cm-deletedChunk').length"))
+    equal("unified diff: one editor", s.js("return document.querySelectorAll('.diff .cm-editor').length"), 1)
     s.js("document.querySelector(\"[data-opt='unified']\").click()")
     s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }))")
     print("[keys] shortcut overlay:", bool(s.find(".shortcuts")))
+    check("'?' shows the shortcuts", s.find(".shortcuts"))
     s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))")
 
     # The author pushes again: the reviewed file a.txt changes, c.rs does not.
@@ -273,6 +304,7 @@ try:
     s.wait_js("return document.querySelector('.review .marker').textContent.includes('2 commits')", timeout=30)
     reviewed_after = s.js("return [...document.querySelectorAll('[data-reviewed]')].filter(c => c.getAttribute('aria-checked') === 'true').map(c => c.dataset.reviewed)")
     print("[marks] reviewed before the push:", reviewed_before, "| after:", reviewed_after)
+    equal("a push unmarks the changed file only", (sorted(reviewed_before), reviewed_after), (["a.txt", "b.txt"], ["b.txt"]))
 
     t0 = time.monotonic()
     s.click(s.wait("[data-prepare-guide]"))
@@ -280,6 +312,8 @@ try:
     print(f"[guide] ready after {time.monotonic() - t0:.0f}s; focus:", s.js("return document.querySelector('.guide .focus')?.textContent"))
     print("[guide] groups:", s.js("return [...document.querySelectorAll('.side .group')].map(g => g.querySelector('.group-title').textContent.trim().replace(/\\s+/g, ' '))"))
     print("[guide] claims:", s.js("return [...document.querySelectorAll('.claims li')].map(l => l.textContent.trim())"))
+    check("the guide has a focus", s.js("return document.querySelector('.guide .focus')?.textContent"))
+    equal("guide claims", s.js("return document.querySelectorAll('.claims li').length"), 2)
     s.screenshot(os.path.join(shots, "r6-guide.png"))
 
     # The guide line above the diff: the shown file's group and claims, also with the side
@@ -290,6 +324,7 @@ try:
     s.js("document.querySelector(`.side [data-file='${arguments[0]}']`).click()", first)
     s.wait_js("return document.querySelector('[data-file-guide]')")
     print(f"[guide line] {first}:", guide_line())
+    contains("the guide line names the file's group", guide_line(), "Parser")
     s.js("document.querySelector(\"[data-toggle='side']\").click()")
     s.wait_js("return !document.querySelector('.side')")
     s.js("document.querySelector('.toolbar button[aria-label^=\"Next file\"]').click()")
@@ -297,6 +332,7 @@ try:
     print("[guide line] side hidden, next file", s.js("return document.querySelector('.toolbar .current-file').textContent.trim()").split()[0] + ":", guide_line())
     s.js("document.querySelector('[data-file-guide] .expand').click()")
     print("[guide line] expanded:", s.js("return document.querySelector('[data-file-guide] .focus-all')?.textContent"))
+    contains("expanded, it shows the focus", s.js("return document.querySelector('[data-file-guide] .focus-all')?.textContent"), "Focus for the whole change")
     s.js("document.querySelector('[data-file-guide] .expand').click()")
     s.js("document.querySelector(\"[data-toggle='side']\").click()")
     s.wait(".side")
@@ -331,9 +367,12 @@ try:
     print("[rebase]", " ".join(s.js("return document.querySelector('.review .marker').textContent").split()),
           "| note:", s.js("return document.querySelector('[data-rebase-note]')?.textContent ?? null"))
     print("[rebase] since your review, files:", s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"))
+    contains("the rebase note", s.js("return document.querySelector('[data-rebase-note]')?.textContent"), "Rebased since your review")
+    equal("since the review, only the PR's own change", s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"), ["a.txt"])
     s.click(s.wait("[data-scope='all']"))
     time.sleep(1)
     print("[rebase] all changes vs main, files:", s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"),
           "| own PR offers approve:", s.js("return !!document.querySelector(\"[data-event='APPROVE']:not(:disabled)\")"))
+    check("no approving your own PR", not s.js("return !!document.querySelector(\"[data-event='APPROVE']:not(:disabled)\")"))
 finally:
     s.quit()

@@ -8,7 +8,10 @@ use std::process::{Command, Stdio};
 
 /// The `gh` binary; `ARIEKEI_GH` replaces it (tests use a fake).
 fn gh_command() -> Command {
-    Command::new(std::env::var_os("ARIEKEI_GH").unwrap_or_else(|| "gh".into()))
+    match std::env::var_os("ARIEKEI_GH") {
+        Some(fake) => crate::tools::command(std::path::Path::new(&fake)),
+        None => Command::new("gh"),
+    }
 }
 
 fn gh(args: &[&str]) -> Result<Vec<u8>, String> {
