@@ -41,7 +41,7 @@
   } = $props();
 
   const SECTIONS: { key: string; title: string; empty: string; has: (r: Row) => boolean }[] = [
-    { key: "mine", title: "Mine", empty: "No open pull requests.", has: (r) => r.kind === "pr" && r.role === "author" },
+    { key: "mine", title: "Mine", empty: "You have no open pull requests here.", has: (r) => r.kind === "pr" && r.role === "author" },
     { key: "requested", title: "Review requested", empty: "Nothing here.", has: (r) => r.kind === "pr" && r.role === "requested" },
     { key: "issues", title: "Issues", empty: "Nothing here.", has: (r) => r.kind === "issue" },
     { key: "opened", title: "Opened", empty: "PRs you open from search appear here.", has: (r) => r.kind === "pr" && r.role === "other" },
@@ -149,7 +149,7 @@
   {#if error}
     <div class="poll-error" role="status" title={error}>
       <Icon name="warning" size={14} />
-      <span><strong>GitHub:</strong> <span class="muted">{error}</span></span>
+      <span><strong>Could not refresh from GitHub.</strong> <span class="muted">{error}</span></span>
     </div>
   {/if}
 
@@ -170,7 +170,7 @@
           </button>
         </li>
       {:else}
-        <li class="empty">{searching ? "Searching…" : "No matching open PRs."}</li>
+        <li class="empty">{searching ? "Searching…" : `No open pull request matches “${query.trim()}”.`}</li>
       {/each}
     </ul>
   {:else if !loaded}

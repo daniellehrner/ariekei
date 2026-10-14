@@ -283,7 +283,7 @@ pub fn prepare(repo: &Repo, pr: &PrSummary) -> Result<Prepared, String> {
         // fast-forward, otherwise leave the user's commits alone and say so.
         if git(&path, &["merge", "--ff-only", "--quiet", &tracking]).is_err() {
             note = Some(format!(
-                "The existing local branch {branch} has commits that are not in the PR ({tracking}); it was left as it is."
+                "Your local branch {branch} has commits that are not in the PR ({tracking}), so it was left as it is."
             ));
         }
     } else {

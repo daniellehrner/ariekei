@@ -132,7 +132,7 @@
     error = null;
     try {
       const p = await api.prepareItem(id);
-      notice = p.adopted ? `Using the existing worktree ${shortPath(p.path)}.` : `Created ${shortPath(p.path)} on ${p.branch}.`;
+      notice = p.adopted ? `Using the existing worktree ${shortPath(p.path)}.` : `Created the worktree ${shortPath(p.path)} on ${p.branch}.`;
       if (p.note) error = p.note;
       if (ui) ui.tab = "terminal";
       onchanged();
@@ -260,9 +260,9 @@
   {#if shownBlockers}
     <div class="banner">
       <Banner tone="bad" icon="blocked" compact={false} data-blocked>
-        <strong>{row.open ? "Not cleaned up" : "Finished, but not cleaned up"} — this would lose work:</strong>
+        <strong>{row.open ? "Not cleaned up" : "Finished, but not cleaned up"}, so no work is lost:</strong>
         <ul>{#each shownBlockers as b}<li>{b}</li>{/each}</ul>
-        <span class="muted">Commit and push, or discard them, then press Done.</span>
+        <span class="muted">Commit and push these, or discard them, then press Done again.</span>
         {#snippet action()}<IconButton icon="x" label="Dismiss" size={24} onclick={() => (blockersDismissed = true)} />{/snippet}
       </Banner>
     </div>

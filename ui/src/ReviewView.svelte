@@ -177,7 +177,7 @@
     editedPath = null;
     onlyWhitespace = ignoreWs && !d.binary && d.hunks.length === 0 && !!files.find((f) => f.path === path)?.whitespaceOnly;
     if (d.binary) {
-      host.textContent = "Binary file";
+      host.textContent = "Binary file: not shown.";
       return;
     }
     host.textContent = "";
@@ -276,7 +276,7 @@
     await setReviewed(current, true);
     const next = nextUnreviewed(ordered.map((f) => (f.path === current ? { ...f, reviewed: true } : f)), current);
     if (next) view.file = next;
-    else say("All files of this scope are reviewed.");
+    else say("Every file in this scope is reviewed.");
   }
 
   // Shortcuts work in the review view (not in fields, the editable diff or the terminal).
@@ -315,7 +315,7 @@
   async function markReviewed() {
     const unreviewed = files.filter((f) => !f.reviewed).length;
     const reason = review?.dirty
-      ? "Uncommitted changes are not part of HEAD and will still show as changed —"
+      ? "Uncommitted changes are not part of the commit and stay unreviewed —"
       : unreviewed
         ? `${unreviewed} file${unreviewed === 1 ? "" : "s"} not marked reviewed in this scope —`
         : null;
@@ -393,7 +393,7 @@
     busy = true;
     try {
       const body = reviewBody(summary, preview.body);
-      if (event === "REQUEST_CHANGES" && !body && !preview.line.length) throw new Error("Requesting changes needs a comment.");
+      if (event === "REQUEST_CHANGES" && !body && !preview.line.length) throw new Error("To request changes, add a summary or a line comment.");
       const url = await api.submitReview(id, event, body, preview.line);
       const what = { COMMENT: "Review submitted", APPROVE: "Approved", REQUEST_CHANGES: "Changes requested" }[event];
       say(`${what} on GitHub with ${preview.line.length} line comment${preview.line.length === 1 ? "" : "s"}.`, url || null);
@@ -622,7 +622,7 @@
               {/if}
             </div>
           {:else}
-            <p class="none">No changes.</p>
+            <p class="none">No changes in this scope.</p>
           {/each}
         </section>
       </aside>
@@ -666,7 +666,7 @@
             {#if here.group}
               <Risk risk={here.group.risk} /><strong>{here.group.title}</strong><span class="muted">— {here.group.intent}</span>
             {:else}
-              <span class="muted">Not in the review guide.</span>
+              <span class="muted">The guide does not mention this file.</span>
             {/if}
             {#each here.claims as c}<span class="claim"><ClaimMark status={c.status} />{c.claim}</span>{/each}
             {#if here.unexplained}<Pill size="sm" tone="warn-fill">not explained by the description</Pill>{/if}

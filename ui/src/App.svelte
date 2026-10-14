@@ -130,10 +130,15 @@
     {#if current}
       <WorkItem row={current} repoId={repo.id} viewer={repo.viewer} onchanged={reload} />
     {:else}
+      {@const waiting = rows.filter((r) => r.attention).length}
       <div class="empty">
-        {#if loaded}
-          <strong>{rows.some((r) => r.attention) ? "Pick an item" : "Nothing needs you"}</strong>
-          <span>Pick an item in the Inbox, or search for a pull request. <Kbd key="Ctrl+B" /> shows the Inbox.</span>
+        {#if loaded && !rows.length}
+          <strong>Your Inbox is empty</strong>
+          <span>Your open pull requests, review requests and assigned issues in {repo.owner}/{repo.name} appear here.
+            To review any other pull request, search for it.</span>
+        {:else if loaded}
+          <strong>{waiting ? `${waiting} item${waiting === 1 ? " wants" : "s want"} your attention` : "You're all caught up"}</strong>
+          <span>Pick an item in the Inbox{waiting ? ", starting at the top" : ""}. <Kbd key="Ctrl+B" /> shows or hides the Inbox.</span>
         {:else}
           <span>Loading your pull requests…</span>
         {/if}

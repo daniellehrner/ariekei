@@ -537,7 +537,7 @@ fn review(state: &AppState, id: i64) -> Result<Review, String> {
             Err(e) => (
                 Some(r.clone()),
                 Some(format!(
-                    "Rebased since your review, but {e}: showing the plain diff, which includes {base_ref}'s changes."
+                    "Rebased since your review, but {base_ref}'s changes could not be separated ({e}), so this is the plain diff against the commit you reviewed, including changes from {base_ref}."
                 )),
             ),
         },

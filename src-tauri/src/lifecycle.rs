@@ -20,7 +20,7 @@ pub fn blockers(repo: &Repo, item: &WorkItem, agent: Option<AgentStatus>) -> Vec
         agent,
         Some(AgentStatus::Working | AgentStatus::WaitingForPermission)
     ) {
-        found.push("The agent is in the middle of a turn.".to_owned());
+        found.push("The agent is in the middle of a turn".to_owned());
     }
     let Some(dir) = item.worktree_path.as_deref().filter(|p| p.exists()) else {
         return found;
@@ -218,7 +218,10 @@ pub fn after_poll(state: &AppState, app: &tauri::AppHandle, repo: &Repo) -> Resu
                     item.number,
                     item.snapshot["title"].as_str().unwrap_or_default()
                 ),
-                &format!("Finished, but not cleaned up: {}", blockers.join(" ")),
+                &format!(
+                    "Finished, but kept so no work is lost: {}.",
+                    blockers.join("; ")
+                ),
             ),
             _ => {}
         }

@@ -10,7 +10,7 @@ driver with GTK_THEME=Adwaita:dark (light: GTK_THEME=Adwaita) and pass "dark" as
     xvfb-run -a -s "-screen 0 1600x1000x24" tauri-driver --port 4444 &
   python3 -I e2e/gallery.py <app-binary> <work> [light|dark] [1440x900] [screen,...]
 
-Screens: connect, overview, menu, comments, collapsed, waiting, terminal, review, guide,
+Screens: connect, empty (nothing selected yet), overview, menu, comments, collapsed, waiting, terminal, review, guide,
 selection, drafts, submit, shortcuts, guard, review-hidden.
 """
 
@@ -137,6 +137,9 @@ try:
         shot(s, "connect")
         s.type(s.wait(".connect form input"), clone)
         s.js("document.querySelector('.connect form').requestSubmit()")
+    s.wait(".inbox .row[data-number='8012']", timeout=60)
+    if need("empty") and s.find(".empty"):
+        shot(s, "empty")
     row(s, 8012)
     s.wait("[role=tab]", timeout=60)
     tab(s, "Overview")
