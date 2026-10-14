@@ -9,7 +9,8 @@ code navigation or debugging, use your IDE on the same worktree. Tauri 2 (Rust) 
 
 - **Inbox:** your open PRs, PRs requesting your review, your assigned issues, and any PR you
   opened from search, ordered by attention (agent needs you, CI failing, new comments, changes
-  to review, …). OS notifications for the same events.
+  to review, …). Notifications for the same events: in the window while Ariekei is in front
+  (click one to open its item), OS notifications otherwise.
 - **Work item:** Overview (description, checks, reviewers), Comments (review threads and
   conversation; reply, resolve, comment), Review, and Terminal.
 - **Agent:** your installed `claude`, unmodified, in an embedded terminal in the item's

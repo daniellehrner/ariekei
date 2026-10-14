@@ -294,6 +294,20 @@ try:
     git(upstream, "update-ref", "refs/pull/43/head", "feature/y")
     git(upstream, "checkout", "-q", "main")
     reviewed_before = s.js("return [...document.querySelectorAll('[data-reviewed]')].filter(c => c.getAttribute('aria-checked') === 'true').map(c => c.dataset.reviewed)")
+
+    # A notice about another item, as the backend sends one while the window is focused
+    # (notify.rs): clicking it opens that item, and it goes away.
+    s.js("""const rows = await window.__TAURI_INTERNALS__.invoke('inbox');
+      const item = rows.find((r) => r.number === 44).id;
+      await window.__TAURI_INTERNALS__.invoke('plugin:event|emit',
+        { event: 'notice', payload: { item, kind: 'finished', title: '#44 Other', body: 'The agent finished.' } });""")
+    s.wait("[data-notice='finished'] .body", timeout=10)
+    s.screenshot(os.path.join(shots, "r5-notice.png"))
+    s.click(s.wait("[data-notice='finished'] .body"))
+    s.wait(".item header .title", timeout=30, text="#44")
+    eventually("an opened notice goes away", lambda: bool(s.find("[data-notice]")), lambda v: not v, timeout=10)
+    print("[notice] clicking it opened #44")
+
     # Items reopen on the tab they were left on, so wait for the header, not a tab.
     select_row(s, 44)
     s.wait(".item header .title", timeout=30, text="#44")

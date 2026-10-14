@@ -150,6 +150,7 @@ export const api = {
   switchRepo: (id: number) => invoke<Shown>("switch_repo", { id }),
   /** A new window for repo `id`, or an empty one (Connect screen) for null. */
   openWindow: (id: number | null) => invoke<void>("open_window", { id }),
+  openItem: (id: number) => invoke<void>("open_item", { id }),
   inbox: () => invoke<Row[]>("inbox"),
   refresh: () => invoke<void>("refresh"),
   markSeen: (id: number) => invoke<void>("mark_seen", { id }),

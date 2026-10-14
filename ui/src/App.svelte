@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import Connect from "./Connect.svelte";
   import Inbox from "./Inbox.svelte";
+  import Notices from "./Notices.svelte";
   import WorkItem from "./WorkItem.svelte";
   import Kbd from "./controls/Kbd.svelte";
   import { homeDir } from "@tauri-apps/api/path";
@@ -108,6 +109,8 @@
       }),
       // Agent status feeds the Inbox's ordering.
       listen("agent-event", reload),
+      // A notice was opened (open_item): show its item.
+      listen<number>("select-item", (e) => select(e.payload)),
     ];
     api.repo().then(async (r) => {
       inboxCollapsed = (await api.uiSetting("inboxCollapsed")) === "true";
@@ -147,6 +150,7 @@
   </div>
   {/key}
 {/if}
+<Notices {selected} />
 
 <style>
   .app { display: flex; height: 100vh; min-height: 0; overflow: hidden; }

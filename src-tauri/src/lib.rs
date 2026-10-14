@@ -23,7 +23,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::ipc::{Channel, InvokeResponseBody};
-use tauri::{Manager, RunEvent, State};
+use tauri::{Emitter, Manager, RunEvent, State};
 use terminal::{Launch, Opened, TerminalManager};
 
 pub struct AppState {
@@ -131,6 +131,28 @@ async fn open_window(app: tauri::AppHandle, id: Option<i64>) -> Res<()> {
         None => None,
     };
     windows::open(&app, repo.as_ref())
+}
+
+/// Shows work item `id` in its repo's window, opening or focusing that window (a notice
+/// can be about an item of another repo).
+#[tauri::command]
+async fn open_item(app: tauri::AppHandle, id: i64) -> Res<()> {
+    let state = app.state::<AppState>();
+    let item = state.store.item(id)?;
+    let repo = state
+        .store
+        .repo(item.repo_id)?
+        .ok_or("unknown repository")?;
+    // A window opened for it selects the item from this setting; an open one is told.
+    state
+        .store
+        .set_setting(&format!("selected_item.{}", repo.id), &id.to_string())?;
+    windows::open(&app, Some(&repo))?;
+    if let Some(label) = state.windows.window_of(repo.id) {
+        app.emit_to(label.as_str(), "select-item", id)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -516,6 +538,7 @@ pub fn run() {
             connect_repo,
             switch_repo,
             open_window,
+            open_item,
             inbox,
             refresh,
             mark_seen,

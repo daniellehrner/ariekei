@@ -199,10 +199,11 @@ impl TerminalManager {
         let Ok(term) = self.get(key) else { return };
         let previous =
             std::mem::replace(&mut *term.status.lock().unwrap(), (status, Instant::now())).0;
+        // The status first: an in-app notice about it checks the status it arrives with.
+        emit_status(&self.app, key, status, detail.clone());
         if previous != status {
             crate::notify::agent_status(&self.app, key, previous, status, detail.as_deref());
         }
-        emit_status(&self.app, key, status, detail);
     }
 
     /// Attaches `view` to the item's terminal, starting `claude` in `cwd` if it isn't
