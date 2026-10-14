@@ -18,6 +18,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from check import check, equal  # noqa: E402
+from ui import open_inbox  # noqa: E402
 from wd import Session  # noqa: E402
 
 app, work = sys.argv[1:3]
@@ -61,6 +62,7 @@ def header(s):
 
 
 def rows(s):
+    open_inbox(s)
     return s.js("return [...document.querySelectorAll('.inbox .row')].map(r => r.dataset.number)")
 
 

@@ -18,7 +18,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from check import check, contains, equal  # noqa: E402
+from check import check, contains, equal, eventually  # noqa: E402
 from ui import open_inbox, select_row  # noqa: E402
 from wd import Session  # noqa: E402
 
@@ -259,24 +259,24 @@ try:
     s.click(s.wait("[data-file='a.txt']"))
     time.sleep(0.5)
     dom_click(s, "[data-reviewed-next]")
-    time.sleep(1)
+    eventually("'Reviewed, next' marks the file", lambda: s.js("return document.querySelector('[data-progress]').textContent"), lambda v: "1/6" in v)
     print("[marks] after 'reviewed, next':", s.js("return document.querySelector('[data-progress]').textContent.trim()"),
           "| now on:", s.js("return document.querySelector('.side .files button.active')?.dataset.file"))
     contains("'Reviewed, next' marks the file", s.js("return document.querySelector('[data-progress]').textContent"), "1/6")
     equal("and moves on", s.js("return document.querySelector('.side .files button.active')?.dataset.file"), "b.txt")
     s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', bubbles: true }))")
-    time.sleep(1)
+    eventually("'r' marks the file", lambda: s.js("return document.querySelector('[data-progress]').textContent"), lambda v: "2/6" in v)
     print("[keys] after 'r':", s.js("return document.querySelector('[data-progress]').textContent.trim()"),
           "| now on:", s.js("return document.querySelector('.side .files button.active')?.dataset.file"))
     contains("'r' marks the file", s.js("return document.querySelector('[data-progress]').textContent"), "2/6")
     s.js("document.querySelector(\"[data-opt='ws']\").click()")
-    time.sleep(1)
+    eventually("whitespace-only files are labelled", lambda: s.js("return document.querySelectorAll('.side .file .ws').length"), lambda v: v > 0)
     print("[ws] labelled whitespace-only:", s.js("return [...document.querySelectorAll('.side .file')].filter(l => l.querySelector('.ws')).map(l => l.querySelector('[data-file]').dataset.file)"))
     equal("whitespace-only files", s.js("return [...document.querySelectorAll('.side .file')].filter(l => l.querySelector('.ws')).map(l => l.querySelector('[data-file]').dataset.file)"), ["w.txt"])
     s.js("document.querySelector(\"[data-opt='ws']\").click()")
     s.click(s.wait("[data-file='a.txt']"))
     s.js("document.querySelector(\"[data-opt='unified']\").click()")
-    time.sleep(1)
+    eventually("the unified diff shows", lambda: s.js("return document.querySelectorAll('.diff .cm-editor').length"), lambda v: v == 1)
     print("[unified] editors:", s.js("return document.querySelectorAll('.diff .cm-editor').length"),
           "| deleted chunks shown inline:", s.js("return document.querySelectorAll('.diff .cm-deletedChunk').length"))
     equal("unified diff: one editor", s.js("return document.querySelectorAll('.diff .cm-editor').length"), 1)
@@ -362,14 +362,14 @@ try:
     tab(s, "Review")
     s.wait_js("return document.querySelector('.review .marker')?.textContent.includes('new since')", timeout=30)
     s.click(s.wait("[data-scope='review']")) if s.find("[data-scope='review']") else None
-    time.sleep(1)
+    eventually("since your review: the rebase note", lambda: s.js("return document.querySelector('[data-rebase-note]')?.textContent ?? ''"), lambda v: "Rebased" in v)
     print("[rebase]", " ".join(s.js("return document.querySelector('.review .marker').textContent").split()),
           "| note:", s.js("return document.querySelector('[data-rebase-note]')?.textContent ?? null"))
     print("[rebase] since your review, files:", s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"))
     contains("the rebase note", s.js("return document.querySelector('[data-rebase-note]')?.textContent"), "Rebased since your review")
     equal("since the review, only the PR's own change", s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"), ["a.txt"])
     s.click(s.wait("[data-scope='all']"))
-    time.sleep(1)
+    eventually("all changes vs main", lambda: s.js("return document.querySelector('.scope-folded .active-scope, .scopes button.active')?.textContent ?? ''"), lambda v: "All" in v)
     print("[rebase] all changes vs main, files:", s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"),
           "| own PR offers approve:", s.js("return !!document.querySelector(\"[data-event='APPROVE']:not(:disabled)\")"))
     check("no approving your own PR", not s.js("return !!document.querySelector(\"[data-event='APPROVE']:not(:disabled)\")"))

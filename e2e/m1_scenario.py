@@ -22,7 +22,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from check import equal  # noqa: E402
+from check import equal, eventually  # noqa: E402
 from ui import open_inbox, select_row  # noqa: E402
 from wd import Session  # noqa: E402
 
@@ -223,12 +223,11 @@ try:
         print("[mark] asks first:", s.js("return document.querySelector('.review [data-guard] .text').textContent"))
         s.click(s.wait(".review [data-guard] button", text="Mark anyway"))
     s.wait(".review [data-notice]", timeout=15)
-    marker = review_marker(s)
+    marker = eventually("the marker shows the review", lambda: review_marker(s), lambda v: "reviewed" in v)
     print("[mark]", s.js("return document.querySelector('.review [data-notice]').textContent"), "|", marker,
           "| ref:", git(clone, "rev-parse", "--short", "refs/ariekei/reviewed/pr-42"))
-    time.sleep(1)
+    eventually("reviewed: no attention", lambda: (row_info(s, 42) or {}).get("attention", "no row"), lambda v: v is None)
     print("[inbox] #42 attention after review:", row_info(s, 42)["attention"])
-    equal("reviewed: no attention", row_info(s, 42)["attention"], None)
 
     tab(s, "Terminal")
     st = prompt(s, 42, "Append a line with the word three to a.txt, then commit with the message 'add three'. Do nothing else.")
@@ -236,7 +235,7 @@ try:
     equal("turn 2 commits", (st, git(worktree, "log", "-1", "--format=%s")), ("finished", "add three"))
     tab(s, "Review")
     s.click(s.wait(".review [data-reload]"))
-    time.sleep(1)
+    eventually("the marker shows the new commit", lambda: review_marker(s), lambda v: "new since" in v)
     print("[review]", review_marker(s), "| scopes:", s.js("return [...document.querySelectorAll('.scopes button, .scope-folded .active-scope, .scope-folded button')].map(l => l.textContent.trim())"))
     state = invoke(s, "review_state", {"id": item_id})
     diff = invoke(s, "review_file", {"id": item_id, "from": state["reviewed"], "to": None, "path": "a.txt", "ignoreWs": False})

@@ -58,7 +58,7 @@ class _Common:
             except WebDriverError:
                 pass  # e.g. a window whose page is still loading
             time.sleep(0.25)
-        raise TimeoutError(f"no {css!r}" + (f" containing {text!r}" if text else "") + f" within {timeout}s")
+        raise TimeoutError(f"no {css!r}" + (f" containing {text!r}" if text else "") + f" within {timeout}s" + self._page())
 
     def wait_js(self, script, timeout=60):
         deadline = time.monotonic() + timeout
@@ -70,7 +70,15 @@ class _Common:
             except WebDriverError:
                 pass
             time.sleep(0.25)
-        raise TimeoutError(f"condition never true: {script}")
+        raise TimeoutError(f"condition never true: {script}" + self._page())
+
+    def _page(self):
+        """What the window shows, for a failure message."""
+        try:
+            text = self.js("return document.body.innerText")
+        except Exception as e:
+            return f"\n(page text unavailable: {e})"
+        return "\n--- the page shows:\n" + "\n".join(l for l in text.splitlines() if l.strip())[:3000]
 
 
 class BridgeSession(_Common):

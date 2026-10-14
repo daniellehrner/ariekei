@@ -89,4 +89,5 @@ jobs:
         with:
           name: e2e-${{ matrix.os }}
           path: ${{ runner.temp }}/e2e
+          include-hidden-files: true  # the fixtures' .git directories
           if-no-files-found: ignore
