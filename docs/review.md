@@ -11,6 +11,11 @@ How the review view works, and the research it is based on.
   comparing, so changes that only came from the base are hidden ("Rebased since your review…").
   If the reviewed changes conflict with the new base, the plain diff is shown with a warning.
   Rebased copies of commits you already reviewed are not counted as new.
+- **Your own commits are not "changes to review":** the Inbox flags a worktree only for
+  uncommitted changes or commits someone else made since your review (or the branch point).
+  Commits GitHub attributes to your account (author or committer, any of your emails) count
+  as seen, and so does everything a merge of yours brought in, e.g. merged sub-PRs. Local
+  commits GitHub does not know yet, like an agent's unpushed work, still need review.
 - **Per-file reviewed marks:** a checkbox per file, `N/M reviewed` in the header, and
   **Reviewed, next** (`r`) to mark a file and jump to the next unreviewed one. A mark is tied
   to the file's content: when the agent changes a reviewed file again, it becomes unreviewed;

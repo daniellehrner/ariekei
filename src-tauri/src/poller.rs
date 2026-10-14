@@ -176,6 +176,16 @@ pub fn poll(app: &AppHandle, repo: &Repo) -> Result<(), String> {
                 .set_last_seen(item.id, pr.latest_activity.as_deref().unwrap_or(""))?,
         }
     }
+    // Whose commits a PR has is needed only to tell whether its worktree has changes to review.
+    for item in state.store.items(repo.id)? {
+        if item.kind == "pr"
+            && item.open
+            && item.worktree_path.is_some()
+            && let Err(e) = crate::workitem::refresh_own_commits(&state, repo, &item)
+        {
+            tracing::warn!("could not fetch the commits of PR #{}: {e}", item.number);
+        }
+    }
     crate::lifecycle::after_poll(&state, app, repo)?;
     Ok(())
 }

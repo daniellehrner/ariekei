@@ -420,6 +420,40 @@ pub fn commits_new_since(
         .collect())
 }
 
+/// Whether `head` has commits not reachable from any of `exclude` that the user did not
+/// make: neither in `own` nor brought in by a merge in `own` (merging accepts them).
+pub fn has_others_commits(
+    cwd: &Path,
+    head: &str,
+    exclude: &[&str],
+    own: &HashSet<String>,
+) -> Result<bool, String> {
+    let mut args = vec![
+        "rev-list".to_owned(),
+        "--parents".to_owned(),
+        head.to_owned(),
+    ];
+    args.extend(exclude.iter().map(|e| format!("^{e}")));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let commits = git_str(cwd, &args)?;
+    let mut accepted = own.clone();
+    for line in commits.lines() {
+        let mut shas = line.split(' ');
+        let sha = shas.next().unwrap_or_default();
+        if let (true, Some(first_parent), Some(_)) = (own.contains(sha), shas.next(), shas.next()) {
+            accepted.extend(
+                git_str(cwd, &["rev-list", sha, &format!("^{first_parent}")])?
+                    .lines()
+                    .map(str::to_owned),
+            );
+        }
+    }
+    Ok(commits
+        .lines()
+        .filter_map(|l| l.split(' ').next())
+        .any(|sha| !accepted.contains(sha)))
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Commit {
@@ -484,6 +518,53 @@ pub mod tests {
         std::fs::write(p.join("gone.txt"), "bye\n").unwrap();
         commit(p, "init");
         dir
+    }
+
+    #[test]
+    fn others_commits_are_the_ones_the_user_neither_made_nor_merged() {
+        let dir = repo();
+        let p = dir.path();
+        let head = || super::head(p).unwrap();
+        let base = head();
+        git(p, &["checkout", "-qb", "feature"]).unwrap();
+        std::fs::write(p.join("a.txt"), "mine\n").unwrap();
+        commit(p, "mine");
+        let mine = head();
+        git(p, &["checkout", "-qb", "theirs", &base]).unwrap();
+        std::fs::write(p.join("b.txt"), "theirs\n").unwrap();
+        commit(p, "theirs");
+        git(p, &["checkout", "-q", "feature"]).unwrap();
+        git(
+            p,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+            ]
+            .into_iter()
+            .chain(["merge", "-q", "--no-edit", "theirs"])
+            .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let merge = head();
+
+        let others = |own: &[&String]| {
+            let own = own.iter().map(|s| s.to_string()).collect();
+            has_others_commits(p, &merge, &[&base], &own).unwrap()
+        };
+        assert!(
+            !others(&[&mine, &merge]),
+            "a merge by the user accepts what it brings in"
+        );
+        assert!(others(&[&mine]), "a merge by someone else needs review");
+        assert!(
+            others(&[&merge]),
+            "the user's merge does not cover the commit before it"
+        );
+        assert!(!has_others_commits(p, &merge, &[&merge], &HashSet::new()).unwrap());
     }
 
     #[test]

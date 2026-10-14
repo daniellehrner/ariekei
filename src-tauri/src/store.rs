@@ -77,6 +77,15 @@ CREATE TABLE review_guides (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 "#,
+    r#"
+-- The PR's commits GitHub attributes to the viewer (author or committer), for the PR head
+-- they were fetched at: the user's own commits need no review from them.
+CREATE TABLE own_commits (
+    item_id INTEGER PRIMARY KEY REFERENCES work_items(id) ON DELETE CASCADE,
+    head TEXT NOT NULL,
+    commits TEXT NOT NULL
+);
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -504,10 +513,40 @@ impl Store {
         .map(|row| row.map(|(b, h, g)| (b, h, serde_json::from_str(&g).unwrap_or_default())))
     }
 
+    /// Records the commits of the PR at `head` that the viewer made.
+    pub fn set_own_commits(&self, id: i64, head: &str, commits: &[String]) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO own_commits (item_id, head, commits) VALUES (?1, ?2, ?3)
+             ON CONFLICT (item_id) DO UPDATE SET head = ?2, commits = ?3",
+            params![id, head, serde_json::to_string(commits).unwrap_or_default()],
+        )
+        .map(|_| ())
+        .map_err(err)
+    }
+
+    /// The PR head the viewer's commits were last fetched at, and those commits.
+    pub fn own_commits(
+        &self,
+        id: i64,
+    ) -> Result<Option<(String, std::collections::HashSet<String>)>, String> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT head, commits FROM own_commits WHERE item_id = ?1",
+            [id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(err)
+        .map(|row| row.map(|(h, c)| (h, serde_json::from_str(&c).unwrap_or_default())))
+    }
+
     /// After cleanup: forget the worktree, agent session and review marker, and hide the item.
     pub fn mark_cleaned(&self, id: i64) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM reviewed_files WHERE item_id = ?1", [id])
+            .map_err(err)?;
+        conn.execute("DELETE FROM own_commits WHERE item_id = ?1", [id])
             .map_err(err)?;
         conn.execute("DELETE FROM review_guides WHERE item_id = ?1", [id])
             .map_err(err)?;
@@ -705,8 +744,17 @@ mod tests {
             .set_guide(id, "base", "head", &json!({"focus": "x"}))
             .unwrap();
         assert_eq!(store.guide(id).unwrap().unwrap().2["focus"], "x");
+        store.set_own_commits(id, "h1", &["c1".into()]).unwrap();
+        store
+            .set_own_commits(id, "h2", &["c1".into(), "c2".into()])
+            .unwrap();
+        assert_eq!(
+            store.own_commits(id).unwrap(),
+            Some(("h2".into(), ["c1".to_owned(), "c2".to_owned()].into()))
+        );
         store.mark_cleaned(id).unwrap();
         assert!(store.reviewed_files(id).unwrap().is_empty() && store.guide(id).unwrap().is_none());
+        assert!(store.own_commits(id).unwrap().is_none());
     }
 
     #[test]

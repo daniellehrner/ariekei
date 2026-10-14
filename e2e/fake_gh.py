@@ -96,6 +96,20 @@ def conversation(pr):
     return c
 
 
+def pr_commits(pr):
+    """The PR's commits in the upstream repo; a commit's git author and committer names are
+    their GitHub logins."""
+    upstream = DATA.get("upstream")
+    if not upstream:
+        return {"pageInfo": {"hasNextPage": False}, "nodes": []}
+    log = subprocess.run(["git", "-C", upstream, "log", "--format=%H%x1f%an%x1f%cn", f"{pr.get('base_ref', 'main')}..{pr['head_ref']}"],
+                         capture_output=True, text=True).stdout.splitlines()
+    user = lambda login: {"user": {"login": login}}
+    commits = [line.split("\x1f") for line in log]
+    return {"pageInfo": {"hasNextPage": False},
+            "nodes": [{"commit": {"oid": sha, "author": user(author), "committer": user(committer)}} for sha, author, committer in commits]}
+
+
 def of_repo(items, name):
     return [i for i in items if i.get("repo", "proj") == name]
 
@@ -133,6 +147,8 @@ def graphql(fields):
     issue_aliases = re.findall(r"i(\d+): issue\(number: (\d+)\)", query)
     if issue_aliases:
         return {"data": {"repository": {f"i{n}": issue_summary(issues[int(n)]) for n, _ in issue_aliases if int(n) in issues}}}
+    if "commits(first: 100, after: $after)" in query:
+        return {"data": {"repository": {"pullRequest": {"commits": pr_commits(by_number[int(fields["number"])])}}}}
     if "pullRequest(number: $number)" in query:
         return {"data": {"repository": {"pullRequest": conversation(by_number[int(fields["number"])])}}}
     aliases = re.findall(r"p(\d+): pullRequest\(number: (\d+)\)", query)

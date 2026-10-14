@@ -112,14 +112,44 @@ fn reviewed_marker(cwd: &Path, item: &WorkItem) -> Option<String> {
         .filter(|sha| git::commit_exists(cwd, sha))
 }
 
-fn unreviewed(cwd: &Path, item: &WorkItem, base_ref: &str, repo: &Repo) -> bool {
+/// Changes since the review (or the branch point) the user has not seen: uncommitted
+/// changes, or commits someone else made. The user's own commits on the PR, and what their
+/// merges brought in, count as seen; local commits GitHub does not know yet do not.
+fn unreviewed(state: &AppState, cwd: &Path, item: &WorkItem, base_ref: &str, repo: &Repo) -> bool {
     let Ok(head) = git::head(cwd) else {
         return false;
     };
-    let marker = reviewed_marker(cwd, item).or_else(|| {
-        git::merge_base(cwd, "HEAD", &format!("{}/{}", repo.base_remote, base_ref)).ok()
-    });
-    marker.as_deref() != Some(head.as_str()) || git::is_dirty(cwd).unwrap_or(false)
+    if git::is_dirty(cwd).unwrap_or(false) {
+        return true;
+    }
+    let base = format!("{}/{}", repo.base_remote, base_ref);
+    let marker = reviewed_marker(cwd, item).or_else(|| git::merge_base(cwd, "HEAD", &base).ok());
+    if marker.as_deref() == Some(head.as_str()) {
+        return false;
+    }
+    let own = state
+        .store
+        .own_commits(item.id)
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+        .1;
+    let exclude: Vec<&str> = [Some(base.as_str()), marker.as_deref()]
+        .into_iter()
+        .flatten()
+        .collect();
+    git::has_others_commits(cwd, &head, &exclude, &own).unwrap_or(true)
+}
+
+/// Fetches which commits of the item's PR are the viewer's, when its head moved since.
+pub fn refresh_own_commits(state: &AppState, repo: &Repo, item: &WorkItem) -> Result<(), String> {
+    let pr = summary(item)?;
+    let known = state.store.own_commits(item.id)?.map(|(head, _)| head);
+    if known.as_deref() == Some(pr.head_sha.as_str()) {
+        return Ok(());
+    }
+    let own = github::commits_by(&repo.owner, &repo.name, item.number, &repo.viewer)?;
+    state.store.set_own_commits(item.id, &pr.head_sha, &own)
 }
 
 pub fn inbox(state: &AppState, repo: Option<Repo>) -> Result<Vec<Row>, String> {
@@ -164,7 +194,7 @@ fn row(state: &AppState, repo: &Repo, default_branch: &str, item: WorkItem) -> O
             worktree: None,
             unreviewed: worktree
                 .as_deref()
-                .is_some_and(|w| unreviewed(w, &item, default_branch, repo)),
+                .is_some_and(|w| unreviewed(state, w, &item, default_branch, repo)),
             attention: None,
             cleanup_blockers: None,
             issue_number: None,
@@ -191,7 +221,7 @@ fn row(state: &AppState, repo: &Repo, default_branch: &str, item: WorkItem) -> O
             worktree: None,
             unreviewed: worktree
                 .as_deref()
-                .is_some_and(|w| unreviewed(w, &item, &pr.base_ref, repo)),
+                .is_some_and(|w| unreviewed(state, w, &item, &pr.base_ref, repo)),
             attention: None,
             cleanup_blockers: None,
             issue_number: item.issue_number,
