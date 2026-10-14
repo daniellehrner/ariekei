@@ -56,6 +56,8 @@ pub struct HookEvent {
     #[serde(default)]
     pub tool_name: Option<String>,
     #[serde(default)]
+    pub tool_input: Option<serde_json::Value>,
+    #[serde(default)]
     pub error: Option<serde_json::Value>,
 }
 
@@ -75,7 +77,7 @@ const EVENTS: [&str; 8] = [
 /// The status an event implies, if any (e.g. most notification types change nothing).
 pub fn status_for(event: &HookEvent) -> Option<(AgentStatus, Option<String>)> {
     use AgentStatus::*;
-    let tool = || event.tool_name.clone();
+    let tool = || tool_detail(event);
     Some(match event.hook_event_name.as_str() {
         "UserPromptSubmit" => (Working, None),
         "PreToolUse" | "PostToolUse" => (Working, tool()),
@@ -89,6 +91,27 @@ pub fn status_for(event: &HookEvent) -> Option<(AgentStatus, Option<String>)> {
         "StopFailure" => (Error, event.error.as_ref().map(|e| e.to_string())),
         "SessionEnd" => (Stopped, None),
         _ => return None,
+    })
+}
+
+/// The tool an event is about, with what it acts on: `Bash ./gradlew test`, `Edit src/a.rs`.
+fn tool_detail(event: &HookEvent) -> Option<String> {
+    let name = event.tool_name.clone()?;
+    let input = event.tool_input.as_ref();
+    let target = ["command", "file_path", "path", "pattern", "url"]
+        .iter()
+        .find_map(|k| input?.get(*k)?.as_str())
+        .map(|t| t.lines().next().unwrap_or_default().trim().to_owned());
+    Some(match target {
+        Some(t) if !t.is_empty() => {
+            let t = if t.chars().count() > 160 {
+                format!("{}…", t.chars().take(160).collect::<String>())
+            } else {
+                t
+            };
+            format!("{name} {t}")
+        }
+        _ => name,
     })
 }
 
@@ -209,6 +232,22 @@ mod tests {
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
         serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn details_name_the_tool_and_its_target() {
+        let ask = event(
+            "PermissionRequest",
+            serde_json::json!({ "tool_name": "Bash", "tool_input": { "command": "./gradlew test\necho done" } }),
+        );
+        assert_eq!(tool_detail(&ask).as_deref(), Some("Bash ./gradlew test"));
+        let edit = event(
+            "PreToolUse",
+            serde_json::json!({ "tool_name": "Edit", "tool_input": { "file_path": "src/a.rs" } }),
+        );
+        assert_eq!(tool_detail(&edit).as_deref(), Some("Edit src/a.rs"));
+        let bare = event("PreToolUse", serde_json::json!({ "tool_name": "Task" }));
+        assert_eq!(tool_detail(&bare).as_deref(), Some("Task"));
     }
 
     #[test]

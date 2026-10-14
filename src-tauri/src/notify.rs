@@ -37,21 +37,34 @@ fn label(app: &AppHandle, key: &str) -> String {
     }
 }
 
-/// What, if anything, to say about an agent status change.
-fn agent_message(previous: AgentStatus, status: AgentStatus) -> Option<&'static str> {
+/// What, if anything, to say about an agent status change (`detail`: what it asks to run).
+fn agent_message(
+    previous: AgentStatus,
+    status: AgentStatus,
+    detail: Option<&str>,
+) -> Option<String> {
     match (previous, status) {
-        (_, AgentStatus::WaitingForPermission) => Some("The agent is waiting for your permission."),
-        (AgentStatus::Working, AgentStatus::Finished) => Some("The agent finished."),
-        (_, AgentStatus::Error) => Some("The agent stopped with an error."),
+        (_, AgentStatus::WaitingForPermission) => Some(match detail {
+            Some(d) => format!("The agent is waiting for your permission: {d}"),
+            None => "The agent is waiting for your permission.".to_owned(),
+        }),
+        (AgentStatus::Working, AgentStatus::Finished) => Some("The agent finished.".to_owned()),
+        (_, AgentStatus::Error) => Some("The agent stopped with an error.".to_owned()),
         _ => None,
     }
 }
 
-pub fn agent_status(app: &AppHandle, key: &str, previous: AgentStatus, status: AgentStatus) {
-    if let Some(message) = agent_message(previous, status)
+pub fn agent_status(
+    app: &AppHandle,
+    key: &str,
+    previous: AgentStatus,
+    status: AgentStatus,
+    detail: Option<&str>,
+) {
+    if let Some(message) = agent_message(previous, status, detail)
         && !watching(app, key)
     {
-        show(app, &label(app, key), message);
+        show(app, &label(app, key), &message);
     }
 }
 
@@ -94,13 +107,17 @@ mod tests {
     #[test]
     fn agent_notifications() {
         use AgentStatus::*;
-        assert!(agent_message(Working, WaitingForPermission).is_some());
-        assert!(agent_message(Working, Finished).is_some());
+        assert_eq!(
+            agent_message(Working, WaitingForPermission, Some("Bash ./gradlew test")).as_deref(),
+            Some("The agent is waiting for your permission: Bash ./gradlew test")
+        );
+        assert!(agent_message(Working, WaitingForPermission, None).is_some());
+        assert!(agent_message(Working, Finished, None).is_some());
         assert!(
-            agent_message(Ready, Finished).is_none(),
+            agent_message(Ready, Finished, None).is_none(),
             "an idle prompt at startup is not news"
         );
-        assert!(agent_message(Starting, Ready).is_none());
+        assert!(agent_message(Starting, Ready, None).is_none());
     }
 
     #[test]
