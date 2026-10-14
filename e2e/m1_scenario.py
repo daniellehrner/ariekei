@@ -194,6 +194,7 @@ try:
     wait_screen(s, key, "/code-review", timeout=15)
     print("[agent] TUI up, /code-review autocompletes")
     keys(s, BACKSPACE * len("/code-rev"))
+    time.sleep(1.5)  # let the slash-command popup close before typing the prompt
 
     st = prompt(s, 42, "Append a line with the word two to a.txt, then commit with the message 'add two'. Do nothing else.")
     print("[turn 1]", st, "| last commit:", git(worktree, "log", "-1", "--format=%s"))
@@ -204,6 +205,10 @@ try:
     print("[review]", review_marker(s), "| files:", s.js("return [...document.querySelectorAll('.files li button')].map(b => b.textContent.trim())"))
     s.screenshot(os.path.join(shots, "m1-review-base.png"))
     s.click(s.wait("button.primary", text="Mark reviewed"))
+    if s.find(".review header .warn"):
+        # Files were not marked reviewed one by one: the coverage guard asks first.
+        print("[mark] asks first:", s.js("return document.querySelector('.review header .warn').textContent"))
+        s.click(s.wait(".review header button", text="Mark anyway"))
     s.wait(".review .notice", timeout=15)
     marker = review_marker(s)
     print("[mark]", s.js("return document.querySelector('.review .notice').textContent"), "|", marker,
@@ -219,7 +224,7 @@ try:
     time.sleep(1)
     print("[review]", review_marker(s), "| scopes:", s.js("return [...document.querySelectorAll('.scopes li')].map(l => l.textContent.trim())"))
     state = invoke(s, "review_state", {"id": item_id})
-    diff = invoke(s, "review_file", {"id": item_id, "from": state["reviewed"], "to": None, "path": "a.txt"})
+    diff = invoke(s, "review_file", {"id": item_id, "from": state["reviewed"], "to": None, "path": "a.txt", "ignoreWs": False})
     print("[review] a.txt since review: hunks", diff["hunks"], "| new side ends with:", diff["new"].splitlines()[-2:])
     s.screenshot(os.path.join(shots, "m1-review-since.png"))
 

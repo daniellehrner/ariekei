@@ -58,12 +58,17 @@ upstream, clone = os.path.join(work, "github-proj"), os.path.join(work, "proj")
 subprocess.run(["git", "init", "-q", "-b", "main", upstream], check=True)
 lines = [f"line{i}" for i in range(1, 13)]
 write(os.path.join(upstream, "a.txt"), "\n".join(lines) + "\n")
+write(os.path.join(upstream, "w.txt"), "keep\n")
 commit(upstream, "init")
 sha42 = branch(upstream, "feature/x", 42, lambda: write(os.path.join(upstream, "a.txt"), "\n".join(lines[:1] + ["line2 mine"] + lines[2:]) + "\n"))
 sha43 = branch(upstream, "feature/y", 43, lambda: (
     write(os.path.join(upstream, "a.txt"), "\n".join(lines[:9] + ["line10 changed"] + lines[10:]) + "\n"),
     write(os.path.join(upstream, "b.txt"), "new file\n"),
     write(os.path.join(upstream, "c.rs"), "fn main() {\n    let answer = 42; // highlighted\n}\n"),
+    os.makedirs(os.path.join(upstream, "tests"), exist_ok=True),
+    write(os.path.join(upstream, "tests", "parser_test.rs"), "#[test]\nfn parses() {}\n"),
+    write(os.path.join(upstream, "Cargo.lock"), "# generated\n"),
+    write(os.path.join(upstream, "w.txt"), "keep  \n"),
 ))
 sha44 = branch(upstream, "feature/z", 44, lambda: write(os.path.join(upstream, "c.txt"), "z\n"))
 subprocess.run(["git", "clone", "-q", upstream, clone], check=True)
@@ -219,19 +224,96 @@ try:
     s.click(s.wait("[data-toggle='side']"))
     print("[layout] Ctrl+B restored the Inbox; side panel shown again:", bool(s.find(".review .side")))
 
-    # Own PR, also without a worktree: after Mark reviewed, "All changes" is still there.
+    # --- review order, reviewed marks, whitespace, unified, keys (PR #43) ---
+    s.click(s.wait("[data-toggle='side']")) if not s.find(".review .side") else None
+    groups = s.js("return [...document.querySelectorAll('.side .group')].map(g => [g.dataset.group, g.querySelectorAll('li').length])")
+    print("[order] groups:", groups)
+    print("[order] files in order:", s.js("return [...document.querySelectorAll('.side .files button')].map(b => b.dataset.file)"))
+    print("[marks] progress before:", s.js("return document.querySelector('[data-progress]').textContent.trim()"))
+    s.click(s.wait("[data-file='a.txt']"))
+    time.sleep(0.5)
+    dom_click(s, "[data-reviewed-next]")
+    time.sleep(1)
+    print("[marks] after 'reviewed, next':", s.js("return document.querySelector('[data-progress]').textContent.trim()"),
+          "| now on:", s.js("return document.querySelector('.side .files button.active')?.dataset.file"))
+    s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', bubbles: true }))")
+    time.sleep(1)
+    print("[keys] after 'r':", s.js("return document.querySelector('[data-progress]').textContent.trim()"),
+          "| now on:", s.js("return document.querySelector('.side .files button.active')?.dataset.file"))
+    s.js("document.querySelector(\"[data-opt='ws']\").click()")
+    time.sleep(1)
+    print("[ws] labelled whitespace-only:", s.js("return [...document.querySelectorAll('.side .files button')].filter(b => b.querySelector('.ws')).map(b => b.dataset.file)"))
+    s.js("document.querySelector(\"[data-opt='ws']\").click()")
+    s.click(s.wait("[data-file='a.txt']"))
+    s.js("document.querySelector(\"[data-opt='unified']\").click()")
+    time.sleep(1)
+    print("[unified] editors:", s.js("return document.querySelectorAll('.diff .cm-editor').length"),
+          "| deleted chunks shown inline:", s.js("return document.querySelectorAll('.diff .cm-deletedChunk').length"))
+    s.js("document.querySelector(\"[data-opt='unified']\").click()")
+    s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }))")
+    print("[keys] shortcut overlay:", bool(s.find(".shortcuts")))
+    s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))")
+
+    # The author pushes again: the reviewed file a.txt changes, c.rs does not.
+    git(upstream, "checkout", "-q", "feature/y")
+    write(os.path.join(upstream, "a.txt"), "\n".join(lines[:9] + ["line10 changed again"] + lines[10:]) + "\n")
+    commit(upstream, "address review")
+    git(upstream, "update-ref", "refs/pull/43/head", "feature/y")
+    git(upstream, "checkout", "-q", "main")
+    reviewed_before = s.js("return [...document.querySelectorAll('[data-reviewed]')].filter(c => c.checked).map(c => c.dataset.reviewed)")
+    # Items reopen on the tab they were left on, so wait for the header, not a tab.
+    select_row(s, 44)
+    s.wait(".item header .title", timeout=30, text="#44")
+    select_row(s, 43)
+    s.wait(".item header .title", timeout=30, text="#43")
+    tab(s, "Review")
+    s.wait("[data-progress]", timeout=30)
+    s.wait_js("return document.querySelector('.review .marker').textContent.includes('2 commits')", timeout=30)
+    reviewed_after = s.js("return [...document.querySelectorAll('[data-reviewed]')].filter(c => c.checked).map(c => c.dataset.reviewed)")
+    print("[marks] reviewed before the push:", reviewed_before, "| after:", reviewed_after)
+
+    if os.environ.get("E2E_GUIDE") == "1":
+        t0 = time.monotonic()
+        s.click(s.wait(".review header button", text="Prepare review guide"))
+        s.wait("[data-guide]", timeout=600)
+        print(f"[guide] ready after {time.monotonic() - t0:.0f}s; focus:", s.js("return document.querySelector('.guide .focus')?.textContent"))
+        print("[guide] groups:", s.js("return [...document.querySelectorAll('.side .group')].map(g => g.querySelector('.group-title').textContent.trim().replace(/\\s+/g, ' '))"))
+        print("[guide] claims:", s.js("return [...document.querySelectorAll('.claims li')].map(l => l.textContent.trim())"))
+        s.screenshot(os.path.join(shots, "r6-guide.png"))
+
+    # --- own PR, rebased since the review (PR #42) ---
     select_row(s, 42)
-    s.wait(".overview h2", timeout=30)
+    s.wait(".item header .title", timeout=30, text="#42")
     tab(s, "Review")
     s.wait(".review .marker", timeout=30)
     s.click(s.wait("button.primary", text="Mark reviewed"))
+    if s.find(".review header .warn"):
+        print("[own] Mark reviewed asks first:", s.js("return document.querySelector('.review header .warn').textContent"))
+        s.click(s.wait(".review header button", text="Mark anyway"))
     s.wait(".review .notice", timeout=15)
-    time.sleep(0.5)
-    print("[own] after Mark reviewed, scopes:", s.js("return [...document.querySelectorAll('.scopes li')].map(l => l.textContent.trim())"))
+    # main moves on; the branch is rebased onto it and gets one more commit.
+    write(os.path.join(upstream, "base.txt"), "from main\n")
+    commit(upstream, "main moves on")
+    git(upstream, "checkout", "-q", "feature/x")
+    git(upstream, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "rebase", "-q", "main")
+    write(os.path.join(upstream, "a.txt"), "\n".join(lines[:1] + ["line2 mine, improved"] + lines[2:]) + "\n")
+    commit(upstream, "after the review")
+    git(upstream, "update-ref", "refs/pull/42/head", "feature/x")
+    git(upstream, "checkout", "-q", "main")
+    select_row(s, 43)
+    s.wait(".item header .title", timeout=30, text="#43")
+    select_row(s, 42)
+    s.wait(".item header .title", timeout=30, text="#42")
+    tab(s, "Review")
+    s.wait_js("return document.querySelector('.review .marker')?.textContent.includes('new since')", timeout=30)
+    s.click(s.wait("[data-scope='review']")) if s.find("[data-scope='review']") else None
+    time.sleep(1)
+    print("[rebase]", " ".join(s.js("return document.querySelector('.review .marker').textContent").split()),
+          "| note:", s.js("return document.querySelector('[data-rebase-note]')?.textContent ?? null"))
+    print("[rebase] since your review, files:", s.js("return [...document.querySelectorAll('.side .files button')].map(b => b.dataset.file)"))
     s.click(s.wait("[data-scope='all']"))
     time.sleep(1)
-    print("[own] All changes vs main files:", s.js("return [...document.querySelectorAll('.files li button')].map(b => b.textContent.trim())"),
+    print("[rebase] all changes vs main, files:", s.js("return [...document.querySelectorAll('.side .files button')].map(b => b.dataset.file)"),
           "| own PR offers approve:", s.js("return !!document.querySelector(\".submit input[value='APPROVE']\")"))
-    s.screenshot(os.path.join(shots, "r4-own.png"))
 finally:
     s.quit()

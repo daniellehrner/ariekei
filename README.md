@@ -15,9 +15,11 @@ code navigation or debugging, use your IDE on the same worktree. Tauri 2 (Rust) 
 - **Agent:** your installed `claude`, unmodified, in an embedded terminal in the item's
   worktree, with the PR or issue as context. Status comes from Claude Code hooks; conversations
   resume after switching items or restarting.
-- **Review:** all changes vs the base branch, changes since your last review, or single
-  commits; works without a worktree for other people's PRs. Comments go to GitHub as a review
-  or to the agent.
+- **Review:** all changes vs the base branch, changes since your last review (rebase-aware),
+  or single commits; per-file reviewed marks, a review order instead of alphabetical, an agent
+  review guide (risk-ordered groups, claims checked against the diff), whitespace and unified
+  toggles, keyboard navigation; works without a worktree for other people's PRs. Comments go
+  to GitHub as a review or to the agent. See [docs/review.md](docs/review.md).
 - **Lifecycle:** an issue gets a branch and worktree; its first push opens a draft PR. Merged
   or closed items are cleaned up automatically, never losing uncommitted or unpushed work.
 

@@ -164,6 +164,14 @@ impl TerminalManager {
         manager
     }
 
+    /// The `claude` binary agents run with (also used for one-off runs like review guides).
+    pub fn claude(&self) -> Result<PathBuf, String> {
+        self.launch
+            .as_ref()
+            .map(|l| l.claude.clone())
+            .map_err(Clone::clone)
+    }
+
     pub fn key_for_session(&self, session_id: &str) -> Option<String> {
         let terms = self.terms.lock().unwrap();
         terms

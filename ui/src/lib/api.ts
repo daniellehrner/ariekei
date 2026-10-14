@@ -4,6 +4,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type { AgentStatus } from "./agent.svelte";
 import type { Hunk } from "./gitDiff";
 import type { LineComment } from "./reviewComments";
+import type { Guide, ReviewFile } from "./review";
 
 export interface Repo {
   id: number;
@@ -59,6 +60,8 @@ export interface ReviewState {
   base: string;
   baseRef: string;
   reviewed: string | null;
+  sinceReviewFrom: string | null;
+  rebaseNote: string | null;
   head: string;
   prHead: string;
   commits: Commit[];
@@ -150,9 +153,13 @@ export const api = {
   sendPrFeedback: (id: number) => invoke<void>("send_pr_feedback", { id }),
   reviewState: (id: number) => invoke<ReviewState>("review_state", { id }),
   markReviewed: (id: number) => invoke<string>("mark_reviewed", { id }),
-  reviewFiles: (id: number, from: string, to: string | null) => invoke<ChangedFile[]>("review_files", { id, from, to }),
-  reviewFile: (id: number, from: string, to: string | null, path: string) =>
-    invoke<FileDiff>("review_file", { id, from, to, path }),
+  reviewFiles: (id: number, from: string, to: string | null, ignoreWs: boolean) =>
+    invoke<ReviewFile[]>("review_files", { id, from, to, ignoreWs }),
+  reviewFile: (id: number, from: string, to: string | null, path: string, ignoreWs: boolean) =>
+    invoke<FileDiff>("review_file", { id, from, to, path, ignoreWs }),
+  markFileReviewed: (id: number, path: string, reviewed: boolean) => invoke<void>("mark_file_reviewed", { id, path, reviewed }),
+  reviewGuide: (id: number) => invoke<{ guide: Guide; stale: boolean } | null>("review_guide", { id }),
+  prepareGuide: (id: number) => invoke<{ guide: Guide; stale: boolean }>("prepare_guide", { id }),
   searchPrs: (text: string) => invoke<SearchHit[]>("search_prs", { text }),
   trackPr: (number: number) => invoke<number>("track_pr", { number }),
   conversation: (id: number) => invoke<Conversation>("pr_conversation", { id }),

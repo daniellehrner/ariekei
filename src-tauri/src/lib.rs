@@ -2,11 +2,13 @@ mod claude;
 mod context;
 mod git;
 mod github;
+mod guide;
 mod hooks;
 mod inbox;
 mod lifecycle;
 mod notify;
 mod poller;
+mod review_order;
 mod store;
 mod terminal;
 mod workitem;
@@ -287,9 +289,10 @@ async fn review_files(
     id: i64,
     from: String,
     to: Option<String>,
-) -> Res<Vec<git::ChangedFile>> {
+    ignore_ws: bool,
+) -> Res<Vec<workitem::ReviewFile>> {
     blocking(app, move |s| {
-        workitem::review_files(s, id, &from, to.as_deref())
+        workitem::review_files(s, id, &from, to.as_deref(), ignore_ws)
     })
     .await
 }
@@ -301,11 +304,37 @@ async fn review_file(
     from: String,
     to: Option<String>,
     path: String,
+    ignore_ws: bool,
 ) -> Res<git::FileDiff> {
     blocking(app, move |s| {
-        workitem::review_file(s, id, &from, to.as_deref(), &path)
+        workitem::review_file(s, id, &from, to.as_deref(), &path, ignore_ws)
     })
     .await
+}
+
+/// Marks the file's current content reviewed (or unmarks it).
+#[tauri::command]
+async fn mark_file_reviewed(
+    app: tauri::AppHandle,
+    id: i64,
+    path: String,
+    reviewed: bool,
+) -> Res<()> {
+    blocking(app, move |s| {
+        workitem::mark_file_reviewed(s, id, &path, reviewed)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn review_guide(app: tauri::AppHandle, id: i64) -> Res<Option<workitem::GuideView>> {
+    blocking(app, move |s| workitem::review_guide(s, id)).await
+}
+
+/// Asks Claude for a review guide (takes a while: runs headless on the diff).
+#[tauri::command]
+async fn prepare_guide(app: tauri::AppHandle, id: i64) -> Res<workitem::GuideView> {
+    blocking(app, move |s| workitem::prepare_guide(s, id)).await
 }
 
 /// Saves a file edited in the review view.
@@ -405,6 +434,9 @@ pub fn run() {
             mark_reviewed,
             review_files,
             review_file,
+            mark_file_reviewed,
+            review_guide,
+            prepare_guide,
             save_file,
             search_prs,
             track_pr,

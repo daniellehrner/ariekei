@@ -59,6 +59,24 @@ ALTER TABLE work_items ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;
 -- Why automatic cleanup could not run (JSON array of messages), if it could not.
 ALTER TABLE work_items ADD COLUMN cleanup_blockers TEXT;
 "#,
+    r#"
+-- Per-file review marks: the content (git object id, or 'deleted') the user marked reviewed.
+-- A file whose content changed since then is no longer reviewed.
+CREATE TABLE reviewed_files (
+    item_id INTEGER NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    blob TEXT NOT NULL,
+    PRIMARY KEY (item_id, path)
+);
+-- The latest agent review guide of an item, for the base/head it was made for.
+CREATE TABLE review_guides (
+    item_id INTEGER PRIMARY KEY REFERENCES work_items(id) ON DELETE CASCADE,
+    base TEXT NOT NULL,
+    head TEXT NOT NULL,
+    guide TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -408,9 +426,82 @@ impl Store {
         self.update(id, "cleanup_blockers = ?2", value)
     }
 
+    /// Marks (`Some(blob)`) or unmarks (`None`) `path` of item `id` as reviewed.
+    pub fn set_file_reviewed(&self, id: i64, path: &str, blob: Option<&str>) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        match blob {
+            Some(blob) => conn.execute(
+                "INSERT INTO reviewed_files (item_id, path, blob) VALUES (?1, ?2, ?3)
+                 ON CONFLICT (item_id, path) DO UPDATE SET blob = ?3",
+                params![id, path, blob],
+            ),
+            None => conn.execute(
+                "DELETE FROM reviewed_files WHERE item_id = ?1 AND path = ?2",
+                params![id, path],
+            ),
+        }
+        .map(|_| ())
+        .map_err(err)
+    }
+
+    /// The reviewed content per path of item `id`.
+    pub fn reviewed_files(
+        &self,
+        id: i64,
+    ) -> Result<std::collections::HashMap<String, String>, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT path, blob FROM reviewed_files WHERE item_id = ?1")
+            .map_err(err)?;
+        let rows = stmt
+            .query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(err)?;
+        rows.collect::<Result<_, _>>().map_err(err)
+    }
+
+    pub fn set_guide(
+        &self,
+        id: i64,
+        base: &str,
+        head: &str,
+        guide: &serde_json::Value,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO review_guides (item_id, base, head, guide) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (item_id) DO UPDATE SET base = ?2, head = ?3, guide = ?4, created_at = CURRENT_TIMESTAMP",
+            params![id, base, head, guide.to_string()],
+        )
+        .map(|_| ())
+        .map_err(err)
+    }
+
+    /// The item's guide with the base and head it describes.
+    pub fn guide(&self, id: i64) -> Result<Option<(String, String, serde_json::Value)>, String> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT base, head, guide FROM review_guides WHERE item_id = ?1",
+            [id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(err)
+        .map(|row| row.map(|(b, h, g)| (b, h, serde_json::from_str(&g).unwrap_or_default())))
+    }
+
     /// After cleanup: forget the worktree, agent session and review marker, and hide the item.
     pub fn mark_cleaned(&self, id: i64) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM reviewed_files WHERE item_id = ?1", [id])
+            .map_err(err)?;
+        conn.execute("DELETE FROM review_guides WHERE item_id = ?1", [id])
+            .map_err(err)?;
         conn.execute(
             "UPDATE work_items SET worktree_path = NULL, branch = NULL, worktree_created = 0, session_id = NULL,
              session_started = 0, transcript_path = NULL, reviewed_sha = NULL, cleanup_blockers = NULL,
@@ -587,6 +678,27 @@ mod tests {
             !five.open,
             "an untracked PR no query finds drops out of the Inbox"
         );
+    }
+
+    #[test]
+    fn reviewed_files_and_guides_are_kept_per_item_and_cleared_on_cleanup() {
+        let (store, repo) = store_with_repo();
+        store.sync_prs(repo.id, &[polled(3, json!({}))]).unwrap();
+        let id = store.items(repo.id).unwrap()[0].id;
+        store.set_file_reviewed(id, "a.rs", Some("blob1")).unwrap();
+        store.set_file_reviewed(id, "b.rs", Some("blob2")).unwrap();
+        store.set_file_reviewed(id, "b.rs", None).unwrap();
+        store.set_file_reviewed(id, "a.rs", Some("blob3")).unwrap();
+        assert_eq!(
+            store.reviewed_files(id).unwrap(),
+            [("a.rs".to_owned(), "blob3".to_owned())].into()
+        );
+        store
+            .set_guide(id, "base", "head", &json!({"focus": "x"}))
+            .unwrap();
+        assert_eq!(store.guide(id).unwrap().unwrap().2["focus"], "x");
+        store.mark_cleaned(id).unwrap();
+        assert!(store.reviewed_files(id).unwrap().is_empty() && store.guide(id).unwrap().is_none());
     }
 
     #[test]
