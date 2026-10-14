@@ -252,7 +252,12 @@ try:
     print(f"[idle] #42's agent closed {time.monotonic() - t0:.0f}s after it was left idle")
     select(s, 42)
     wait_agent(s, 42, {"ready"}, timeout=40)
-    wait_screen(s, key, "add three", timeout=30)
+    try:
+        wait_screen(s, key, "add three", timeout=30)
+    except TimeoutError:
+        # Seen on Windows only: see the app log for the agent's start, output and exit.
+        print("[idle] resume failed; #42's agent is", (row_info(s, 42) or {}).get("agent"))
+        raise
     print("[idle] reopening #42 resumed the conversation")
 finally:
     s.quit()

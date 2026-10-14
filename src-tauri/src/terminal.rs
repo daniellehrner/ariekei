@@ -249,6 +249,15 @@ impl TerminalManager {
         }
         let mut child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
         drop(pair.slave);
+        tracing::info!(
+            "agent {key} started (pid {:?}, {})",
+            child.process_id(),
+            if plan.resume {
+                "resuming"
+            } else {
+                "new session"
+            }
+        );
 
         let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
         let term = Arc::new(Term {
@@ -276,10 +285,12 @@ impl TerminalManager {
             .spawn(move || {
                 let mut buf = [0u8; 16 * 1024];
                 let mut first = true;
+                let mut total = 0usize;
                 while let Ok(n) = reader.read(&mut buf) {
                     if n == 0 {
                         break;
                     }
+                    total += n;
                     reader_term.output.lock().unwrap().push(&buf[..n]);
                     if std::mem::take(&mut first) {
                         // The TUI is up; hooks report everything after this.
@@ -291,6 +302,7 @@ impl TerminalManager {
                         );
                     }
                 }
+                tracing::info!("agent {reader_key} output ended after {total} bytes");
             })
             .map_err(|e| e.to_string())?;
 
@@ -299,6 +311,7 @@ impl TerminalManager {
             .name(format!("pty-wait {key}"))
             .spawn(move || {
                 let status = child.wait();
+                tracing::info!("agent {wait_key} exited: {status:?}");
                 use tauri::Manager as _;
                 let state = app.state::<crate::AppState>();
                 let mut terms = state.terminals.terms.lock().unwrap();
