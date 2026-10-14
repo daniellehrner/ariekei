@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { flatten, nextUnreviewed, progress, sections, type Guide, type ReviewFile } from "./review.ts";
+import { fileGuide, flatten, nextUnreviewed, progress, sections, type Guide, type ReviewFile } from "./review.ts";
 
 const f = (path: string, group: ReviewFile["group"], reviewed = false): ReviewFile => ({ path, status: "M", group, reviewed, whitespaceOnly: false });
 const files = [f("src/a.rs", "source", true), f("src/b.rs", "source"), f("tests/t.rs", "tests"), f("Cargo.lock", "generated")];
@@ -34,4 +34,22 @@ test("progress and the next unreviewed file", () => {
   assert.equal(nextUnreviewed(files, "src/b.rs"), "tests/t.rs");
   assert.equal(nextUnreviewed(files, "Cargo.lock"), "src/b.rs", "wraps around, skips reviewed files");
   assert.equal(nextUnreviewed([f("x", "source", true)], "x"), null);
+});
+
+test("fileGuide finds the file's group, its claims and whether it is unexplained", () => {
+  const guide: Guide = {
+    focus: "f",
+    groups: [{ title: "Cache", intent: "Adds a cache", risk: "high", files: ["src/a.rs"] }],
+    claims: [
+      { claim: "Adds a cache", status: "implemented", files: ["src/a.rs"] },
+      { claim: "Adds metrics", status: "missing", files: [] },
+    ],
+    unexplained: ["src/b.rs"],
+  };
+  const a = fileGuide(guide, "src/a.rs")!;
+  assert.deepEqual([a.group?.title, a.claims.map((c) => c.claim), a.unexplained], ["Cache", ["Adds a cache"], false]);
+  const b = fileGuide(guide, "src/b.rs")!;
+  assert.deepEqual([b.group, b.claims.length, b.unexplained], [null, 0, true]);
+  assert.equal(fileGuide(null, "src/a.rs"), null);
+  assert.equal(fileGuide(guide, null), null);
 });

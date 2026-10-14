@@ -76,7 +76,8 @@ exact command.
   Claude Code (two short turns).
 
 All but `m1_scenario.py` run against `e2e/fake_gh.py`, a stand-in for `gh` that serves fixture
-PRs and issues and records every write instead of sending it. Test-only environment variables:
+PRs and issues and records every write instead of sending it. `review_scenario.py` gets its
+review guide from `e2e/fake_claude.py`, a canned `claude -p`. Test-only environment variables:
 
 | Variable | Effect |
 |---|---|

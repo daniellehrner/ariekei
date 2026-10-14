@@ -31,7 +31,7 @@
   import { externalLinks } from "./lib/html";
   import { SHORTCUTS, isTyping } from "./lib/keys";
   import { languageFor } from "./lib/languages";
-  import { flatten, nextUnreviewed, progress, sections, type Guide, type ReviewFile } from "./lib/review";
+  import { fileGuide, flatten, nextUnreviewed, progress, sections, type Guide, type ReviewFile } from "./lib/review";
   import { classify, feedbackMessage, reviewBody, type LineComment, type Ranges } from "./lib/reviewComments";
 
   let {
@@ -62,6 +62,8 @@
   let guideStale = $state(false);
   let guideBusy = $state(false);
   let guideOpen = $state(true);
+  // The guide's line above the diff: one line, or wrapped with the whole change's focus.
+  let fileGuideOpen = $state(false);
 
   // Submitting to GitHub.
   let submitting = $state(false);
@@ -72,6 +74,7 @@
 
   const order = $derived(view.order === "guide" && !guide ? "review" : (view.order ?? "review"));
   const list = $derived(sections(files, order, guide));
+  const here = $derived(fileGuide(guide, view.file));
   const ordered = $derived(flatten(list));
   const done = $derived(progress(files));
 
@@ -534,6 +537,24 @@
           </button>
         {/if}
       </div>
+      {#if here && guide}
+        <!-- The guide for the file shown, where it is seen with the side panel closed too. -->
+        <div class="file-guide" class:open={fileGuideOpen} data-file-guide>
+          <button class="expand" onclick={() => (fileGuideOpen = !fileGuideOpen)} aria-expanded={fileGuideOpen}
+            title={fileGuideOpen ? "Show one line" : "Show all of it, and the guide's focus for the whole change"}>{fileGuideOpen ? "▾" : "▸"}</button>
+          <div class="what">
+            {#if here.group}
+              <span class="risk {here.group.risk}">{here.group.risk}</span> <strong>{here.group.title}</strong> — {here.group.intent}
+            {:else}
+              <span class="muted">Not in the review guide.</span>
+            {/if}
+            {#each here.claims as c}<span class="claim {c.status}"> · <span class="mark">{CLAIM[c.status] ?? "?"}</span> {c.claim}</span>{/each}
+            {#if here.unexplained}<span class="warn"> · not explained by the description</span>{/if}
+            {#if guideStale}<span class="stale"> · guide outdated</span>{/if}
+            {#if fileGuideOpen}<p class="focus-all"><span class="muted">Focus for the whole change:</span> {guide.focus}</p>{/if}
+          </div>
+        </div>
+      {/if}
       <div class="diff" bind:this={host}></div>
 
       {#if view.comments.length || submitting}
@@ -640,6 +661,15 @@
   .sM { color: var(--warn); }
   .none { padding: 4px 12px; color: var(--muted); font-size: 0.85em; margin: 0; }
   .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .file-guide { display: flex; gap: 6px; align-items: flex-start; padding: 4px 12px; border-bottom: 1px solid var(--border); font-size: 0.85em; background: var(--sidebar); }
+  .file-guide .expand { border: 0; background: none; padding: 0 2px; color: var(--muted); }
+  .file-guide .what { flex: 1; min-width: 0; }
+  .file-guide:not(.open) .what { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .file-guide .claim.implemented .mark { color: var(--ok); }
+  .file-guide .claim.partial .mark { color: var(--warn); }
+  .file-guide .claim.missing { color: var(--bad); }
+  .file-guide .stale { color: var(--warn); }
+  .focus-all { margin: 4px 0 0; }
   .toolbar { display: flex; gap: 8px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border); min-height: 30px; flex-wrap: wrap; }
   .toolbar input:not([type]) { flex: 1; min-width: 120px; }
   .spacer { flex: 1; }

@@ -23,7 +23,10 @@ How the review view works, and the research it is based on.
   tools, no saved session) and returns a short focus, the files grouped by concern in risk
   order with a one-line intent each, the description's and commit messages' claims checked
   against the diff (✓ implemented, ◐ partial, ✗ missing), and files no claim explains. It is
-  marked outdated when the head moves. Takes seconds and uses your Claude plan.
+  marked outdated when the head moves. Takes seconds and uses your Claude plan. Above the
+  diff, a line shows what the guide says about the file you are looking at (its group's
+  intent and risk, the claims it backs, or that no claim explains it), so the guide is there
+  with the side panel closed too; ▸ expands it and adds the focus for the whole change.
 - **Noise and layout:** ignore whitespace (`w`, whitespace-only files labelled), unified or
   side-by-side (`u`), syntax highlighting for any language, git-exact hunks, unchanged code
   collapsed; the Inbox, the commit list and the side panel collapse.

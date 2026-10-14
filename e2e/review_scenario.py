@@ -6,9 +6,11 @@ requested), search and opening another author's PR, Overview (sanitized descript
 Comments (resolve, reply, new comment), reviewing without a worktree ("All changes vs
 main" from refs/pull/N/head), draft comments, Submit to GitHub (line comment inside the
 PR diff, the other one folded into the body), and "All changes" after Mark reviewed.
-No agent is started.
+No agent is started. The review guide comes from e2e/fake_claude.py (ARIEKEI_CLAUDE);
+without it, your real `claude` writes it (one headless call).
 
   FAKE_GH_DIR=<work>/gh ARIEKEI_GH=$PWD/e2e/fake_gh.py ARIEKEI_DATA_DIR=<work>/data \\
+    ARIEKEI_CLAUDE=$PWD/e2e/fake_claude.py \\
     xvfb-run -a -s "-screen 0 1400x900x24" tauri-driver --port 4444 &
   python3 -I e2e/review_scenario.py <app-binary> <work>
 """
@@ -272,14 +274,32 @@ try:
     reviewed_after = s.js("return [...document.querySelectorAll('[data-reviewed]')].filter(c => c.checked).map(c => c.dataset.reviewed)")
     print("[marks] reviewed before the push:", reviewed_before, "| after:", reviewed_after)
 
-    if os.environ.get("E2E_GUIDE") == "1":
-        t0 = time.monotonic()
-        s.click(s.wait(".review header button", text="Prepare review guide"))
-        s.wait("[data-guide]", timeout=600)
-        print(f"[guide] ready after {time.monotonic() - t0:.0f}s; focus:", s.js("return document.querySelector('.guide .focus')?.textContent"))
-        print("[guide] groups:", s.js("return [...document.querySelectorAll('.side .group')].map(g => g.querySelector('.group-title').textContent.trim().replace(/\\s+/g, ' '))"))
-        print("[guide] claims:", s.js("return [...document.querySelectorAll('.claims li')].map(l => l.textContent.trim())"))
-        s.screenshot(os.path.join(shots, "r6-guide.png"))
+    t0 = time.monotonic()
+    s.click(s.wait(".review header button", text="Prepare review guide"))
+    s.wait("[data-guide]", timeout=600)
+    print(f"[guide] ready after {time.monotonic() - t0:.0f}s; focus:", s.js("return document.querySelector('.guide .focus')?.textContent"))
+    print("[guide] groups:", s.js("return [...document.querySelectorAll('.side .group')].map(g => g.querySelector('.group-title').textContent.trim().replace(/\\s+/g, ' '))"))
+    print("[guide] claims:", s.js("return [...document.querySelectorAll('.claims li')].map(l => l.textContent.trim())"))
+    s.screenshot(os.path.join(shots, "r6-guide.png"))
+
+    # The guide line above the diff: the shown file's group and claims, also with the side
+    # panel hidden; expanded, it adds the focus for the whole change.
+    def guide_line():
+        return " ".join(s.js("return document.querySelector('[data-file-guide] .what')?.textContent ?? ''").split())
+    first = s.js("return document.querySelector('.side .files [data-file]').dataset.file")
+    s.js("document.querySelector(`.side [data-file='${arguments[0]}']`).click()", first)
+    s.wait_js("return document.querySelector('[data-file-guide]')")
+    print(f"[guide line] {first}:", guide_line())
+    s.js("document.querySelector(\"[data-toggle='side']\").click()")
+    s.wait_js("return !document.querySelector('.side')")
+    s.js("document.querySelector('.toolbar button[aria-label=\"Next file\"]').click()")
+    time.sleep(0.5)
+    print("[guide line] side hidden, next file", s.js("return document.querySelector('.toolbar .current').textContent.trim()").split()[0] + ":", guide_line())
+    s.js("document.querySelector('[data-file-guide] .expand').click()")
+    print("[guide line] expanded:", s.js("return document.querySelector('[data-file-guide] .focus-all')?.textContent"))
+    s.js("document.querySelector('[data-file-guide] .expand').click()")
+    s.js("document.querySelector(\"[data-toggle='side']\").click()")
+    s.wait(".side")
 
     # --- own PR, rebased since the review (PR #42) ---
     select_row(s, 42)

@@ -26,6 +26,22 @@ export interface Guide {
 
 export type Order = "review" | "tree" | "guide";
 
+/** What the guide says about one file: its group, the claims it backs, and whether no claim explains it. */
+export interface FileGuide {
+  group: GuideGroup | null;
+  claims: Guide["claims"];
+  unexplained: boolean;
+}
+
+export function fileGuide(guide: Guide | null, path: string | null): FileGuide | null {
+  if (!guide || !path) return null;
+  return {
+    group: guide.groups.find((g) => g.files.includes(path)) ?? null,
+    claims: guide.claims.filter((c) => c.files.includes(path)),
+    unexplained: guide.unexplained.includes(path),
+  };
+}
+
 export interface Section {
   key: string;
   title: string;
