@@ -125,6 +125,8 @@ def interactive(argv):
         out("\x1b[1mfake claude\x1b[0m\n")
         if resume and os.path.exists(transcript):
             out(open(transcript, encoding="utf-8").read())
+            with open(os.path.join(store, "fake-claude.log"), "a", encoding="utf-8") as log:
+                log.write(f"{time.strftime('%H:%M:%S')} resumed {session}, printed the transcript\n")
         line = ""
         while True:
             out("\r\x1b[2K" + PROMPT + line + "\x1b7\n\x1b[2K  " +
@@ -183,7 +185,23 @@ def turn(text, say, hook, keys):
     hook("Stop")
 
 
+def logged(f, argv):
+    """Runs f, noting the start and any failure in <store>/fake-claude.log (for CI runs)."""
+    store = os.environ.get("FAKE_CLAUDE_DIR") or os.path.join(tempfile.gettempdir(), "ariekei-fake-claude")
+    os.makedirs(store, exist_ok=True)
+    with open(os.path.join(store, "fake-claude.log"), "a", encoding="utf-8") as log:
+        log.write(f"{time.strftime('%H:%M:%S')} start {argv}\n")
+    try:
+        f(argv)
+    except BaseException:
+        import traceback
+
+        with open(os.path.join(store, "fake-claude.log"), "a", encoding="utf-8") as log:
+            log.write(traceback.format_exc())
+        raise
+
+
 if "-p" in sys.argv[1:]:
     guide()
 else:
-    interactive(sys.argv[1:])
+    logged(interactive, sys.argv[1:])
