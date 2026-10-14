@@ -1,44 +1,42 @@
-:root {
-  --bg: #ffffff;
-  --sidebar: #f6f7f9;
-  --panel: #eef1f5;
-  --user-bg: #e3ecfa;
-  --border: #d9dde3;
-  --text: #1d2330;
-  --muted: #6b7484;
-  --accent: #2f6fdd;
-  --ok: #2e9d5b;
-  --warn: #c98a12;
-  --warn-bg: #fff7e6;
-  --bad: #d04545;
-  --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
-  color-scheme: light;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1b1e24;
-    --sidebar: #16191e;
-    --panel: #262a32;
-    --user-bg: #23324d;
-    --border: #333843;
-    --text: #dfe3ea;
-    --muted: #8a93a3;
-    --accent: #5b8ff0;
-    --ok: #4cbb78;
-    --warn: #e0a33a;
-    --warn-bg: #3a2f17;
-    --bad: #e86464;
-    color-scheme: dark;
-  }
-}
+/* Base element styles. Colours, type and sizes come from tokens.css. */
 
 html, body { margin: 0; height: 100%; }
 body {
-  background: var(--bg);
+  background: var(--surface-0);
   color: var(--text);
-  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Ubuntu, sans-serif;
+  font-family: var(--font-ui);
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
+  -webkit-font-smoothing: antialiased;
 }
-button { font: inherit; color: inherit; cursor: pointer; padding: 4px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); }
-button:disabled { opacity: 0.5; cursor: default; }
-input, textarea { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; }
+code, kbd, pre { font-family: var(--font-mono); }
+a { color: var(--you); }
+
+/* Plain buttons; the controls in controls/ (Button, IconButton, …) give them their look. */
+button {
+  font: inherit; color: inherit; cursor: pointer;
+  padding: var(--sp-2) var(--sp-5);
+  border: 1px solid var(--border-strong); border-radius: var(--r-md); background: var(--surface-raised);
+  transition: background-color var(--dur-fast) var(--ease);
+}
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+input, textarea, select {
+  font: inherit; font-size: var(--fs-12); color: var(--text);
+  background: var(--surface-raised); border: 1px solid var(--border-strong); border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-4); box-sizing: border-box;
+}
+textarea { padding: var(--sp-3) var(--sp-4); line-height: var(--lh-12); resize: vertical; }
+input::placeholder, textarea::placeholder { color: var(--text-faint); }
+input:focus, textarea:focus, select:focus {
+  border-color: var(--you);
+  outline: 2px solid color-mix(in srgb, var(--focus) 25%, transparent);
+  outline-offset: 0;
+}
+input:disabled, textarea:disabled { opacity: 0.5; }
+
+/* Section labels: 11/16 uppercase. */
+.label-caps {
+  font-size: var(--fs-11); line-height: var(--lh-11); font-weight: var(--fw-semibold);
+  letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted);
+}

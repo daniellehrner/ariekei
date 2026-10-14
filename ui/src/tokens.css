@@ -1,0 +1,289 @@
+/* Ariekei design tokens — generated from the design canvas. Light on :root, dark via prefers-color-scheme. */
+
+:root {
+  color-scheme: light dark;
+
+  /* Type — system UI plus one bundled monospace */
+  --font-ui: system-ui, -apple-system, 'Segoe UI', Ubuntu, Cantarell, 'Noto Sans', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --fs-11: 11px;   --lh-11: 16px;   /* section labels (uppercase, +4% tracking), counts */
+  --fs-12: 12px;   --lh-12: 18px;   /* meta lines, toolbars, badges, side panel */
+  --fs-13: 13px;   --lh-13: 20px;   /* base UI */
+  --fs-15: 15px;   --lh-15: 22px;   /* work item title, Markdown h2 */
+  --fs-20: 20px;   --lh-20: 28px;   /* Connect heading only */
+  --fs-code: 12px; --lh-code: 18px; /* diff, inline code 11.5px */
+  --fs-term: 12.5px; --lh-term: 1.35;
+  --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600;
+
+  /* Space — 2px base */
+  --sp-1: 2px; --sp-2: 4px; --sp-3: 6px; --sp-4: 8px; --sp-5: 10px;
+  --sp-6: 12px; --sp-7: 16px; --sp-8: 20px; --sp-9: 24px; --sp-10: 32px;
+
+  /* Radii */
+  --r-xs: 3px;  /* checkboxes, kbd */
+  --r-sm: 4px;  /* risk badges, inline code */
+  --r-md: 6px;  /* buttons, inputs, rows */
+  --r-lg: 8px;  /* banners, menus, cards */
+  --r-xl: 12px; /* dialogs, overlay */
+  --r-pill: 999px;
+
+  /* Sizes */
+  --h-control-sm: 22px; --h-control: 26px; --h-control-lg: 30px;
+  --h-row: 24px; --h-tabbar: 36px; --h-toolbar: 36px;
+  --w-inbox: 288px; --w-inbox-strip: 36px; --w-panel: 300px; --w-panel-compact: 256px;
+
+  /* Focus — 2px ring, 1px offset, on every interactive element */
+  --focus-ring: 0 0 0 1px var(--surface-0), 0 0 0 3px var(--focus);
+
+  /* Motion — only fades and the agent "working" ring */
+  --dur-fast: 120ms; --dur: 180ms; --ease: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Surfaces */
+  --surface-0: #FBFBFC;
+  --surface-1: #F2F3F6;
+  --surface-2: #F7F8FA;
+  --surface-raised: #FFFFFF;
+  --surface-editor: #FFFFFF;
+  --surface-hover: rgba(27,30,37,0.05);
+  --surface-active: rgba(27,30,37,0.09);
+  --surface-selected: #E9EFFC;
+
+  /* Borders & text */
+  --border: #E3E5EA;
+  --border-strong: #CDD1D9;
+  --text: #1B1E25;
+  --text-muted: #5A606C;
+  --text-faint: #737985;
+  --text-on-accent: #FFFFFF;
+
+  /* You · agent · GitHub */
+  --you: #2F63D8;
+  --you-bg: #EAF0FD;
+  --you-strong: #1F4BB0;
+  --you-line: #B7CAF5;
+  --agent: #B9561E;
+  --agent-bg: #FBEEE5;
+  --agent-strong: #8F3E10;
+  --agent-line: #F0C9AE;
+  --gh: #7A45BF;
+  --gh-bg: #F3EEFB;
+  --gh-strong: #5E2E9E;
+  --gh-line: #D7C5F0;
+
+  /* Status */
+  --ok: #1D7F46;
+  --ok-bg: #E7F4EC;
+  --ok-line: #B5DCC4;
+  --warn: #9A6400;
+  --warn-bg: #FBF2DE;
+  --warn-line: #EBD39A;
+  --bad: #C42F2F;
+  --bad-bg: #FCECEC;
+  --bad-line: #F0BDBD;
+  --info: #43648A;
+  --info-bg: #EEF2F7;
+  --focus: #2F63D8;
+  --focus-soft: rgba(47,99,216,0.18);
+
+  /* Shadows & scrim */
+  --scrim: rgba(16,18,24,0.32);
+  --shadow-1: 0 1px 2px rgba(16,18,24,0.06);
+  --shadow-pop: 0 10px 28px rgba(16,18,24,0.14), 0 0 0 1px #E3E5EA;
+
+  /* Diff */
+  --diff-add-line: #E9F6EE;
+  --diff-add-word: #BFE5CC;
+  --diff-add-gutter: #D6EEDF;
+  --diff-del-line: #FCEDED;
+  --diff-del-word: #F5C9C9;
+  --diff-del-gutter: #F7DCDC;
+  --diff-spacer: #F6F7F9;
+  --diff-fold-bg: #F1F3F6;
+  --diff-fold-text: #5A606C;
+  --diff-gutter-text: #7A808B;
+  --diff-selection: #D7E3FB;
+  --diff-search: #FFE58A;
+  --diff-search-active: #FFC94D;
+
+  /* Syntax */
+  --syn-keyword: #9D3C8A;
+  --syn-type: #1C6E8C;
+  --syn-string: #3D7A1E;
+  --syn-number: #A25B00;
+  --syn-comment: #6E7681;
+  --syn-function: #4152B3;
+  --syn-annotation: #8A6100;
+  --syn-punct: #4B5260;
+  --syn-constant: #A25B00;
+  --syn-tag: #9D3C8A;
+
+  /* Terminal */
+  --term-bg: #FCFCFD;
+  --term-fg: #1B1E25;
+  --term-cursor: #B9561E;
+  --term-selection: rgba(47,99,216,0.22);
+  --ansi-black: #1B1E25;
+  --ansi-red: #C42F2F;
+  --ansi-green: #1D7F46;
+  --ansi-yellow: #9A6400;
+  --ansi-blue: #2F63D8;
+  --ansi-magenta: #7A45BF;
+  --ansi-cyan: #11788A;
+  --ansi-white: #C9CDD6;
+  --ansi-bright-black: #6A707C;
+  --ansi-bright-red: #E0443E;
+  --ansi-bright-green: #2A9D5A;
+  --ansi-bright-yellow: #B57C00;
+  --ansi-bright-blue: #4C7FF0;
+  --ansi-bright-magenta: #9461D6;
+  --ansi-bright-cyan: #1B95A8;
+  --ansi-bright-white: #F0F1F4;
+
+  /* Agent status (dot = circle) */
+  --agent-status-starting: var(--agent);  /* dashed ring */
+  --agent-status-ready: var(--agent);     /* ring */
+  --agent-status-working: var(--agent);   /* ring + centre dot */
+  --agent-status-waiting: var(--agent);   /* solid + halo */
+  --agent-status-finished: var(--agent);  /* donut */
+  --agent-status-error: var(--bad);       /* solid red */
+  --agent-status-stopped: var(--text-faint); /* ring + stop square */
+  --agent-status-none: var(--border-strong); /* dotted ring */
+
+  /* Attention, most urgent first (pip shape = source) */
+  --att-needs-you: var(--agent);   /* circle + halo */
+  --att-blocked: var(--bad);       /* square (cleanup) or diamond (CI) */
+  --att-activity: var(--gh);       /* diamond */
+  --att-review: var(--you);         /* square */
+  --att-working: var(--agent);      /* hollow circle */
+
+  /* Risk */
+  --risk-high-bg: var(--bad-bg);   --risk-high-fg: var(--bad);
+  --risk-med-bg: var(--warn-bg);   --risk-med-fg: var(--warn);
+  --risk-low-bg: var(--surface-0); --risk-low-fg: var(--text-muted);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Surfaces */
+    --surface-0: #16171B;
+    --surface-1: #111215;
+    --surface-2: #1B1D22;
+    --surface-raised: #22252B;
+    --surface-editor: #131417;
+    --surface-hover: rgba(255,255,255,0.05);
+    --surface-active: rgba(255,255,255,0.09);
+    --surface-selected: #1E2840;
+
+    /* Borders & text */
+    --border: #2A2D35;
+    --border-strong: #3A3E48;
+    --text: #E3E5EA;
+    --text-muted: #9AA0AC;
+    --text-faint: #7D838F;
+    --text-on-accent: #101217;
+
+    /* You · agent · GitHub */
+    --you: #6E9BFF;
+    --you-bg: #1C2539;
+    --you-strong: #A9C3FF;
+    --you-line: #34477A;
+    --agent: #E8915A;
+    --agent-bg: #2C2019;
+    --agent-strong: #F4B48A;
+    --agent-line: #5A3A26;
+    --gh: #B48CF0;
+    --gh-bg: #251E33;
+    --gh-strong: #CDB3F7;
+    --gh-line: #4A3A66;
+
+    /* Status */
+    --ok: #4CC38A;
+    --ok-bg: #15291F;
+    --ok-line: #24543B;
+    --warn: #E3B341;
+    --warn-bg: #2B2414;
+    --warn-line: #574619;
+    --bad: #F07070;
+    --bad-bg: #321B1D;
+    --bad-line: #63302F;
+    --info: #8FB0D6;
+    --info-bg: #1A2230;
+    --focus: #6E9BFF;
+    --focus-soft: rgba(110,155,255,0.25);
+
+    /* Shadows & scrim */
+    --scrim: rgba(0,0,0,0.5);
+    --shadow-1: 0 1px 2px rgba(0,0,0,0.4);
+    --shadow-pop: 0 12px 32px rgba(0,0,0,0.55), 0 0 0 1px #3A3E48;
+
+    /* Diff */
+    --diff-add-line: #16271D;
+    --diff-add-word: #1F4A31;
+    --diff-add-gutter: #1B3325;
+    --diff-del-line: #2C181B;
+    --diff-del-word: #5A2428;
+    --diff-del-gutter: #3A1F22;
+    --diff-spacer: #17181C;
+    --diff-fold-bg: #1C1E23;
+    --diff-fold-text: #9AA0AC;
+    --diff-gutter-text: #6B717D;
+    --diff-selection: #263A66;
+    --diff-search: #5C4A12;
+    --diff-search-active: #8A6A10;
+
+    /* Syntax */
+    --syn-keyword: #E38BD3;
+    --syn-type: #6CC6E0;
+    --syn-string: #A2CE76;
+    --syn-number: #E8A867;
+    --syn-comment: #7E8794;
+    --syn-function: #98ABFF;
+    --syn-annotation: #D9B65E;
+    --syn-punct: #A9AFBA;
+    --syn-constant: #E8A867;
+    --syn-tag: #E38BD3;
+
+    /* Terminal */
+    --term-bg: #111215;
+    --term-fg: #E3E5EA;
+    --term-cursor: #E8915A;
+    --term-selection: rgba(110,155,255,0.30);
+    --ansi-black: #1B1D22;
+    --ansi-red: #F07070;
+    --ansi-green: #4CC38A;
+    --ansi-yellow: #E3B341;
+    --ansi-blue: #6E9BFF;
+    --ansi-magenta: #B48CF0;
+    --ansi-cyan: #4FC6D9;
+    --ansi-white: #C9CDD6;
+    --ansi-bright-black: #6B7280;
+    --ansi-bright-red: #FF8C8C;
+    --ansi-bright-green: #6EDBA4;
+    --ansi-bright-yellow: #F5CB62;
+    --ansi-bright-blue: #94B6FF;
+    --ansi-bright-magenta: #CBA8FF;
+    --ansi-bright-cyan: #7ADBEA;
+    --ansi-bright-white: #F5F6F8;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-fast: 0ms; --dur: 0ms; }
+}
+
+/* Focus — one rule for every interactive element */
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+/* Legacy aliases — remove once every component uses the new names */
+:root {
+  --bg: var(--surface-0);
+  --sidebar: var(--surface-1);
+  --panel: var(--surface-2);
+  --user-bg: var(--you-bg);
+  --muted: var(--text-muted);
+  --accent: var(--you);
+  --mono: var(--font-mono);
+}
