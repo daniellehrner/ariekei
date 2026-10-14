@@ -23,7 +23,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from check import equal, eventually  # noqa: E402
-from ui import open_inbox, select_row  # noqa: E402
+from ui import open_inbox, select_row, wait_rows  # noqa: E402
 from wd import Session  # noqa: E402
 
 app, work, data = sys.argv[1:4]
@@ -178,8 +178,7 @@ db.close()
 # --- run 2: work on PR #42 -----------------------------------------------------------
 s = Session(app)
 try:
-    open_inbox(s)
-    s.wait(".inbox .row", timeout=30)
+    wait_rows(s)
     print("[inbox]", s.js("return [...document.querySelectorAll('.inbox .row .title')].map(t => t.textContent)"))
     equal("the inserted PRs", sorted(s.js("return [...document.querySelectorAll('.inbox .row')].map(r => r.dataset.number)")), ["42", "43"])
     select(s, 42)
@@ -262,8 +261,7 @@ time.sleep(2)
 # --- run 3: restart -----------------------------------------------------------------
 s = Session(app)
 try:
-    open_inbox(s)
-    s.wait(".inbox .row", timeout=30)
+    wait_rows(s)
     select(s, 42)
     wait_agent(s, 42, {"ready"}, timeout=40)
     # The resumed TUI shows the latest turns of the conversation.

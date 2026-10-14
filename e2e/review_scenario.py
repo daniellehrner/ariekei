@@ -367,7 +367,7 @@ try:
           "| note:", s.js("return document.querySelector('[data-rebase-note]')?.textContent ?? null"))
     print("[rebase] since your review, files:", s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"))
     contains("the rebase note", s.js("return document.querySelector('[data-rebase-note]')?.textContent"), "Rebased since your review")
-    equal("since the review, only the PR's own change", s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"), ["a.txt"])
+    eventually("since the review, only the PR's own change", lambda: s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"), lambda v: v == ["a.txt"])
     s.click(s.wait("[data-scope='all']"))
     eventually("all changes vs main", lambda: s.js("return document.querySelector('.scope-folded .active-scope, .scopes button.active')?.textContent ?? ''"), lambda v: "All" in v)
     print("[rebase] all changes vs main, files:", s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"),

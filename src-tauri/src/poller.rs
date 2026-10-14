@@ -48,6 +48,11 @@ struct PollError {
 }
 
 fn run(app: AppHandle, wake: Receiver<()>) {
+    // The poller starts while the app state is being built (it is part of it): wait for it,
+    // or a fast thread would find no state yet and never poll.
+    while app.try_state::<crate::AppState>().is_none() {
+        std::thread::sleep(Duration::from_millis(20));
+    }
     loop {
         let state = app.state::<crate::AppState>();
         for id in state.windows.open_repos() {
