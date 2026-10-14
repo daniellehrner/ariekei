@@ -19,7 +19,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from check import check, contains, equal, eventually  # noqa: E402
-from ui import open_inbox, select_row  # noqa: E402
+from ui import open_inbox, select_row, side_by_side  # noqa: E402
 from wd import Session  # noqa: E402
 
 app, work = sys.argv[1:3]
@@ -187,6 +187,7 @@ try:
     equal("reviewing without a worktree adds none", len(git(clone, "worktree", "list").splitlines()), 1)
     equal("files of #43 in review order", s.js("return [...document.querySelectorAll('.files [data-file]')].map(b => b.dataset.file)"), ["a.txt", "b.txt", "c.rs", "w.txt", "tests/parser_test.rs"])
     # Any language is highlighted, not just Java: a Rust file gets syntax-styled tokens.
+    side_by_side(s)
     s.click(s.wait(".files [data-file='c.rs']"))
     s.wait_js("return document.querySelectorAll('.cm-mergeViewEditor .cm-line span[class]').length > 0", timeout=20)
     print("[review] c.rs styled tokens:", s.js("return document.querySelectorAll('.cm-mergeViewEditor .cm-line span[class]').length"))

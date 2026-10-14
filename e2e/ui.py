@@ -28,3 +28,12 @@ def wait_rows(s, timeout=60):
         if s.find(".inbox.collapsed"):
             open_inbox(s)
         time.sleep(0.25)
+
+
+def side_by_side(s):
+    """Shows the diff side by side: below a 720 px diff column (a small screen) it starts
+    unified. The choice is the user's toggle (u), remembered for the item."""
+    s.wait("[data-opt='unified']", timeout=30)
+    if s.js("return document.querySelector(\"[data-opt='unified']\").getAttribute('aria-pressed') === 'true'"):
+        s.js("document.querySelector(\"[data-opt='unified']\").click()")
+        s.wait_js("return document.querySelector(\"[data-opt='unified']\").getAttribute('aria-pressed') === 'false'", timeout=10)
