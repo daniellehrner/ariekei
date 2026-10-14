@@ -301,7 +301,7 @@ try:
     tab(s, "Review")
     s.wait("[data-progress]", timeout=30)
     s.wait_js("return document.querySelector('.review .marker').textContent.includes('2 commits')", timeout=30)
-    reviewed_after = s.js("return [...document.querySelectorAll('[data-reviewed]')].filter(c => c.getAttribute('aria-checked') === 'true').map(c => c.dataset.reviewed)")
+    reviewed_after = eventually("after the push, only the unchanged file stays reviewed", lambda: s.js("return [...document.querySelectorAll('[data-reviewed]')].filter(c => c.getAttribute('aria-checked') === 'true').map(c => c.dataset.reviewed)"), lambda v: v == ["b.txt"])
     print("[marks] reviewed before the push:", reviewed_before, "| after:", reviewed_after)
     equal("a push unmarks the changed file only", (sorted(reviewed_before), reviewed_after), (["a.txt", "b.txt"], ["b.txt"]))
 

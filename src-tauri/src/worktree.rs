@@ -5,7 +5,27 @@ use crate::git::{self, git, git_str};
 use crate::github::PrSummary;
 use crate::store::Repo;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard};
+
+/// One fetch at a time per clone: two at once (e.g. opening two PRs in quick succession)
+/// update the same remote-tracking refs and one fails with "cannot lock ref".
+fn fetching(repo: &Path) -> Arc<Mutex<()>> {
+    static LOCKS: Mutex<Option<HashMap<PathBuf, Arc<Mutex<()>>>>> = Mutex::new(None);
+    let key = repo.canonicalize().unwrap_or_else(|_| repo.to_path_buf());
+    LOCKS
+        .lock()
+        .unwrap()
+        .get_or_insert_with(HashMap::new)
+        .entry(key)
+        .or_default()
+        .clone()
+}
+
+fn hold(lock: &Mutex<()>) -> MutexGuard<'_, ()> {
+    lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,6 +67,8 @@ fn head_remote(repo: &Repo, pr: &PrSummary) -> Result<String, String> {
 /// remote's configured refspec.
 fn fetch(repo: &Path, remote: &str, branch: &str) -> Result<String, String> {
     let tracking = format!("{remote}/{branch}");
+    let lock = fetching(repo);
+    let _one_at_a_time = hold(&lock);
     git(
         repo,
         &[
@@ -202,6 +224,8 @@ pub fn fetch_pr_head(
     number: i64,
     base_ref: &str,
 ) -> Result<String, String> {
+    let lock = fetching(repo);
+    let _one_at_a_time = hold(&lock);
     git(
         repo,
         &[
@@ -468,6 +492,16 @@ mod tests {
             git::worktrees(&repo.path).unwrap().len() == 1,
             "no worktree was created"
         );
+
+        // Fetches running at once in the same clone all succeed (they take turns).
+        std::thread::scope(|scope| {
+            let fetches: Vec<_> = (0..6)
+                .map(|_| scope.spawn(|| fetch_pr_head(&repo.path, "origin", 7, "main")))
+                .collect();
+            for f in fetches {
+                assert_eq!(f.join().unwrap().as_deref(), Ok(head.as_str()));
+            }
+        });
     }
 
     #[test]

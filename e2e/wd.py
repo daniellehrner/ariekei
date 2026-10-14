@@ -75,7 +75,7 @@ class _Common:
     def _page(self):
         """What the window shows, for a failure message."""
         try:
-            text = self.js("return document.body.innerText")
+            text = self.js("return document.body.innerText || document.body.textContent")
         except Exception as e:
             return f"\n(page text unavailable: {e})"
         return "\n--- the page shows:\n" + "\n".join(l for l in text.splitlines() if l.strip())[:3000]

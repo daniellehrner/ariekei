@@ -178,6 +178,7 @@ db.close()
 # --- run 2: work on PR #42 -----------------------------------------------------------
 s = Session(app)
 try:
+    open_inbox(s)
     s.wait(".inbox .row", timeout=30)
     print("[inbox]", s.js("return [...document.querySelectorAll('.inbox .row .title')].map(t => t.textContent)"))
     equal("the inserted PRs", sorted(s.js("return [...document.querySelectorAll('.inbox .row')].map(r => r.dataset.number)")), ["42", "43"])
@@ -261,6 +262,7 @@ time.sleep(2)
 # --- run 3: restart -----------------------------------------------------------------
 s = Session(app)
 try:
+    open_inbox(s)
     s.wait(".inbox .row", timeout=30)
     select(s, 42)
     wait_agent(s, 42, {"ready"}, timeout=40)
