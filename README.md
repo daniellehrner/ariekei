@@ -38,6 +38,8 @@ code navigation or debugging, use your IDE on the same worktree. Tauri 2 (Rust) 
 Language-agnostic: the review diff comes from git, any file type is syntax-highlighted, and the
 agent works in any language. Code navigation and debugging are left to your IDE.
 
+How to use it: [docs/manual.md](docs/manual.md) (user manual).
+
 Details: [docs/pull-requests.md](docs/pull-requests.md) (Inbox, PRs, the agent, review) and
 [docs/lifecycle.md](docs/lifecycle.md) (issues, tasks, cleanup). The UI's design rules: [docs/design.md](docs/design.md). How the agent integration came
 about: [docs/spike-results.md](docs/spike-results.md).
