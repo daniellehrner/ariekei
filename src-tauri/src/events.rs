@@ -1,6 +1,6 @@
 //! What the backend tells the windows and the desktop: agent status, Inbox refreshes and
 //! poll errors, and notices. The app sends them through Tauri (`TauriEvents`); tests record
-//! them, so the logic behind them runs without a Tauri app.
+//! them (`Recorded`), so the logic behind them runs without a Tauri app.
 
 use crate::hooks::AgentStatus;
 use serde::Serialize;
@@ -102,5 +102,84 @@ impl Events for TauriEvents {
             .iter()
             .filter_map(|label| app.get_webview_window(label))
             .any(|w| w.is_focused().unwrap_or(false))
+    }
+}
+
+/// Everything sent, for tests.
+#[cfg(test)]
+#[derive(Default)]
+pub struct Recorded {
+    pub sent: std::sync::Mutex<Vec<Sent>>,
+    /// The items "on screen in a focused window".
+    pub watched: std::sync::Mutex<Vec<String>>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Sent {
+    Status(String, AgentStatus),
+    InboxChanged(i64),
+    InboxError(i64, String),
+    Notice {
+        key: String,
+        kind: String,
+        title: String,
+        body: String,
+    },
+}
+
+#[cfg(test)]
+impl Recorded {
+    pub fn take(&self) -> Vec<Sent> {
+        std::mem::take(&mut *self.sent.lock().unwrap())
+    }
+
+    /// The notices sent so far, as (kind, title, body).
+    pub fn notices(&self) -> Vec<(String, String, String)> {
+        self.sent
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|s| match s {
+                Sent::Notice {
+                    kind, title, body, ..
+                } => Some((kind.clone(), title.clone(), body.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+impl Events for Recorded {
+    fn agent_status(&self, key: &str, status: AgentStatus, _detail: Option<String>) {
+        self.sent
+            .lock()
+            .unwrap()
+            .push(Sent::Status(key.to_owned(), status));
+    }
+
+    fn inbox_changed(&self, repo: i64) {
+        self.sent.lock().unwrap().push(Sent::InboxChanged(repo));
+    }
+
+    fn inbox_error(&self, repo: i64, message: &str) {
+        self.sent
+            .lock()
+            .unwrap()
+            .push(Sent::InboxError(repo, message.to_owned()));
+    }
+
+    fn notice(&self, key: &str, kind: &str, title: &str, body: &str) {
+        self.sent.lock().unwrap().push(Sent::Notice {
+            key: key.to_owned(),
+            kind: kind.to_owned(),
+            title: title.to_owned(),
+            body: body.to_owned(),
+        });
+    }
+
+    fn watching(&self, key: &str) -> bool {
+        self.watched.lock().unwrap().iter().any(|k| k == key)
     }
 }

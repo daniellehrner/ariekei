@@ -511,4 +511,123 @@ mod tests {
             "the rejected request must not produce an event"
         );
     }
+
+    mod with_app {
+        use super::super::*;
+        use crate::events::Sent;
+        use crate::testkit::TestApp;
+        use crate::workitem::create_task;
+        use serde_json::json;
+
+        fn hook(session: &str, name: &str, extra: serde_json::Value) -> HookEvent {
+            let mut v = json!({"hook_event_name": name, "session_id": session});
+            v.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            serde_json::from_value(v).unwrap()
+        }
+
+        #[test]
+        fn hooks_of_a_tasks_agent_set_its_status_and_link_what_it_opened() {
+            let app = TestApp::new();
+            let task = create_task(&app.state, Some(app.repo.clone()), "Hooks", "").unwrap();
+            app.start_agent(task);
+            let key = task.to_string();
+            let session = app.state.store.item(task).unwrap().session_id.unwrap();
+
+            assert_eq!(
+                record(
+                    &app.state,
+                    &hook(
+                        &session,
+                        "UserPromptSubmit",
+                        json!({"transcript_path": "/t.jsonl"})
+                    )
+                ),
+                None
+            );
+            assert_eq!(app.state.terminals.status(&key), Some(AgentStatus::Working));
+            assert!(app.state.store.item(task).unwrap().session_started);
+            record(
+                &app.state,
+                &hook(
+                    &session,
+                    "PermissionRequest",
+                    json!({"tool_name": "Bash", "tool_input": {"command": "rm -r build"}}),
+                ),
+            );
+            assert_eq!(
+                app.state.terminals.status(&key),
+                Some(AgentStatus::WaitingForPermission)
+            );
+            assert!(
+                app.events
+                    .notices()
+                    .iter()
+                    .any(|(kind, title, body)| kind == "needs-you"
+                        && title == "T1 Hooks"
+                        && body.contains("rm -r build"))
+            );
+
+            app.add_pr(json!({"number": 30, "title": "From the task", "head_ref": "main"}));
+            let links = record(
+                &app.state,
+                &hook(
+                    &session,
+                    "PostToolUse",
+                    json!({
+                        "tool_name": "Bash",
+                        "tool_input": {"command": "gh pr create --fill"},
+                        "tool_response": {"stdout": "https://github.com/owner/proj/pull/30\n"}
+                    }),
+                ),
+            )
+            .expect("a PR to link");
+            assert_eq!(
+                links,
+                TaskLinks {
+                    task,
+                    repo: app.repo.id,
+                    links: vec![("pr", 30)]
+                }
+            );
+            link_to_task(&app.state, &links);
+            let pr = app.item(30);
+            assert_eq!((pr.task_id, pr.tracked), (Some(task), true));
+            assert!(app.events.take().contains(&Sent::InboxChanged(app.repo.id)));
+
+            // Hooks of sessions Ariekei did not start change nothing.
+            assert_eq!(
+                record(&app.state, &hook("someone-else", "Stop", json!({}))),
+                None
+            );
+            assert_eq!(
+                app.state.terminals.status(&key),
+                Some(AgentStatus::Working),
+                "PostToolUse said working"
+            );
+        }
+
+        #[test]
+        fn a_pr_agent_opening_a_pr_links_nothing() {
+            let app = TestApp::new();
+            let (id, _) = app.pr_with_worktree(10, "feature/x");
+            app.start_agent(id);
+            let session = app.state.store.item(id).unwrap().session_id.unwrap();
+            app.add_pr(json!({"number": 31, "title": "Other", "head_ref": "main"}));
+            let links = record(
+                &app.state,
+                &hook(
+                    &session,
+                    "PostToolUse",
+                    json!({
+                        "tool_name": "Bash",
+                        "tool_input": {"command": "gh pr create --fill"},
+                        "tool_response": {"stdout": "https://github.com/owner/proj/pull/31\n"}
+                    }),
+                ),
+            );
+            assert_eq!(links, None, "only a task's agent links what it opens");
+        }
+    }
 }

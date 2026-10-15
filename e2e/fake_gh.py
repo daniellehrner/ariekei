@@ -190,7 +190,22 @@ def lookups(prefix, kind, numbers, known, render):
     return answer
 
 
+def log_call(argv):
+    """Appends what this call asked for to $FAKE_GH_DIR/calls.jsonl (tests count what a poll
+    fetched): for a GraphQL query, whether it searches, whether it asks for a PR's details
+    (review threads) or its commits, and the numbers it looks up."""
+    entry = {"argv": argv[:2]}
+    query = next((a[len("query="):] for a in argv if a.startswith("query=")), None)
+    if query is not None:
+        entry = {"graphql": True, "search": "search(" in query, "details": "reviewThreads" in query,
+                 "commits": "commits(first: 100, after:" in query,
+                 "numbers": sorted({int(n) for n in re.findall(r"[pi](\d+): (?:pullRequest|issue)\(number:", query)})}
+    with open(os.path.join(DIR, "calls.jsonl"), "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
 def main(argv):
+    log_call(argv)
     # While $FAKE_GH_DIR/rate-limited exists, GitHub's API budget is used up (resetting in two
     # minutes); `gh api rate_limit` itself always answers, as on GitHub.
     if argv[:2] == ["api", "rate_limit"]:

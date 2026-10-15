@@ -43,6 +43,8 @@ pub struct Launch {
     pub extra_args: Vec<String>,
     /// Close detached, idle terminals after this long.
     pub idle_after: Duration,
+    /// Extra environment, for tests only (where the fake agent keeps its transcripts).
+    pub env: Vec<(String, String)>,
 }
 
 /// How to start `claude` for a work item.
@@ -251,6 +253,9 @@ impl TerminalManager {
         cmd.cwd(cwd);
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        for (k, v) in &launch.env {
+            cmd.env(k, v);
+        }
         for var in PARENT_SESSION_ENV {
             cmd.env_remove(var);
         }
@@ -429,6 +434,7 @@ mod tests {
             hooks_settings: "/data/hooks.json".into(),
             extra_args: vec![],
             idle_after: Duration::from_secs(900),
+            env: vec![],
         }
     }
 

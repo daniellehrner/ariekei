@@ -40,6 +40,12 @@ impl Poller {
         Self { wake }
     }
 
+    /// A poller that never polls (tests drive `poll` themselves).
+    #[cfg(test)]
+    pub fn idle() -> Self {
+        Self { wake: channel().0 }
+    }
+
     /// Polls now instead of waiting for the next interval.
     pub fn refresh(&self) {
         let _ = self.wake.send(());
@@ -393,5 +399,110 @@ mod tests {
             rate_limit_wait("gh api failed: Could not resolve host", never, 0),
             None
         );
+    }
+
+    mod with_app {
+        use super::super::*;
+        use crate::testkit::TestApp;
+        use serde_json::json;
+
+        /// The PR numbers a poll fetched the details of.
+        fn detailed(app: &TestApp) -> Vec<i64> {
+            let mut numbers: Vec<i64> = app
+                .take_calls()
+                .iter()
+                .filter(|c| c["details"] == true)
+                .flat_map(|c| c["numbers"].as_array().cloned().unwrap_or_default())
+                .filter_map(|n| n.as_i64())
+                .collect();
+            numbers.sort();
+            numbers
+        }
+
+        #[test]
+        fn a_poll_fetches_details_only_of_prs_that_changed() {
+            let app = TestApp::new();
+            app.add_pr(json!({"number": 7, "title": "Seven", "head_ref": "main"}));
+            app.add_pr(json!({"number": 8, "title": "Eight", "head_ref": "main"}));
+            app.poll().unwrap();
+            assert_eq!(detailed(&app), [7, 8], "new PRs");
+            app.poll().unwrap();
+            assert_eq!(detailed(&app), Vec::<i64>::new(), "nothing changed");
+            app.set("prs", 8, json!({"title": "Eight, renamed"}));
+            app.poll().unwrap();
+            assert_eq!(detailed(&app), [8]);
+            assert_eq!(app.row(8).unwrap().title, "Eight, renamed");
+            // A full poll fetches all.
+            poll(&app.state, &app.repo, true).unwrap();
+            assert_eq!(detailed(&app), [7, 8]);
+        }
+
+        #[test]
+        fn running_checks_are_followed_until_they_finish() {
+            let app = TestApp::new();
+            app.add_pr(json!({"number": 7, "title": "Seven", "head_ref": "main"}));
+            app.poll().unwrap();
+            // A push: the PR changed, its checks run.
+            app.set("prs", 7, json!({"title": "Seven, pushed", "ci": "PENDING"}));
+            app.poll().unwrap();
+            assert_eq!(app.row(7).unwrap().ci.as_deref(), Some("PENDING"));
+            detailed(&app);
+            // The checks fail; the PR itself does not change (GitHub keeps its updatedAt).
+            app.set("prs", 7, json!({"ci": "FAILURE", "failing": "unit-tests"}));
+            app.poll().unwrap();
+            assert_eq!(detailed(&app), [7]);
+            let row = app.row(7).unwrap();
+            assert_eq!(
+                (row.ci.as_deref(), row.attention),
+                (Some("FAILURE"), Some("CI failing"))
+            );
+            assert!(
+                app.events
+                    .notices()
+                    .iter()
+                    .any(|(kind, _, body)| kind == "ci-failing" && body.contains("unit-tests"))
+            );
+            // Finished: no longer followed.
+            app.poll().unwrap();
+            assert_eq!(detailed(&app), Vec::<i64>::new());
+        }
+
+        #[test]
+        fn an_item_gone_from_github_does_not_stop_polling() {
+            let app = TestApp::new();
+            app.add_issue(json!({"number": 6, "title": "Old idea", "assigned": true}));
+            app.add_pr(json!({"number": 7, "title": "Seven", "head_ref": "main"}));
+            app.poll().unwrap();
+            crate::workitem::mark_seen(&app.state, app.item(6).id).unwrap();
+            app.remove("issues", 6);
+            app.set("prs", 7, json!({"title": "Seven, renamed"}));
+            app.poll().unwrap();
+            assert!(app.row(6).is_none());
+            assert_eq!(app.row(7).unwrap().title, "Seven, renamed");
+        }
+
+        #[test]
+        fn a_used_up_rate_limit_says_when_polling_resumes() {
+            let app = TestApp::new();
+            app.rate_limited(true);
+            let error = app.poll().unwrap_err();
+            let (message, wait) = poll_failure(error);
+            assert!(
+                message.contains("rate limit is used up")
+                    && message.contains("polls again in 2 min"),
+                "{message}"
+            );
+            assert!(
+                wait.is_some_and(|w| w > Duration::from_secs(60) && w <= Duration::from_secs(120)),
+                "{wait:?}"
+            );
+            app.rate_limited(false);
+            app.poll().unwrap();
+            let (message, wait) = poll_failure("gh: Could not resolve host".into());
+            assert_eq!(
+                (message.as_str(), wait),
+                ("gh: Could not resolve host", None)
+            );
+        }
     }
 }

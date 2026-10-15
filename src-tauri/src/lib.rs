@@ -14,6 +14,8 @@ mod poller;
 mod review_order;
 mod store;
 mod terminal;
+#[cfg(test)]
+mod testkit;
 mod tools;
 mod windows;
 mod workitem;
@@ -566,6 +568,7 @@ pub fn run() {
                     .map(|a| a.split_whitespace().map(str::to_owned).collect())
                     .unwrap_or_default(),
                 idle_after: Duration::from_secs(env_secs("ARIEKEI_IDLE_SECS", 15 * 60)),
+                env: vec![],
             });
             match &launch {
                 Ok(l) => tracing::info!("claude launch: {l:?}"),

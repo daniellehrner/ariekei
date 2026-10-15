@@ -1090,6 +1090,8 @@ fn inside_worktree(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::{TestApp, commit, git, write};
+    use serde_json::json;
 
     #[test]
     fn edits_are_written_only_inside_the_worktree() {
@@ -1100,5 +1102,212 @@ mod tests {
         }
         #[cfg(windows)]
         assert!(!inside_worktree("C:\\Windows\\a.txt"));
+    }
+
+    #[test]
+    fn changes_to_review_are_the_worktrees_changes_by_others() {
+        let app = TestApp::new();
+        let (id, wt) = app.pr_with_worktree(10, "feature/x");
+        app.poll().unwrap(); // learns which of the PR's commits are mine
+        assert!(
+            !app.row(10).unwrap().unreviewed,
+            "my own commit needs no review"
+        );
+
+        write(&wt.join("scratch.txt"), "draft\n");
+        assert!(app.row(10).unwrap().unreviewed, "uncommitted changes do");
+        std::fs::remove_file(wt.join("scratch.txt")).unwrap();
+
+        // A teammate pushes to the branch; the worktree gets their commit.
+        app.push_to("feature/x", &[("c.txt", "carol's\n")], "carol");
+        git(&wt, &["pull", "-q", "--ff-only"]);
+        app.poll().unwrap();
+        assert!(app.row(10).unwrap().unreviewed, "a teammate's commit does");
+
+        mark_reviewed(&app.state, id).unwrap();
+        assert!(!app.row(10).unwrap().unreviewed, "nothing after the review");
+    }
+
+    #[test]
+    fn the_prs_commits_are_fetched_again_only_when_its_head_moved() {
+        let app = TestApp::new();
+        app.pr_with_worktree(10, "feature/x");
+        app.poll().unwrap();
+        app.take_calls();
+        app.poll().unwrap();
+        assert!(!app.take_calls().iter().any(|c| c["commits"] == true));
+        app.push_to("feature/x", &[("c.txt", "more\n")], "me");
+        app.poll().unwrap();
+        assert!(app.take_calls().iter().any(|c| c["commits"] == true));
+    }
+
+    #[test]
+    fn after_a_rebase_a_file_only_the_base_changed_stays_reviewed() {
+        let app = TestApp::new();
+        let d = |last: &str| format!("d1 mine\nd2\nd3\nd4\nd5\n{last}\n");
+        write(&app.upstream.join("d.txt"), "d1\nd2\nd3\nd4\nd5\nd6\n");
+        commit(&app.upstream, "d", "me");
+        git(&app.clone, &["fetch", "-q", "origin"]);
+        app.push_to(
+            "feature/x",
+            &[("a.txt", "one mine\ntwo\nthree\n"), ("d.txt", &d("d6"))],
+            "me",
+        );
+        app.add_pr(json!({"number": 10, "title": "x", "head_ref": "feature/x"}));
+        app.poll().unwrap();
+        let id = app.item(10).id;
+        let wt = prepare(&app.state, id).unwrap().path;
+        mark_reviewed(&app.state, id).unwrap();
+
+        // main changes d.txt far from the PR's line; the branch is rebased onto it and then
+        // changes a.txt again.
+        write(&app.upstream.join("d.txt"), "d1\nd2\nd3\nd4\nd5\nd6 main\n");
+        commit(&app.upstream, "main moves on", "carol");
+        git(&app.upstream, &["checkout", "-q", "feature/x"]);
+        git(
+            &app.upstream,
+            &[
+                "-c",
+                "user.name=me",
+                "-c",
+                "user.email=me@example.com",
+                "rebase",
+                "-q",
+                "main",
+            ],
+        );
+        git(&app.upstream, &["checkout", "-q", "main"]);
+        app.push_to(
+            "feature/x",
+            &[("a.txt", "one mine, better\ntwo\nthree\n")],
+            "me",
+        );
+        git(&wt, &["fetch", "-q", "origin"]);
+        git(&wt, &["reset", "-q", "--hard", "origin/feature/x"]);
+
+        let state = review_state(&app.state, id).unwrap();
+        assert!(
+            state.rebase_note.is_some(),
+            "the review knows about the rebase"
+        );
+        let files = review_files(&app.state, id, &state.base, None, false).unwrap();
+        let marks: Vec<(&str, bool)> = files
+            .iter()
+            .map(|f| (f.path.as_str(), f.reviewed))
+            .collect();
+        assert_eq!(marks, [("a.txt", false), ("d.txt", true)]);
+    }
+
+    #[test]
+    fn a_task_lists_what_its_agent_opened_and_lends_it_its_agent() {
+        let app = TestApp::new();
+        let task = create_task(&app.state, Some(app.repo.clone()), "Investigate", "peers").unwrap();
+        let t = app.state.store.item(task).unwrap();
+        assert_eq!(
+            (t.number, t.branch.as_deref()),
+            (-1, Some("task-1-investigate"))
+        );
+        assert!(app.path("proj_task1").join("a.txt").exists());
+        let context =
+            std::fs::read_to_string(app.state.data_dir.join("context/owner-proj-task1.md"));
+        assert!(
+            context.is_err(),
+            "the context is written when the agent starts"
+        );
+
+        app.add_pr(json!({"number": 20, "title": "Fix", "head_ref": "main"}));
+        app.add_issue(json!({"number": 21, "title": "Found", "author": "me"}));
+        link_created(&app.state, task, "pr", 20).unwrap();
+        link_created(&app.state, task, "issue", 21).unwrap();
+        let rows = app.rows();
+        let row = |n: i64| rows.iter().find(|r| r.number == n).unwrap();
+        assert_eq!(
+            (row(-1).kind.as_str(), row(-1).title.as_str()),
+            ("task", "Investigate")
+        );
+        assert_eq!((row(20).task_id, row(21).task_id), (Some(task), Some(task)));
+        assert_eq!(
+            row(20).agent_item,
+            Some(task),
+            "the PR has no worktree: the task's agent"
+        );
+        assert_eq!(agent_of(&app.state, app.item(20).id).unwrap(), task);
+        assert!(!row(-1).outcomes_closed);
+
+        // Both closed (the PR merged and cleaned up): still listed under the task.
+        app.set("prs", 20, json!({"state": "MERGED"}));
+        app.set("issues", 21, json!({"state": "CLOSED"}));
+        app.poll().unwrap();
+        assert!(app.item(20).hidden, "the merged PR was cleaned up");
+        let rows = app.rows();
+        let row = |n: i64| rows.iter().find(|r| r.number == n);
+        assert!(row(20).is_some_and(|r| !r.open) && row(21).is_some_and(|r| !r.open));
+        assert!(row(-1).unwrap().outcomes_closed);
+        assert_eq!(
+            row(-1).unwrap().attention,
+            Some("all its PRs and issues are closed")
+        );
+    }
+
+    #[test]
+    fn a_task_whose_worktree_cannot_be_made_is_not_left_behind() {
+        let app = TestApp::new();
+        std::fs::create_dir_all(app.path("proj_task1")).unwrap();
+        let err = create_task(&app.state, Some(app.repo.clone()), "Blocked", "").unwrap_err();
+        assert!(err.contains("already exists"), "{err}");
+        assert!(app.items().iter().all(|i| !i.is_task()));
+        assert!(
+            create_task(&app.state, Some(app.repo.clone()), "  ", "").is_err(),
+            "no title"
+        );
+    }
+
+    #[test]
+    fn a_task_reviews_its_worktree_against_the_default_branch() {
+        let app = TestApp::new();
+        let task = create_task(&app.state, Some(app.repo.clone()), "Try", "").unwrap();
+        let wt = app.path("proj_task1");
+        write(&wt.join("a.txt"), "one\ntwo\nthree\nfour\n");
+        commit(&wt, "four", "me");
+        let state = review_state(&app.state, task).unwrap();
+        assert_eq!(
+            (
+                state.mode,
+                state.base_ref.as_str(),
+                state.pr_head.as_str(),
+                state.own
+            ),
+            ("worktree", "main", "", true)
+        );
+        assert_eq!(state.commits.len(), 1);
+        assert!(
+            app.row(-1).unwrap().unreviewed,
+            "the agent's commit is to review"
+        );
+    }
+
+    #[test]
+    fn reconcile_forgets_worktrees_removed_outside_ariekei() {
+        let app = TestApp::new();
+        let task = create_task(&app.state, Some(app.repo.clone()), "Gone", "").unwrap();
+        git(
+            &app.clone,
+            &[
+                "worktree",
+                "remove",
+                "--force",
+                &app.path("proj_task1").to_string_lossy(),
+            ],
+        );
+        reconcile(&app.state).unwrap();
+        let t = app.state.store.item(task).unwrap();
+        assert_eq!((t.worktree_path, t.branch), (None, None));
+        // Start working makes it again.
+        assert!(
+            prepare(&app.state, task)
+                .unwrap()
+                .path
+                .ends_with("proj_task1")
+        );
     }
 }

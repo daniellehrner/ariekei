@@ -459,4 +459,231 @@ mod tests {
         assert!(!file.exists() && !dir.path().join("abc").exists());
         assert!(!remove_transcript(&file), "already gone");
     }
+
+    mod with_app {
+        use super::super::*;
+        use crate::hooks::AgentStatus;
+        use crate::testkit::{TestApp, commit, git, write};
+        use crate::workitem::{create_task, link_created, prepare};
+        use serde_json::json;
+
+        fn branch_exists(app: &TestApp, branch: &str) -> bool {
+            crate::git::git_str(
+                &app.clone,
+                &[
+                    "rev-parse",
+                    "--verify",
+                    "-q",
+                    &format!("refs/heads/{branch}"),
+                ],
+            )
+            .is_ok()
+        }
+
+        #[test]
+        fn done_on_a_task_deletes_it_and_leaves_its_prs() {
+            let app = TestApp::new();
+            let task = create_task(&app.state, Some(app.repo.clone()), "Done soon", "").unwrap();
+            app.add_pr(json!({"number": 20, "title": "Fix", "head_ref": "main"}));
+            link_created(&app.state, task, "pr", 20).unwrap();
+            let wt = app.path("proj_task1");
+
+            write(&wt.join("x.txt"), "work\n");
+            let Cleanup::Blocked { blockers } = clean_up(&app.state, task).unwrap() else {
+                panic!("uncommitted work must block");
+            };
+            assert!(blockers[0].contains("x.txt"), "{blockers:?}");
+            assert!(
+                app.state
+                    .store
+                    .item(task)
+                    .unwrap()
+                    .cleanup_blockers
+                    .is_some()
+            );
+
+            std::fs::remove_file(wt.join("x.txt")).unwrap();
+            let Cleanup::Cleaned { removed } = clean_up(&app.state, task).unwrap() else {
+                panic!("nothing is lost now");
+            };
+            assert!(
+                removed.iter().any(|r| r.contains("proj_task1")),
+                "{removed:?}"
+            );
+            assert!(app.state.store.item(task).is_err(), "the task is deleted");
+            assert!(!wt.exists() && !branch_exists(&app, "task-1-done-soon"));
+            assert_eq!(app.item(20).task_id, None, "its PR stays, unlinked");
+        }
+
+        #[test]
+        fn discard_waits_for_the_agent_then_deletes_the_work() {
+            let app = TestApp::new();
+            let task = create_task(&app.state, Some(app.repo.clone()), "Throwaway", "").unwrap();
+            let wt = app.path("proj_task1");
+            write(&wt.join("a.txt"), "changed\n");
+            commit(&wt, "local only", "me");
+            write(&wt.join("x.txt"), "uncommitted\n");
+            let losses = discard_losses(&app.state, task).unwrap();
+            assert_eq!(losses.len(), 2, "{losses:?}");
+
+            app.start_agent(task);
+            app.state
+                .report(&task.to_string(), AgentStatus::Working, None);
+            assert!(matches!(
+                discard(&app.state, task).unwrap(),
+                Cleanup::Blocked { .. }
+            ));
+            assert!(wt.exists());
+
+            app.state
+                .report(&task.to_string(), AgentStatus::Finished, None);
+            assert!(matches!(
+                discard(&app.state, task).unwrap(),
+                Cleanup::Cleaned { .. }
+            ));
+            assert!(!wt.exists() && !branch_exists(&app, "task-1-throwaway"));
+            assert!(app.state.store.item(task).is_err());
+            assert_eq!(
+                app.state.terminals.status(&task.to_string()),
+                None,
+                "its agent is gone"
+            );
+            app.add_pr(json!({"number": 20, "title": "Not a task", "head_ref": "main"}));
+            app.poll().unwrap();
+            assert!(
+                discard(&app.state, app.item(20).id).is_err(),
+                "only a task can be discarded"
+            );
+        }
+
+        #[test]
+        fn a_merged_pr_waits_for_its_uncommitted_work_and_says_so_once() {
+            let app = TestApp::new();
+            let (id, wt) = app.pr_with_worktree(10, "feature/x");
+            write(&wt.join("x.txt"), "not committed\n");
+            app.set("prs", 10, json!({"state": "MERGED"}));
+            app.poll().unwrap();
+            app.poll().unwrap();
+            let kept: Vec<_> = app
+                .events
+                .notices()
+                .into_iter()
+                .filter(|(_, _, body)| body.contains("kept so no work is lost"))
+                .collect();
+            assert_eq!(kept.len(), 1, "told once: {kept:?}");
+            assert!(
+                wt.exists()
+                    && app
+                        .row(10)
+                        .is_some_and(|r| r.attention == Some("finished, cleanup blocked"))
+            );
+
+            std::fs::remove_file(wt.join("x.txt")).unwrap();
+            app.poll().unwrap();
+            assert!(!wt.exists());
+            assert!(app.state.store.item(id).unwrap().hidden);
+            assert!(
+                app.events
+                    .notices()
+                    .iter()
+                    .any(|(_, _, body)| body.starts_with("Cleaned up"))
+            );
+        }
+
+        #[test]
+        fn a_task_says_when_all_it_opened_is_closed() {
+            let app = TestApp::new();
+            let task = create_task(&app.state, Some(app.repo.clone()), "Outcomes", "").unwrap();
+            app.add_pr(json!({"number": 20, "title": "One", "head_ref": "main"}));
+            app.add_pr(json!({"number": 21, "title": "Two", "head_ref": "main"}));
+            link_created(&app.state, task, "pr", 20).unwrap();
+            link_created(&app.state, task, "pr", 21).unwrap();
+            let closed = |app: &TestApp| {
+                app.events
+                    .notices()
+                    .into_iter()
+                    .filter(|(_, _, b)| b.starts_with("All its PRs and issues are closed"))
+                    .count()
+            };
+            app.set("prs", 20, json!({"state": "MERGED"}));
+            app.poll().unwrap();
+            assert_eq!(closed(&app), 0, "one is still open");
+            app.set("prs", 21, json!({"state": "CLOSED"}));
+            app.poll().unwrap();
+            app.poll().unwrap();
+            assert_eq!(closed(&app), 1);
+            assert!(app.path("proj_task1").exists(), "the task itself is kept");
+        }
+
+        #[test]
+        fn a_pushed_issue_branch_becomes_its_draft_pr() {
+            let app = TestApp::new();
+            app.add_issue(json!({"number": 5, "title": "Crash", "assigned": true}));
+            app.poll().unwrap();
+            let id = app.item(5).id;
+            let wt = prepare(&app.state, id).unwrap().path;
+            write(&wt.join("a.txt"), "fixed\n");
+            commit(&wt, "fix", "me");
+            git(&wt, &["push", "-q"]);
+            app.poll().unwrap();
+            let posts: Vec<_> = app
+                .writes()
+                .into_iter()
+                .filter(|w| w["post"].as_str().is_some_and(|p| p.ends_with("/pulls")))
+                .collect();
+            assert_eq!(posts.len(), 1);
+            assert_eq!(
+                (
+                    posts[0]["body"]["draft"].as_bool(),
+                    posts[0]["body"]["body"].as_str()
+                ),
+                (Some(true), Some("Closes #5."))
+            );
+            let pr = app.state.store.item(id).unwrap();
+            assert_eq!(
+                (pr.kind.as_str(), pr.number, pr.issue_number),
+                ("pr", 100, Some(5))
+            );
+            assert!(
+                app.events
+                    .notices()
+                    .iter()
+                    .any(|(_, title, _)| title == "#100 Crash")
+            );
+        }
+
+        #[test]
+        fn an_issue_branch_with_a_pr_already_becomes_that_pr() {
+            let app = TestApp::new();
+            app.add_issue(json!({"number": 6, "title": "Typo", "assigned": true}));
+            app.poll().unwrap();
+            let id = app.item(6).id;
+            let prepared = prepare(&app.state, id).unwrap();
+            write(&prepared.path.join("a.txt"), "typo fixed\n");
+            commit(&prepared.path, "fix", "me");
+            git(&prepared.path, &["push", "-q"]);
+            // Opened with `gh pr create`: the poll finds it as an item of its own first.
+            app.add_pr(
+                json!({"number": 130, "title": "Fix the typo", "head_ref": prepared.branch}),
+            );
+            app.poll().unwrap();
+            assert!(
+                app.writes()
+                    .iter()
+                    .all(|w| w["post"].as_str().is_none_or(|p| !p.ends_with("/pulls"))),
+                "no draft"
+            );
+            let numbers: Vec<i64> = app.items().iter().map(|i| i.number).collect();
+            assert_eq!(
+                numbers.iter().filter(|n| **n == 130).count(),
+                1,
+                "{numbers:?}"
+            );
+            let pr = app.state.store.item(id).unwrap();
+            assert_eq!(
+                (pr.number, pr.issue_number, pr.worktree_path.is_some()),
+                (130, Some(6), true)
+            );
+        }
+    }
 }

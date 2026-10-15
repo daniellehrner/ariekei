@@ -8,10 +8,30 @@ use std::process::{Command, Stdio};
 
 /// The `gh` binary; `ARIEKEI_GH` replaces it (tests use a fake).
 fn gh_command() -> Command {
+    #[cfg(test)]
+    if let Some(dir) = FAKE_GH_DIR.with(|d| d.borrow().clone()) {
+        let fake = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../e2e/fake_gh.py");
+        let mut cmd = crate::tools::command(&fake);
+        cmd.env("FAKE_GH_DIR", dir);
+        return cmd;
+    }
     match std::env::var_os("ARIEKEI_GH") {
         Some(fake) => crate::tools::command(std::path::Path::new(&fake)),
         None => Command::new("gh"),
     }
+}
+
+// Tests: GitHub is e2e/fake_gh.py serving this directory, for calls on this thread (the
+// process environment stays as it is, so tests run in parallel).
+#[cfg(test)]
+thread_local! {
+    static FAKE_GH_DIR: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Makes this thread's GitHub the fake serving `dir` (`None`: the real one again).
+#[cfg(test)]
+pub fn use_fake(dir: Option<&std::path::Path>) {
+    FAKE_GH_DIR.with(|d| *d.borrow_mut() = dir.map(std::path::Path::to_path_buf));
 }
 
 fn gh(args: &[&str]) -> Result<Vec<u8>, String> {

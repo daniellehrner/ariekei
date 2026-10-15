@@ -63,6 +63,11 @@ npm run check && npm test
 npx tauri build --no-bundle
 ```
 
+`cargo test` also runs the logic behind the commands (Inbox rows, changes to review,
+polling, cleanup, tasks, hooks) against temp git repos, without a Tauri app
+(`src-tauri/src/testkit.rs`): GitHub is `e2e/fake_gh.py` and agents are `e2e/fake_claude.py`,
+as in the e2e tests, so it needs Python 3 (`ARIEKEI_PYTHON` names another interpreter).
+
 Live, read-only checks against a real repository:
 `ARIEKEI_LIVE_REPO=owner/name cargo test -- --ignored live` (in `src-tauri`).
 
