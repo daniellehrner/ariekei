@@ -3,6 +3,7 @@
   import { onMount, untrack } from "svelte";
   import Comments from "./Comments.svelte";
   import Overview from "./Overview.svelte";
+  import TaskOverview from "./TaskOverview.svelte";
   import ReviewView, { type ReviewViewState } from "./ReviewView.svelte";
   import TerminalPanel from "./TerminalPanel.svelte";
   import Banner from "./controls/Banner.svelte";
@@ -13,12 +14,27 @@
   import StatusDot, { AGENT_LABEL } from "./controls/StatusDot.svelte";
   import Spinner from "./controls/Spinner.svelte";
   import { agents } from "./lib/agent.svelte";
-  import { api, type Conversation, type Row } from "./lib/api";
+  import { api, shortName, type Conversation, type Row } from "./lib/api";
   import { landingTab, type Tab } from "./lib/attention";
   import { shortPath } from "./lib/paths";
   import { progress, rangeOf, scopeOf } from "./lib/review";
 
-  let { row, repoId, viewer, onchanged }: { row: Row; repoId: number; viewer: string; onchanged: () => void } = $props();
+  let {
+    row,
+    rows,
+    repoId,
+    viewer,
+    onchanged,
+    onselect,
+  }: {
+    row: Row;
+    /** The Inbox rows: a task's PRs and issues, a PR's or issue's task. */
+    rows: Row[];
+    repoId: number;
+    viewer: string;
+    onchanged: () => void;
+    onselect: (id: number) => void;
+  } = $props();
 
   // Per-item view state, stored with the work item so switching back restores it.
   interface ItemUi {
@@ -43,9 +59,16 @@
   // A terminal shows the agent of a running item; the status comes from its hooks.
   const status = $derived(row.worktree ? (agent?.status ?? row.agent) : null);
   const hasReview = $derived(row.kind === "pr" || !!row.worktree);
+  const isTask = $derived(row.kind === "task");
+  // A task has no GitHub conversation; its PRs and issues are its own items.
+  const links = $derived(isTask ? rows.filter((r) => r.taskId === row.id) : []);
+  const task = $derived(row.taskId == null ? null : (rows.find((r) => r.id === row.taskId) ?? null));
+  // A PR or issue the task's agent works on (it has no worktree of its own).
+  const viaTask = $derived(row.agentItem != null && row.agentItem !== row.id);
   const tab = $derived(ui && ui.tab === "terminal" && !row.worktree ? "overview" : ui?.tab);
 
   async function loadConversation(current: number) {
+    if (isTask) return;
     try {
       const c = await api.conversation(current);
       if (current === id) {
@@ -94,11 +117,14 @@
     blockers = null;
     reviewProgress = null;
     confirmDone = false;
+    losses = null;
     // Open on the tab that resolves why the item wants attention, else where the user was.
     const landing = landingTab(row.attention, { terminal: !!row.worktree, review: hasReview });
     api.uiState<ItemUi>(current).then((saved) => {
       if (current !== id) return;
       ui = { ...fresh(), ...saved, review: { ...fresh().review, ...saved?.review } };
+      // A new task opens on its agent.
+      if (!saved && isTask && row.worktree) ui.tab = "terminal";
       if (landing) ui.tab = landing;
       if (hasReview && (row.worktree || row.kind === "pr")) loadProgress(current);
     });
@@ -173,6 +199,29 @@
     }
   }
 
+  // Discard (tasks only): delete the task with its worktree and branch, after the user saw
+  // what that loses.
+  let losses = $state<string[] | null>(null);
+  async function askDiscard() {
+    try {
+      losses = await api.discardLosses(id);
+    } catch (e) {
+      error = String(e);
+    }
+  }
+  async function discard() {
+    const what = losses;
+    losses = null;
+    try {
+      const result = await api.discardTask(id);
+      if (result.outcome === "blocked") error = `Not discarded: ${result.blockers.join("; ")}.`;
+      else onchanged();
+    } catch (e) {
+      error = String(e);
+      losses = what;
+    }
+  }
+
   function changed() {
     loadConversation(id);
     onchanged();
@@ -200,33 +249,51 @@
   };
   const unresolved = $derived(conv ? conv.threads.filter((t) => !t.resolved).length : 0);
   const TABS: [Tab, string][] = [["overview", "Overview"], ["comments", "Comments"], ["review", "Review"], ["terminal", "Terminal"]];
+  const KIND_LABEL = { pr: "Pull request", issue: "Issue", task: "Task" } as const;
+  const KIND_ICON = { pr: "pull-request", issue: "issue", task: "task" } as const;
 </script>
 
 <main class="item">
   <header>
     <div class="title-row">
-      <span class="kind"><Icon name={row.kind === "pr" ? "pull-request" : "issue"} label={row.kind === "pr" ? "Pull request" : "Issue"} /></span>
-      <h1 class="title"><span class="num">#{row.number}</span>{row.title}</h1>
+      <span class="kind"><Icon name={KIND_ICON[row.kind]} label={KIND_LABEL[row.kind]} /></span>
+      <h1 class="title"><span class="num">{shortName(row)}</span>{row.title}</h1>
       <div class="actions">
         {#if preparing}
           <span class="preparing" role="status"><Spinner />Preparing the worktree…</span>
-        {:else if !row.worktree}
+        {:else if !row.worktree && !viaTask}
           <Button variant="primary" icon="play" onclick={start}
-            title="Create (or reuse) a worktree for the PR's branch and open Claude Code in it with the PR as context" data-start>Start working</Button>
+            title={isTask
+              ? "Create the task's worktree again and open Claude Code in it"
+              : "Create (or reuse) a worktree for the PR's branch and open Claude Code in it with the PR as context"} data-start>Start working</Button>
+        {/if}
+        {#if isTask && !confirmDone}
+          {#if losses}
+            <InlineConfirm text="Discard this task{losses.length ? ' and lose its work' : ''}?" confirm="Discard"
+              onconfirm={discard} oncancel={() => (losses = null)} data-confirm-discard />
+          {:else}
+            <Button icon="trash" onclick={askDiscard}
+              title="Delete the task with its worktree, branch and agent session, even if that loses work (you see what first)" data-discard>Discard</Button>
+          {/if}
         {/if}
         {#if confirmDone}
-          <InlineConfirm text="Clean up {row.worktree ? 'the worktree, agent and ' : ''}this item?" confirm="Clean up"
+          <InlineConfirm text="Clean up {row.worktree ? 'the worktree, agent and ' : ''}this {isTask ? 'task' : 'item'}?" confirm="Clean up"
             onconfirm={done} oncancel={() => (confirmDone = false)} data-confirm-done />
-        {:else}
+        {:else if !losses}
           <Button icon="done" onclick={() => (confirmDone = true)}
             title="Remove this item's worktree, agent session and refs, and hide it — only if nothing would be lost" data-done>Done</Button>
         {/if}
       </div>
     </div>
     <div class="meta" data-meta>
-      <span>{row.kind === "pr" ? "Pull request" : "Issue"}</span>
+      <span>{KIND_LABEL[row.kind]}</span>
       {#if row.issueNumber}<span>from issue #{row.issueNumber}</span>{/if}
-      <span>by {row.author}</span>
+      {#if task}
+        <button class="from-task" onclick={() => task && onselect(task.id)} title="Open the task" data-from-task>
+          from task {shortName(task)} {task.title}
+        </button>
+      {/if}
+      {#if !isTask}<span>by {row.author}</span>{/if}
       {#if ciLabel}
         <span class={row.ci === "SUCCESS" ? "ok" : ciFailing ? "bad" : "warn"}>
           <Icon name={row.ci === "SUCCESS" ? "check" : ciFailing ? "x" : "pending"} size={12} />{ciLabel}
@@ -255,6 +322,14 @@
       {#if tab !== "terminal"}
         <Button variant="agent" size="sm" icon="terminal" onclick={() => ui && (ui.tab = "terminal")} data-answer>Answer in Terminal</Button>
       {/if}
+    </div>
+  {/if}
+  {#if losses?.length}
+    <div class="banner">
+      <Banner tone="bad" icon="trash" compact={false} data-losses>
+        <strong>Discarding the task deletes its worktree and branch, and with them:</strong>
+        <ul>{#each losses as l}<li>{l}</li>{/each}</ul>
+      </Banner>
     </div>
   {/if}
   {#if shownBlockers}
@@ -287,7 +362,7 @@
   {#if ui}
     <div class="tabs" role="tablist" aria-label="Work item">
       {#each TABS as [value, label]}
-        {#if (value !== "terminal" || row.worktree) && (value !== "review" || hasReview)}
+        {#if (value !== "terminal" || row.worktree) && (value !== "review" || hasReview) && (value !== "comments" || !isTask)}
           <button role="tab" aria-selected={tab === value} class:on={tab === value} onclick={() => ui && (ui.tab = value)} data-tab={value}>
             {#if value === "terminal"}<StatusDot {status} size={10} />{/if}
             <span>{label}</span>
@@ -299,7 +374,7 @@
         {/if}
       {/each}
       <span class="spacer"></span>
-      {#if row.worktree && row.kind === "pr"}
+      {#if row.agentItem != null && row.kind === "pr"}
         <Button variant="quiet" icon="send-to-agent" onclick={sendPrFeedback}
           title="Send the PR's current review threads, review summaries and failing checks to the agent">Send PR feedback to agent</Button>
       {/if}
@@ -310,7 +385,9 @@
           <!-- Stays mounted under the other tabs so the terminal keeps running in view. -->
           <TerminalPanel {id} visible={tab === "terminal"} {status} path={row.worktree} />
         {/if}
-        {#if tab === "overview" || tab === "comments"}
+        {#if isTask && (tab === "overview" || tab === "comments")}
+          <TaskOverview task={row} {links} {onselect} />
+        {:else if tab === "overview" || tab === "comments"}
           {#if conv}
             {#if tab === "overview"}<Overview {conv} />{:else}<Comments {id} {conv} {viewer} onchanged={changed} onshow={hasReview ? showInReview : undefined} />{/if}
           {:else}
@@ -318,7 +395,7 @@
           {/if}
         {:else if tab === "review"}
           {#if row.worktree || fetched}
-            <ReviewView {id} bind:view={ui.review} onchanged={changed} canSendToAgent={!!row.worktree}
+            <ReviewView {id} bind:view={ui.review} onchanged={changed} canSendToAgent={row.agentItem != null}
               onprogress={(p) => (reviewProgress = p.total ? p : null)} />
           {:else}
             <p class="hint"><Icon name="lock" size={14} />Read-only · Fetching the PR head…</p>
@@ -355,6 +432,11 @@
   .bad { color: var(--bad); }
   .warn { color: var(--warn); }
   .gh { color: var(--gh-strong); }
+  .from-task {
+    flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding: 0; border: 0; background: none;
+    color: var(--text-muted); font: inherit; text-decoration: underline; text-decoration-color: var(--border); cursor: pointer;
+  }
+  .from-task:hover { color: var(--text); }
   .muted { color: var(--text-muted); }
 
   .waiting {

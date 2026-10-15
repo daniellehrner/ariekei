@@ -51,9 +51,9 @@ pub fn default_branch(repo: &Repo) -> Result<String, String> {
 }
 
 /// The branch the item's changes are compared to: a PR's base, or the default branch for
-/// an issue.
+/// an issue or a task.
 fn base_ref_of(item: &WorkItem, repo: &Repo) -> Result<String, String> {
-    if item.kind == "issue" {
+    if item.kind == "issue" || item.is_task() {
         default_branch(repo)
     } else {
         Ok(summary(item)?.base_ref)
@@ -85,6 +85,15 @@ pub fn connect(state: &AppState, path: &str) -> Result<Repo, String> {
         .store
         .add_repo(&main, &owner, &name, remote, &viewer)?;
     Ok(repo)
+}
+
+/// Where the item's review marker is kept (also deleted by cleanup).
+pub fn reviewed_ref(item: &WorkItem) -> String {
+    if item.is_task() {
+        format!("refs/ariekei/reviewed/task-{}", -item.number)
+    } else {
+        format!("refs/ariekei/reviewed/pr-{}", item.number)
+    }
 }
 
 /// Clears worktree paths that no longer exist (e.g. removed outside Ariekei).
@@ -157,13 +166,28 @@ pub fn inbox(state: &AppState, repo: Option<Repo>) -> Result<Vec<Row>, String> {
         return Ok(vec![]);
     };
     let default = default_branch(&repo).unwrap_or_else(|_| "main".into());
-    let rows = state
-        .store
-        .items(repo.id)?
-        .into_iter()
-        // Finished items stay listed only while cleanup is blocked (they keep a worktree).
-        .filter(|item| !item.hidden && (item.open || item.worktree_path.is_some()))
-        .filter_map(|item| row(state, &repo, &default, item))
+    let items = state.store.items(repo.id)?;
+    // Finished items stay listed only while cleanup is blocked (they keep a worktree), or
+    // under their task, which shows what came of it.
+    let listed = |item: &WorkItem| !item.hidden && (item.open || item.worktree_path.is_some());
+    let tasks: Vec<&WorkItem> = items.iter().filter(|i| i.is_task() && listed(i)).collect();
+    let task_of = |item: &WorkItem| {
+        item.task_id
+            .and_then(|t| tasks.iter().find(|task| task.id == t).copied())
+    };
+    let rows = items
+        .iter()
+        .filter(|item| listed(item) || task_of(item).is_some())
+        .filter_map(|item| {
+            let mut row = row(state, &repo, &default, item.clone())?;
+            if let Some(task) = task_of(item) {
+                row.task_id = Some(task.id);
+                if row.worktree.is_none() && task.worktree_path.is_some() {
+                    row.agent_item = Some(task.id);
+                }
+            }
+            Some(row)
+        })
         .collect();
     Ok(inbox::order(rows))
 }
@@ -172,7 +196,40 @@ fn row(state: &AppState, repo: &Repo, default_branch: &str, item: WorkItem) -> O
     let worktree = item.worktree_path.clone().filter(|p| p.exists());
     let agent = state.terminals.status(&item.id.to_string());
     let seen = item.last_seen.clone().unwrap_or_default();
-    let mut row = if item.kind == "issue" {
+    let mut row = if item.is_task() {
+        Row {
+            id: item.id,
+            number: item.number,
+            kind: "task".into(),
+            title: item.title().to_owned(),
+            author: repo.viewer.clone(),
+            role: item.role.clone(),
+            url: String::new(),
+            is_draft: false,
+            open: true,
+            updated_at: item.snapshot["createdAt"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+            ci: None,
+            failing_checks: vec![],
+            review_decision: None,
+            unresolved_threads: 0,
+            new_activity: false,
+            agent,
+            worktree: None,
+            unreviewed: worktree
+                .as_deref()
+                .is_some_and(|w| unreviewed(state, w, &item, default_branch, repo)),
+            attention: None,
+            cleanup_blockers: None,
+            issue_number: None,
+            task_id: None,
+            agent_item: None,
+            outcomes_closed: false,
+            notes: item.snapshot["notes"].as_str().map(str::to_owned),
+        }
+    } else if item.kind == "issue" {
         let issue = issue_summary(&item).ok()?;
         Row {
             id: item.id,
@@ -198,6 +255,10 @@ fn row(state: &AppState, repo: &Repo, default_branch: &str, item: WorkItem) -> O
             attention: None,
             cleanup_blockers: None,
             issue_number: None,
+            task_id: None,
+            agent_item: None,
+            outcomes_closed: false,
+            notes: None,
         }
     } else {
         let pr = summary(&item).ok()?;
@@ -225,8 +286,15 @@ fn row(state: &AppState, repo: &Repo, default_branch: &str, item: WorkItem) -> O
             attention: None,
             cleanup_blockers: None,
             issue_number: item.issue_number,
+            task_id: None,
+            agent_item: None,
+            outcomes_closed: false,
+            notes: None,
         }
     };
+    if worktree.is_some() {
+        row.agent_item = Some(item.id);
+    }
     row.worktree = worktree.map(|p| p.to_string_lossy().into_owned());
     row.cleanup_blockers = item.cleanup_blockers;
     Some(row)
@@ -264,7 +332,9 @@ pub fn prepare(state: &AppState, id: i64) -> Result<Prepared, String> {
             note: None,
         });
     }
-    let prepared = if item.kind == "issue" {
+    let prepared = if item.is_task() {
+        worktree::prepare_task(&repo, -item.number, item.title(), &default_branch(&repo)?)?
+    } else if item.kind == "issue" {
         let issue = issue_summary(&item)?;
         worktree::prepare_issue(&repo, item.number, &issue.title, &default_branch(&repo)?)?
     } else {
@@ -298,7 +368,9 @@ pub fn session_plan(state: &AppState, data_dir: &Path, id: i64) -> Result<Sessio
         None => uuid::Uuid::new_v4().to_string(),
     };
     state.store.set_session(id, &session_id)?;
-    let written = if item.kind == "issue" {
+    let written = if item.is_task() {
+        write_task_context(data_dir, &repo, &item)
+    } else if item.kind == "issue" {
         write_issue_context(data_dir, &repo, &item)
     } else {
         write_context(data_dir, &repo, item.number)
@@ -307,8 +379,8 @@ pub fn session_plan(state: &AppState, data_dir: &Path, id: i64) -> Result<Sessio
         Ok(file) => Some(file),
         Err(e) => {
             tracing::warn!(
-                "PR #{}: starting the agent without context: {e}",
-                item.number
+                "{}: starting the agent without context: {e}",
+                item.short_name()
             );
             None
         }
@@ -379,6 +451,96 @@ fn write_issue_context(data_dir: &Path, repo: &Repo, item: &WorkItem) -> Result<
     Ok(file)
 }
 
+fn write_task_context(data_dir: &Path, repo: &Repo, item: &WorkItem) -> Result<PathBuf, String> {
+    let md = crate::context::render_task(
+        &item.short_name(),
+        item.title(),
+        item.snapshot["notes"].as_str().unwrap_or_default(),
+        item.branch.as_deref().unwrap_or_default(),
+        &default_branch(repo)?,
+    );
+    let dir = data_dir.join("context");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let file = dir.join(format!("{}-{}-{}.md", repo.owner, repo.name, item.slug()));
+    std::fs::write(&file, md).map_err(|e| e.to_string())?;
+    Ok(file)
+}
+
+/// Starts a task (work with no PR or issue yet): the item and its worktree on a new branch.
+pub fn create_task(
+    state: &AppState,
+    repo: Option<Repo>,
+    title: &str,
+    notes: &str,
+) -> Result<i64, String> {
+    let repo = repo.ok_or("no repository connected")?;
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("a task needs a title".into());
+    }
+    let id = state.store.create_task(repo.id, title, notes.trim())?;
+    if let Err(e) = prepare(state, id) {
+        state.store.delete_item(id)?;
+        return Err(e);
+    }
+    Ok(id)
+}
+
+/// Links PR or issue `number` (`kind`), which the agent of task `task_id` opened, to the
+/// task. It is tracked, so the poller keeps it up to date (an issue the user opened is not
+/// assigned to them, so no other query finds it).
+pub fn link_created(state: &AppState, task_id: i64, kind: &str, number: i64) -> Result<(), String> {
+    let (task, repo) = item_repo(state, task_id)?;
+    if !task.is_task() {
+        return Ok(());
+    }
+    let polled = if kind == "issue" {
+        let issue = github::issues_by_number(&repo.owner, &repo.name, &repo.viewer, &[number])?
+            .into_iter()
+            .next()
+            .ok_or_else(|| format!("issue #{number} not found"))?;
+        PolledPr {
+            number,
+            kind: "issue",
+            role: "other",
+            open: issue.state == "OPEN",
+            snapshot: serde_json::to_value(&issue).unwrap_or_default(),
+        }
+    } else {
+        polled_pr(&repo, number)?
+    };
+    let id = state.store.track(repo.id, &polled)?;
+    state.store.link_to_task(id, task_id)
+}
+
+fn polled_pr(repo: &Repo, number: i64) -> Result<PolledPr, String> {
+    let pr = github::prs_by_number(&repo.owner, &repo.name, &repo.viewer, &[number])?
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("PR #{number} not found"))?;
+    let role = crate::poller::role_of(&pr, &repo.viewer, &[]);
+    Ok(PolledPr {
+        number,
+        kind: "pr",
+        role,
+        open: pr.state == "OPEN",
+        snapshot: serde_json::to_value(&pr).unwrap_or_default(),
+    })
+}
+
+/// Whose agent works on item `id`: its own, or (a PR or issue without a worktree that a
+/// task opened) the task's.
+pub fn agent_of(state: &AppState, id: i64) -> Result<i64, String> {
+    let item = state.store.item(id)?;
+    if item.worktree_path.is_none()
+        && let Some(task) = item.task_id
+        && state.store.item(task)?.worktree_path.is_some()
+    {
+        return Ok(task);
+    }
+    Ok(id)
+}
+
 /// The PR's unresolved review threads as a message for the agent (newer than its context).
 pub fn comments_message(state: &AppState, id: i64) -> Result<String, String> {
     let (item, repo) = item_repo(state, id)?;
@@ -398,7 +560,8 @@ pub fn comments_message(state: &AppState, id: i64) -> Result<String, String> {
         );
     }
     Ok(format!(
-        "Here is the current review feedback and CI state of the PR:\n\n{}",
+        "Here is the current review feedback and CI state of PR #{}:\n\n{}",
+        item.number,
         &md[start..]
     ))
 }
@@ -440,25 +603,14 @@ pub fn search(state: &AppState, repo: Option<Repo>, text: &str) -> Result<Vec<Se
 /// Adds PR `number` to the Inbox (tracked) and returns its work item id.
 pub fn track(state: &AppState, repo: Option<Repo>, number: i64) -> Result<i64, String> {
     let repo = repo.ok_or("no repository connected")?;
-    let pr = github::prs_by_number(&repo.owner, &repo.name, &repo.viewer, &[number])?
-        .into_iter()
-        .next()
-        .ok_or_else(|| format!("PR #{number} not found"))?;
-    let role = crate::poller::role_of(&pr, &repo.viewer, &[]);
-    state.store.track(
-        repo.id,
-        &PolledPr {
-            number,
-            kind: "pr",
-            role,
-            open: pr.state == "OPEN",
-            snapshot: serde_json::to_value(&pr).unwrap_or_default(),
-        },
-    )
+    state.store.track(repo.id, &polled_pr(&repo, number)?)
 }
 
 pub fn conversation(state: &AppState, id: i64) -> Result<github::Conversation, String> {
     let (item, repo) = item_repo(state, id)?;
+    if item.is_task() {
+        return Err("a task has no conversation on GitHub".into());
+    }
     if item.kind == "issue" {
         return github::issue_conversation(&repo.owner, &repo.name, item.number).map(|(c, _)| c);
     }
@@ -541,7 +693,11 @@ fn review(state: &AppState, id: i64) -> Result<Review, String> {
     let (item, repo) = item_repo(state, id)?;
     let base_ref = base_ref_of(&item, &repo)?;
     let worktree = item.worktree_path.clone().filter(|p| p.exists());
-    // An issue has no PR yet: its review needs the worktree, and nothing goes to GitHub.
+    // An issue or task has no PR yet: its review needs the worktree, and nothing goes to
+    // GitHub.
+    if worktree.is_none() && item.is_task() {
+        return Err("the task's worktree is gone".into());
+    }
     if worktree.is_none() && item.kind == "issue" {
         return Err("start working on the issue to review its changes".into());
     }
@@ -592,7 +748,7 @@ fn review(state: &AppState, id: i64) -> Result<Review, String> {
 
 pub fn review_state(state: &AppState, id: i64) -> Result<ReviewState, String> {
     let r = review(state, id)?;
-    let pr_head = if r.item.kind == "issue" {
+    let pr_head = if r.item.kind == "issue" || r.item.is_task() {
         String::new()
     } else {
         summary(&r.item)?.head_sha
@@ -608,7 +764,7 @@ pub fn review_state(state: &AppState, id: i64) -> Result<ReviewState, String> {
             commit: c,
         })
         .collect();
-    let own = r.item.kind == "issue" || {
+    let own = r.item.kind == "issue" || r.item.is_task() || {
         let repo = state
             .store
             .repo(r.item.repo_id)?
@@ -755,14 +911,7 @@ pub fn mark_reviewed(state: &AppState, id: i64) -> Result<String, String> {
             Some(&git::blob_id(&r.dir, r.view.as_deref(), &file.path)),
         )?;
     }
-    git(
-        &repo.path,
-        &[
-            "update-ref",
-            &format!("refs/ariekei/reviewed/pr-{}", item.number),
-            &r.head,
-        ],
-    )?;
+    git(&repo.path, &["update-ref", &reviewed_ref(&item), &r.head])?;
     state.store.set_reviewed(id, &r.head)?;
     Ok(r.head)
 }
@@ -796,6 +945,10 @@ pub fn prepare_guide(state: &AppState, id: i64) -> Result<GuideView, String> {
         .unwrap_or_default()
         .to_owned();
     let description = match item.kind.as_str() {
+        "task" => Ok(item.snapshot["notes"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()),
         "issue" => github::issue_conversation(&repo.owner, &repo.name, item.number)
             .map(|(_, raw)| raw["body"].as_str().unwrap_or_default().to_owned()),
         _ => github::pr_detail(&repo.owner, &repo.name, item.number).map(|d| d.body),

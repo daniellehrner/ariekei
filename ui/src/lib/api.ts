@@ -29,8 +29,9 @@ export interface Shown {
 
 export interface Row {
   id: number;
+  /** A task's number is negative: task T1 is -1 (see `shortName`). */
   number: number;
-  kind: "pr" | "issue";
+  kind: "pr" | "issue" | "task";
   issueNumber: number | null;
   cleanupBlockers: string[] | null;
   title: string;
@@ -49,6 +50,19 @@ export interface Row {
   worktree: string | null;
   unreviewed: boolean;
   attention: string | null;
+  /** For a PR or issue a task's agent opened: the task. */
+  taskId: number | null;
+  /** Whose agent works on this item: its own (it has a worktree), or its task's. */
+  agentItem: number | null;
+  /** A task's notes (what to look into). */
+  notes: string | null;
+  /** A task whose PRs and issues are all closed or merged (it has some). */
+  outcomesClosed: boolean;
+}
+
+/** `T1` for a task, `#12` for a PR or issue. */
+export function shortName(row: Pick<Row, "kind" | "number">): string {
+  return row.kind === "task" ? `T${-row.number}` : `#${row.number}`;
 }
 
 export interface Prepared {
@@ -179,6 +193,7 @@ export const api = {
   prepareGuide: (id: number) => invoke<{ guide: Guide; stale: boolean }>("prepare_guide", { id }),
   searchPrs: (text: string) => invoke<SearchHit[]>("search_prs", { text }),
   trackPr: (number: number) => invoke<number>("track_pr", { number }),
+  createTask: (title: string, notes: string) => invoke<number>("create_task", { title, notes }),
   conversation: (id: number) => invoke<Conversation>("pr_conversation", { id }),
   fetchPr: (id: number) => invoke<string>("fetch_pr", { id }),
   commentRanges: (id: number, paths: string[]) => invoke<[string, [number, number][]][]>("comment_ranges", { id, paths }),
@@ -188,6 +203,8 @@ export const api = {
   postComment: (id: number, body: string) => invoke<void>("post_comment", { id, body }),
   resolveThread: (threadId: string, resolved: boolean) => invoke<void>("resolve_thread", { threadId, resolved }),
   markDone: (id: number) => invoke<Cleanup>("mark_done", { id }),
+  discardLosses: (id: number) => invoke<string[]>("discard_losses", { id }),
+  discardTask: (id: number) => invoke<Cleanup>("discard_task", { id }),
   saveFile: (id: number, path: string, content: string) => invoke<void>("save_file", { id, path, content }),
   selfRssKib: () => invoke<number | null>("self_rss_kib"),
 };

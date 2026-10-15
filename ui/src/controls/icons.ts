@@ -19,6 +19,7 @@ export const icons = {
   "search": "M2.5 7a4.5 4.5 0 1 0 9 0a4.5 4.5 0 1 0 -9 0M10.5 10.5L14 14", // Inbox search field
   "pull-request": "M2.5 3.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0M2.5 12.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0M10.5 12.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0M4 5v6M12 11V6.5a2 2 0 0 0-2-2H7.5M9 3L7.5 4.5 9 6", // Work item header, PR rows
   "issue": "M2.5 8a5.5 5.5 0 1 0 11 0a5.5 5.5 0 1 0 -11 0M8 7.5v1", // Issue header and rows
+  "task": "M5.5 2.5h5v2h-5zM5.5 3.5H4a1.5 1.5 0 0 0-1.5 1.5v7.5A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5V5A1.5 1.5 0 0 0 12 3.5h-1.5M5.5 9l1.75 1.75L10.5 7.5", // Task header and rows (work with no PR or issue yet)
   "commit": "M5.5 8a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0M1.5 8h4M10.5 8h4", // Scope rows (commits)
   "branch": "M2.5 3.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0M2.5 12.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0M10.5 4.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0M4 5v6M12 6a4 4 0 0 1-4 4H5.5", // Scope marker, rebase note
   "folder": "M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z", // Choose folder…, worktree path, recent repos

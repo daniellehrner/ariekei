@@ -56,11 +56,7 @@ fn label(app: &AppHandle, key: &str) -> String {
         .ok()
         .and_then(|id| app.state::<crate::AppState>().store.item(id).ok());
     match item {
-        Some(item) => format!(
-            "#{} {}",
-            item.number,
-            item.snapshot["title"].as_str().unwrap_or_default()
-        ),
+        Some(item) => item.label(),
         None => key.to_owned(),
     }
 }

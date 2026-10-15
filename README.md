@@ -1,7 +1,7 @@
 # Ariekei
 
-A review workbench for coding agents. The unit of work is a GitHub pull request or issue: each
-work item gets its own worktree, its own Claude Code session and its own review progress, and an
+A review workbench for coding agents. The unit of work is a GitHub pull request or issue, or a
+task that has neither yet: each work item gets its own worktree, its own Claude Code session and its own review progress, and an
 Inbox orders them by what needs you. The agent writes the code; you review it here. For deep
 code navigation or debugging, use your IDE on the same worktree. Tauri 2 (Rust) + Svelte 5.
 
@@ -25,6 +25,9 @@ code navigation or debugging, use your IDE on the same worktree. Tauri 2 (Rust) 
   connected repo, opens one in a new window, or connects another. Each repo is shown in one
   window at a time; every open repo is kept current, and the windows come back after a
   restart.
+- **Tasks:** start work with no PR or issue yet (+ in the Inbox, e.g. to investigate a bug). The
+  task gets a branch, worktree and agent; the PRs and issues its agent opens (`gh pr create`,
+  `gh issue create`) are linked and listed under it. Done or Discard ends it.
 - **Lifecycle:** an issue gets a branch and worktree; its first push opens a draft PR. Merged
   or closed items are cleaned up automatically, never losing uncommitted or unpushed work.
 
@@ -32,7 +35,7 @@ Language-agnostic: the review diff comes from git, any file type is syntax-highl
 agent works in any language. Code navigation and debugging are left to your IDE.
 
 Details: [docs/m1.md](docs/m1.md) (Inbox, PRs, review) and [docs/m2.md](docs/m2.md) (issues,
-cleanup). The UI's design rules: [docs/design.md](docs/design.md). How the agent integration came
+tasks, cleanup). The UI's design rules: [docs/design.md](docs/design.md). How the agent integration came
 about: [docs/spike-results.md](docs/spike-results.md).
 
 ## Roadmap
@@ -84,6 +87,7 @@ windows never show up on your desktop or take focus, and its notifications stay 
   the review guide, submitting a review, rebase-aware "since your review".
 - `windows`: two repos, switching, a window per repo, restoring windows after a restart.
 - `lifecycle`: issue → worktree → push → draft PR → merge → cleanup.
+- `task`: new task → the agent opens a PR and an issue → linked under the task → discard.
 - `m1`: the agent in the terminal (turns that commit, a permission prompt), the review loop,
   idle shutdown and resume after a restart.
 

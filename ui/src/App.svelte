@@ -131,14 +131,14 @@
     <Inbox {repo} {rows} {loaded} {selected} error={pollError} {collapsed} ontoggle={toggleInbox} onselect={select} onrefresh={() => api.refresh()} onadded={reload}
       onswitch={show} onconnect={() => (connecting = true)} />
     {#if current}
-      <WorkItem row={current} repoId={repo.id} viewer={repo.viewer} onchanged={reload} />
+      <WorkItem row={current} {rows} repoId={repo.id} viewer={repo.viewer} onchanged={reload} onselect={select} />
     {:else}
       {@const waiting = rows.filter((r) => r.attention).length}
       <div class="empty">
         {#if loaded && !rows.length}
           <strong>Your Inbox is empty</strong>
           <span>Your open pull requests, review requests and assigned issues in {repo.owner}/{repo.name} appear here.
-            To review any other pull request, search for it.</span>
+            To review any other pull request, search for it. To start work that has no PR or issue yet, use + (New task).</span>
         {:else if loaded}
           <strong>{waiting ? `${waiting} item${waiting === 1 ? " wants" : "s want"} your attention` : "You're all caught up"}</strong>
           <span>Pick an item in the Inbox{waiting ? ", starting at the top" : ""}. <Kbd key="Ctrl+B" /> shows or hides the Inbox.</span>

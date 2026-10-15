@@ -86,6 +86,12 @@ CREATE TABLE own_commits (
     commits TEXT NOT NULL
 );
 "#,
+    r#"
+-- Tasks: work started in Ariekei with no PR or issue yet (kind 'task'). A task's number is
+-- negative (-1, -2, ... per repo) so it never collides with a GitHub number; its snapshot is
+-- {title, notes, createdAt}. The PRs and issues its agent opens link to it here.
+ALTER TABLE work_items ADD COLUMN task_id INTEGER REFERENCES work_items(id) ON DELETE SET NULL;
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -122,13 +128,48 @@ pub struct WorkItem {
     pub worktree_created: bool,
     pub hidden: bool,
     pub cleanup_blockers: Option<Vec<String>>,
+    /// For a PR or issue a task's agent opened: the task.
+    pub task_id: Option<i64>,
+}
+
+impl WorkItem {
+    pub fn is_task(&self) -> bool {
+        self.kind == "task"
+    }
+
+    pub fn title(&self) -> &str {
+        self.snapshot["title"].as_str().unwrap_or_default()
+    }
+
+    /// How the item is named to the user: `T1 title` for a task, `#12 title` otherwise.
+    pub fn label(&self) -> String {
+        format!("{} {}", self.short_name(), self.title())
+    }
+
+    /// `T1` for a task, `#12` otherwise.
+    pub fn short_name(&self) -> String {
+        if self.is_task() {
+            format!("T{}", -self.number)
+        } else {
+            format!("#{}", self.number)
+        }
+    }
+
+    /// The item in file and ref names: `task1`, `issue5`, `pr12`.
+    pub fn slug(&self) -> String {
+        if self.is_task() {
+            format!("task{}", -self.number)
+        } else {
+            format!("{}{}", self.kind, self.number)
+        }
+    }
 }
 
 /// One PR as found by a poll.
 #[derive(Debug, Clone)]
 pub struct PolledPr {
     pub number: i64,
-    /// "pr" or "issue".
+    /// "pr" or "issue" (tasks are never polled).
     pub kind: &'static str,
     pub role: &'static str,
     pub open: bool,
@@ -145,7 +186,7 @@ fn err(e: rusqlite::Error) -> String {
 
 const ITEM_COLUMNS: &str = "id, repo_id, number, snapshot, open, worktree_path, branch, session_id, \
      session_started, transcript_path, reviewed_sha, last_seen, ui_state, role, tracked, kind, \
-     issue_number, worktree_created, hidden, cleanup_blockers";
+     issue_number, worktree_created, hidden, cleanup_blockers, task_id";
 
 fn item_from_row(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
     let json = |s: Option<String>| s.and_then(|s| serde_json::from_str(&s).ok());
@@ -172,6 +213,7 @@ fn item_from_row(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
         cleanup_blockers: r
             .get::<_, Option<String>>(19)?
             .and_then(|s| serde_json::from_str(&s).ok()),
+        task_id: r.get(20)?,
     })
 }
 
@@ -309,7 +351,7 @@ impl Store {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction().map_err(err)?;
         tx.execute(
-            "UPDATE work_items SET open = 0 WHERE repo_id = ?1",
+            "UPDATE work_items SET open = 0 WHERE repo_id = ?1 AND kind != 'task'",
             [repo_id],
         )
         .map_err(err)?;
@@ -324,7 +366,8 @@ impl Store {
         tx.commit().map_err(err)
     }
 
-    /// Adds a PR the user picked (e.g. from search) or marks an existing one as tracked.
+    /// Adds a PR or issue the user picked (e.g. from search) or a task's agent opened, or marks
+    /// an existing one as tracked.
     pub fn track(&self, repo_id: i64, pr: &PolledPr) -> Result<i64, String> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -430,6 +473,31 @@ impl Store {
         )
         .map(|_| ())
         .map_err(err)
+    }
+
+    /// A new task (see the migration for how tasks are stored); returns its id.
+    pub fn create_task(&self, repo_id: i64, title: &str, notes: &str) -> Result<i64, String> {
+        let conn = self.conn.lock().unwrap();
+        let number: i64 = conn
+            .query_row(
+                "SELECT COALESCE(MIN(number), 0) - 1 FROM work_items WHERE repo_id = ?1 AND number < 0",
+                [repo_id],
+                |r| r.get(0),
+            )
+            .map_err(err)?;
+        conn.execute(
+            "INSERT INTO work_items (repo_id, number, snapshot, open, role, kind, last_seen)
+             VALUES (?1, ?2, json_object('title', ?3, 'notes', ?4,
+                                         'createdAt', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                     1, 'author', 'task', '')",
+            params![repo_id, number, title, notes],
+        )
+        .map_err(err)?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn link_to_task(&self, id: i64, task_id: i64) -> Result<(), String> {
+        self.update(id, "task_id = ?2", task_id)
     }
 
     pub fn delete_item(&self, id: i64) -> Result<(), String> {
@@ -772,5 +840,42 @@ mod tests {
         assert_eq!(item.session_id.as_deref(), Some("s-1"));
         assert!(item.session_started);
         assert_eq!(item.transcript_path.as_deref(), Some(Path::new("/t.jsonl")));
+    }
+
+    #[test]
+    fn tasks_get_negative_numbers_stay_open_and_lose_their_links_when_deleted() {
+        let (store, repo) = store_with_repo();
+        let t1 = store
+            .create_task(repo.id, "Flaky sync", "look at peers")
+            .unwrap();
+        let t2 = store.create_task(repo.id, "Slow start", "").unwrap();
+        let task = store.item(t1).unwrap();
+        assert_eq!((task.kind.as_str(), task.number), ("task", -1));
+        assert_eq!(task.snapshot["title"], "Flaky sync");
+        assert_eq!(task.snapshot["notes"], "look at peers");
+        assert!(task.snapshot["createdAt"].as_str().unwrap().ends_with('Z'));
+        assert_eq!(store.item(t2).unwrap().number, -2);
+
+        // A poll knows nothing about tasks and must not close them.
+        store
+            .sync_prs(repo.id, &[polled(7, json!({"title": "pr"}))])
+            .unwrap();
+        assert!(store.item(t1).unwrap().open);
+
+        let pr = store
+            .track(repo.id, &polled(7, json!({"title": "pr"})))
+            .unwrap();
+        store.link_to_task(pr, t1).unwrap();
+        assert_eq!(store.item(pr).unwrap().task_id, Some(t1));
+        store.delete_item(t1).unwrap();
+        assert_eq!(store.item(pr).unwrap().task_id, None);
+        // The next task does not reuse a live number.
+        assert_eq!(
+            store
+                .item(store.create_task(repo.id, "x", "").unwrap())
+                .unwrap()
+                .number,
+            -3
+        );
     }
 }

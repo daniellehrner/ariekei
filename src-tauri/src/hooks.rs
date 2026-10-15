@@ -3,6 +3,7 @@
 //! Every `claude` that Ariekei starts gets `--settings <claude-hooks.json>`, which adds
 //! `http` hooks (merged with the user's and the project's own hooks) that POST each event
 //! to a localhost endpoint. Events carry the session id, which identifies the work item.
+//! A task's agent opening a PR or an issue (`gh pr create`, …) links it to the task.
 
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -57,6 +58,8 @@ pub struct HookEvent {
     pub tool_name: Option<String>,
     #[serde(default)]
     pub tool_input: Option<serde_json::Value>,
+    #[serde(default)]
+    pub tool_response: Option<serde_json::Value>,
     #[serde(default)]
     pub error: Option<serde_json::Value>,
 }
@@ -113,6 +116,97 @@ fn tool_detail(event: &HookEvent) -> Option<String> {
         }
         _ => name,
     })
+}
+
+/// The PRs and issues of `owner/name` that a finished tool call created, as ("pr" | "issue",
+/// number): from what `gh pr create` / `gh issue create` print (their URL), or the response
+/// of a GitHub tool that creates one (e.g. an MCP server's `create_pull_request`).
+pub fn created_links(event: &HookEvent, owner: &str, name: &str) -> Vec<(&'static str, i64)> {
+    if event.hook_event_name != "PostToolUse" {
+        return vec![];
+    }
+    let tool = event
+        .tool_name
+        .as_deref()
+        .unwrap_or_default()
+        .to_lowercase();
+    let (prs, issues) = if tool == "bash" {
+        let command = event
+            .tool_input
+            .as_ref()
+            .and_then(|i| i["command"].as_str())
+            .unwrap_or_default()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        (
+            command.contains("gh pr create"),
+            command.contains("gh issue create"),
+        )
+    } else {
+        (
+            tool.contains("create_pull_request"),
+            tool.contains("create_issue"),
+        )
+    };
+    if !prs && !issues {
+        return vec![];
+    }
+    let Some(response) = event.tool_response.as_ref() else {
+        return vec![];
+    };
+    let text = response.to_string();
+    let prefix = format!("https://github.com/{owner}/{name}/").to_lowercase();
+    let mut found = vec![];
+    let lower = text.to_lowercase();
+    for (at, _) in lower.match_indices(&prefix) {
+        let rest = &text[at + prefix.len()..];
+        let (kind, rest) = if let Some(r) = rest.strip_prefix("pull/").filter(|_| prs) {
+            ("pr", r)
+        } else if let Some(r) = rest.strip_prefix("issues/").filter(|_| issues) {
+            ("issue", r)
+        } else {
+            continue;
+        };
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        if let Ok(number) = digits.parse()
+            && !found.contains(&(kind, number))
+        {
+            found.push((kind, number));
+        }
+    }
+    found
+}
+
+/// Links what a task's agent just opened on GitHub to the task (in the background: it
+/// fetches each from GitHub), then refreshes the Inbox.
+fn link_created(app: &AppHandle, state: &crate::AppState, key: &str, event: &HookEvent) {
+    let Some(task) = key.parse().ok().and_then(|id| state.store.item(id).ok()) else {
+        return;
+    };
+    if !task.is_task() {
+        return;
+    }
+    let Ok(Some(repo)) = state.store.repo(task.repo_id) else {
+        return;
+    };
+    let links = created_links(event, &repo.owner, &repo.name);
+    if links.is_empty() {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let state = app.state::<crate::AppState>();
+        for (kind, number) in links {
+            if let Err(e) = crate::workitem::link_created(&state, task.id, kind, number) {
+                tracing::warn!(
+                    "could not link {kind} #{number} to {}: {e}",
+                    task.short_name()
+                );
+            }
+        }
+        let _ = app.emit("inbox-changed", repo.id);
+    });
 }
 
 /// Hooks settings for `claude --settings`: one http hook per event, posting to `url`.
@@ -221,6 +315,7 @@ pub fn dispatch(app: &AppHandle, event: HookEvent) {
     {
         tracing::warn!("failed to record session start: {e}");
     }
+    link_created(app, &state, &key, &event);
     if let Some((status, detail)) = status_for(&event) {
         state.terminals.report(&key, status, detail);
     }
@@ -236,6 +331,48 @@ mod tests {
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
         serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn links_what_gh_and_github_tools_created_in_this_repo() {
+        let bash = |command: &str, stdout: &str| {
+            event(
+                "PostToolUse",
+                serde_json::json!({
+                    "tool_name": "Bash",
+                    "tool_input": { "command": command },
+                    "tool_response": { "stdout": stdout, "stderr": "" }
+                }),
+            )
+        };
+        let pr = bash(
+            "git push -u origin HEAD && gh  pr create --fill",
+            "Creating pull request for task-1 into main in Owner/Proj\n\nhttps://github.com/owner/proj/pull/12\n",
+        );
+        assert_eq!(created_links(&pr, "owner", "proj"), [("pr", 12)]);
+        let issue = bash(
+            "gh issue create --title x --body 'see #3'",
+            "https://github.com/owner/proj/issues/13\n",
+        );
+        assert_eq!(created_links(&issue, "owner", "proj"), [("issue", 13)]);
+        // Another repo's, and URLs of a command that creates nothing.
+        let elsewhere = bash("gh pr create", "https://github.com/other/proj/pull/5\n");
+        assert!(created_links(&elsewhere, "owner", "proj").is_empty());
+        let view = bash("gh pr view 12", "https://github.com/owner/proj/pull/12\n");
+        assert!(created_links(&view, "owner", "proj").is_empty());
+        let before = HookEvent {
+            hook_event_name: "PreToolUse".into(),
+            ..pr.clone()
+        };
+        assert!(created_links(&before, "owner", "proj").is_empty());
+        let mcp = event(
+            "PostToolUse",
+            serde_json::json!({
+                "tool_name": "mcp__github__create_issue",
+                "tool_response": [{ "type": "text", "text": "{\"html_url\":\"https://github.com/owner/proj/issues/14\"}" }]
+            }),
+        );
+        assert_eq!(created_links(&mcp, "owner", "proj"), [("issue", 14)]);
     }
 
     #[test]

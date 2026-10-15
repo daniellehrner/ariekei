@@ -283,7 +283,8 @@ fn term_close(state: State<'_, AppState>, id: i64) {
 #[tauri::command]
 async fn agent_send(app: tauri::AppHandle, id: i64, text: String) -> Res<()> {
     blocking(app, move |s| {
-        s.terminals.send_to_agent(&id.to_string(), &text)
+        s.terminals
+            .send_to_agent(&workitem::agent_of(s, id)?.to_string(), &text)
     })
     .await
 }
@@ -293,7 +294,8 @@ async fn agent_send(app: tauri::AppHandle, id: i64, text: String) -> Res<()> {
 async fn send_pr_feedback(app: tauri::AppHandle, id: i64) -> Res<()> {
     blocking(app, move |s| {
         let message = workitem::comments_message(s, id)?;
-        s.terminals.send_to_agent(&id.to_string(), &message)
+        s.terminals
+            .send_to_agent(&workitem::agent_of(s, id)?.to_string(), &message)
     })
     .await
 }
@@ -319,6 +321,21 @@ async fn track_pr(app: tauri::AppHandle, window: tauri::Window, number: i64) -> 
     let label = window.label().to_owned();
     blocking(app, move |s| {
         workitem::track(s, windows::repo_of(s, &label)?, number)
+    })
+    .await
+}
+
+/// Starts a task (no PR or issue yet) with its worktree; returns its work item id.
+#[tauri::command]
+async fn create_task(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    title: String,
+    notes: String,
+) -> Res<i64> {
+    let label = window.label().to_owned();
+    blocking(app, move |s| {
+        workitem::create_task(s, windows::repo_of(s, &label)?, &title, &notes)
     })
     .await
 }
@@ -382,6 +399,18 @@ async fn resolve_thread(app: tauri::AppHandle, thread_id: String, resolved: bool
 #[tauri::command]
 async fn mark_done(app: tauri::AppHandle, id: i64) -> Res<lifecycle::Cleanup> {
     blocking(app, move |s| workitem::mark_done(s, id)).await
+}
+
+/// What discarding the task would lose (uncommitted changes, commits not on GitHub).
+#[tauri::command]
+async fn discard_losses(app: tauri::AppHandle, id: i64) -> Res<Vec<String>> {
+    blocking(app, move |s| lifecycle::discard_losses(s, id)).await
+}
+
+/// Deletes the task with its worktree and branch, losing what `discard_losses` listed.
+#[tauri::command]
+async fn discard_task(app: tauri::AppHandle, id: i64) -> Res<lifecycle::Cleanup> {
+    blocking(app, move |s| lifecycle::discard(s, id)).await
 }
 
 // --- review ---
@@ -566,6 +595,7 @@ pub fn run() {
             save_file,
             search_prs,
             track_pr,
+            create_task,
             pr_conversation,
             fetch_pr,
             comment_ranges,
@@ -574,6 +604,8 @@ pub fn run() {
             post_comment,
             resolve_thread,
             mark_done,
+            discard_losses,
+            discard_task,
             self_rss_kib,
         ])
         .build(tauri::generate_context!())

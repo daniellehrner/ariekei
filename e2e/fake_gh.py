@@ -9,8 +9,8 @@ data.json: {"viewer": "me", "upstream": <path of the "GitHub" git repo, optional
             "prs": [{number, title, author, head_ref, head_sha, base_ref, state, requested (bool),
                      draft (bool), decision, ci, failing, body_html, comments: [...], threads: [...]}],
             "issues": [{number, title, author, body, assigned (bool), state}]}
-Creating a PR (POST .../pulls) adds it to data.json, so later polls see it; a test can set
-a PR's "state" to MERGED in data.json. A PR or issue with "repo": "<name>" belongs to
+Creating a PR or an issue (POST .../pulls, .../issues) adds it to data.json, so later polls
+see it; a test can set a PR's "state" to MERGED in data.json. A PR or issue with "repo": "<name>" belongs to
 owner/<name>; without it, to owner/proj.
 """
 
@@ -174,8 +174,14 @@ def main(argv):
         path = next(a for a in argv[1:] if "/" in a)
         body = json.loads(sys.stdin.read() or "{}")
         record({"post": path, "body": body})
+        # PRs and issues share their numbers, as on GitHub.
+        number = max([i["number"] for i in DATA["prs"] + DATA.get("issues", [])] + [99]) + 1
+        if path.endswith("/issues"):
+            DATA.setdefault("issues", []).append({"number": number, "title": body["title"], "author": ME, "body": body.get("body", "")})
+            save()
+            print(json.dumps({"number": number, "html_url": f"https://github.com/owner/proj/issues/{number}"}))
+            return 0
         if path.endswith("/pulls"):
-            number = max([p["number"] for p in DATA["prs"]] + [99]) + 1
             DATA["prs"].append({"number": number, "title": body["title"], "author": ME, "head_ref": body["head"].split(":")[-1],
                                 "base_ref": body["base"], "state": "OPEN", "body_html": body.get("body", "")})
             save()

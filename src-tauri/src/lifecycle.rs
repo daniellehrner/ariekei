@@ -2,7 +2,10 @@
 //! - an issue whose branch was pushed gets a draft PR, and the item becomes that PR;
 //! - a finished item (PR merged/closed, issue closed, or marked done) is cleaned up:
 //!   agent, transcript, worktree and branch (if Ariekei created them), refs and context
-//!   are removed. Cleanup never loses work: it is refused while anything would be lost.
+//!   are removed. Cleanup never loses work: it is refused while anything would be lost;
+//! - a task is never finished by GitHub (it may still open more PRs): it ends when the user
+//!   marks it done (cleaned up like the rest, then deleted) or discards it (its work is
+//!   deleted too, after the user confirmed what is lost).
 
 use crate::AppState;
 use crate::git::{self, git};
@@ -95,19 +98,71 @@ pub enum Cleanup {
 }
 
 /// Cleans up item `id` if nothing would be lost; otherwise records and returns why not.
+/// A task is deleted afterwards (its PRs and issues stay, unlinked).
 pub fn clean_up(state: &AppState, id: i64) -> Result<Cleanup, String> {
     let item = state.store.item(id)?;
     let repo = state
         .store
         .repo(item.repo_id)?
         .ok_or("repository not found")?;
-    let key = id.to_string();
-    let found = blockers(&repo, &item, state.terminals.status(&key));
+    let found = blockers(&repo, &item, state.terminals.status(&id.to_string()));
     if !found.is_empty() {
         state.store.set_cleanup_blockers(id, Some(&found))?;
         return Ok(Cleanup::Blocked { blockers: found });
     }
+    let removed = remove(state, &repo, &item, false)?;
+    if item.is_task() {
+        state.store.delete_item(id)?;
+    } else {
+        state.store.mark_cleaned(id)?;
+    }
+    Ok(Cleanup::Cleaned { removed })
+}
 
+/// What discarding task `id` would lose besides the agent session: uncommitted changes and
+/// commits that are not on GitHub.
+pub fn discard_losses(state: &AppState, id: i64) -> Result<Vec<String>, String> {
+    let item = state.store.item(id)?;
+    let repo = state
+        .store
+        .repo(item.repo_id)?
+        .ok_or("repository not found")?;
+    Ok(blockers(&repo, &item, None))
+}
+
+/// Deletes task `id` with its worktree and branch even if that loses work (the user
+/// confirmed `discard_losses`); refused only while its agent is in the middle of a turn.
+pub fn discard(state: &AppState, id: i64) -> Result<Cleanup, String> {
+    let item = state.store.item(id)?;
+    if !item.is_task() {
+        return Err("only a task can be discarded".into());
+    }
+    let repo = state
+        .store
+        .repo(item.repo_id)?
+        .ok_or("repository not found")?;
+    if matches!(
+        state.terminals.status(&id.to_string()),
+        Some(AgentStatus::Working | AgentStatus::WaitingForPermission)
+    ) {
+        return Ok(Cleanup::Blocked {
+            blockers: vec!["The agent is in the middle of a turn".to_owned()],
+        });
+    }
+    let removed = remove(state, &repo, &item, true)?;
+    state.store.delete_item(id)?;
+    Ok(Cleanup::Cleaned { removed })
+}
+
+/// Removes the item's agent, transcript, worktree and branch (if Ariekei created them),
+/// refs and context files; `force`: even with uncommitted changes.
+fn remove(
+    state: &AppState,
+    repo: &Repo,
+    item: &WorkItem,
+    force: bool,
+) -> Result<Vec<String>, String> {
+    let key = item.id.to_string();
     let mut removed = vec![];
     if state.terminals.status(&key).is_some() {
         state.terminals.close(&key);
@@ -122,11 +177,17 @@ pub fn clean_up(state: &AppState, id: i64) -> Result<Cleanup, String> {
         item.worktree_path.as_deref().filter(|p| p.exists()),
         item.worktree_created,
     ) {
-        // Without --force: git refuses if the worktree has changes after all.
-        git(&repo.path, &["worktree", "remove", &dir.to_string_lossy()])?;
+        // Without --force (unless discarding): git refuses if the worktree has changes after all.
+        let dir_arg = dir.to_string_lossy();
+        let mut args = vec!["worktree", "remove", dir_arg.as_ref()];
+        if force {
+            args.push("--force");
+        }
+        git(&repo.path, &args)?;
         removed.push(format!("the worktree {}", dir.display()));
         if let Some(branch) = item.branch.as_deref().filter(|b| !b.is_empty()) {
-            // Its commits are on GitHub (checked above), so deleting the branch loses nothing.
+            // Its commits are on GitHub (checked above, unless discarding), so deleting the
+            // branch loses nothing.
             if git(&repo.path, &["branch", "-D", branch]).is_ok() {
                 removed.push(format!("the branch {branch}"));
             }
@@ -137,28 +198,32 @@ pub fn clean_up(state: &AppState, id: i64) -> Result<Cleanup, String> {
             dir.display()
         ));
     }
-    for name in [
-        format!("refs/ariekei/reviewed/pr-{}", item.number),
-        worktree::pull_ref(item.number),
-    ] {
+    let mut refs = vec![crate::workitem::reviewed_ref(item)];
+    if !item.is_task() {
+        refs.push(worktree::pull_ref(item.number));
+    }
+    for name in refs {
         if git::commit_exists(&repo.path, &name)
             && git(&repo.path, &["update-ref", "-d", &name]).is_ok()
         {
             removed.push(name);
         }
     }
-    for number in [Some(item.number), item.issue_number].into_iter().flatten() {
-        for kind in ["pr", "issue"] {
-            let _ = std::fs::remove_file(
-                state
-                    .data_dir
-                    .join("context")
-                    .join(format!("{}-{}-{kind}{number}.md", repo.owner, repo.name)),
-            );
+    let mut contexts = vec![item.slug()];
+    if !item.is_task() {
+        for number in [Some(item.number), item.issue_number].into_iter().flatten() {
+            contexts.extend(["pr", "issue"].map(|kind| format!("{kind}{number}")));
         }
     }
-    state.store.mark_cleaned(id)?;
-    Ok(Cleanup::Cleaned { removed })
+    for name in contexts {
+        let _ = std::fs::remove_file(
+            state
+                .data_dir
+                .join("context")
+                .join(format!("{}-{}-{name}.md", repo.owner, repo.name)),
+        );
+    }
+    Ok(removed)
 }
 
 /// Deletes a session transcript (`<id>.jsonl`) and its `<id>/` folder of subagent
@@ -180,10 +245,7 @@ pub fn after_poll(state: &AppState, app: &tauri::AppHandle, repo: &Repo) -> Resu
                 Ok(Some(number)) => crate::notify::lifecycle(
                     app,
                     &item.id.to_string(),
-                    &format!(
-                        "#{number} {}",
-                        item.snapshot["title"].as_str().unwrap_or_default()
-                    ),
+                    &format!("#{number} {}", item.title()),
                     "Opened a draft pull request for the pushed branch.",
                 ),
                 Ok(None) => {}
@@ -194,7 +256,8 @@ pub fn after_poll(state: &AppState, app: &tauri::AppHandle, repo: &Repo) -> Resu
         // past its 50 results) is not finished. Items with a worktree or session are
         // tracked, so they are always fetched by number and have a real state.
         let state_on_github = item.snapshot["state"].as_str().unwrap_or("OPEN");
-        let finished = !item.hidden && matches!(state_on_github, "MERGED" | "CLOSED");
+        let finished =
+            !item.hidden && !item.is_task() && matches!(state_on_github, "MERGED" | "CLOSED");
         if !finished {
             continue;
         }
@@ -203,21 +266,13 @@ pub fn after_poll(state: &AppState, app: &tauri::AppHandle, repo: &Repo) -> Resu
             Cleanup::Cleaned { removed } if !removed.is_empty() => crate::notify::lifecycle(
                 app,
                 &item.id.to_string(),
-                &format!(
-                    "#{} {}",
-                    item.number,
-                    item.snapshot["title"].as_str().unwrap_or_default()
-                ),
+                &item.label(),
                 &format!("Cleaned up: {}.", removed.join(", ")),
             ),
             Cleanup::Blocked { blockers } if !had_blockers => crate::notify::lifecycle(
                 app,
                 &item.id.to_string(),
-                &format!(
-                    "#{} {}",
-                    item.number,
-                    item.snapshot["title"].as_str().unwrap_or_default()
-                ),
+                &item.label(),
                 &format!(
                     "Finished, but kept so no work is lost: {}.",
                     blockers.join("; ")
@@ -225,6 +280,33 @@ pub fn after_poll(state: &AppState, app: &tauri::AppHandle, repo: &Repo) -> Resu
             ),
             _ => {}
         }
+        if let Some(task) = item.task_id.filter(|_| !had_blockers) {
+            outcome_closed(state, app, task)?;
+        }
+    }
+    Ok(())
+}
+
+/// One of task `task`'s PRs or issues just closed: says so when it was the last open one.
+/// The task is not cleaned up by itself: it may still open more, and cleanup would delete
+/// its agent's conversation.
+fn outcome_closed(state: &AppState, app: &tauri::AppHandle, task: i64) -> Result<(), String> {
+    let Ok(task) = state.store.item(task) else {
+        return Ok(());
+    };
+    let all_closed = state
+        .store
+        .items(task.repo_id)?
+        .iter()
+        .filter(|i| i.task_id == Some(task.id))
+        .all(|i| !i.open);
+    if all_closed {
+        crate::notify::lifecycle(
+            app,
+            &task.id.to_string(),
+            &task.label(),
+            "All its PRs and issues are closed. Mark the task done when you are finished with it.",
+        );
     }
     Ok(())
 }
@@ -312,6 +394,7 @@ mod tests {
             worktree_created: true,
             hidden: false,
             cleanup_blockers: None,
+            task_id: None,
         }
     }
 

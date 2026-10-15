@@ -103,6 +103,15 @@ fn find_existing(
 
 /// Branch name for an issue: `issue-<N>-<words of the title>`.
 pub fn issue_branch(number: i64, title: &str) -> String {
+    branch_name(&format!("issue-{number}"), title)
+}
+
+/// Branch name for task `T<n>`: `task-<n>-<words of the title>`.
+pub fn task_branch(n: i64, title: &str) -> String {
+    branch_name(&format!("task-{n}"), title)
+}
+
+fn branch_name(prefix: &str, title: &str) -> String {
     let mut slug = String::new();
     for word in title
         .to_lowercase()
@@ -118,9 +127,9 @@ pub fn issue_branch(number: i64, title: &str) -> String {
         slug.push_str(word);
     }
     if slug.is_empty() {
-        format!("issue-{number}")
+        prefix.to_owned()
     } else {
-        format!("issue-{number}-{slug}")
+        format!("{prefix}-{slug}")
     }
 }
 
@@ -140,7 +149,40 @@ pub fn prepare_issue(
     title: &str,
     default_branch: &str,
 ) -> Result<Prepared, String> {
-    let branch = issue_branch(number, title);
+    new_branch_worktree(
+        repo,
+        issue_branch(number, title),
+        &format!("issue{number}"),
+        default_branch,
+        "start working on the issue",
+    )
+}
+
+/// A worktree for task `T<n>`, like an issue's: branch `task-<n>-…`, path `<clone>_task<n>`.
+pub fn prepare_task(
+    repo: &Repo,
+    n: i64,
+    title: &str,
+    default_branch: &str,
+) -> Result<Prepared, String> {
+    new_branch_worktree(
+        repo,
+        task_branch(n, title),
+        &format!("task{n}"),
+        default_branch,
+        "start the task",
+    )
+}
+
+/// A new `branch` from the base remote's `default_branch` in the worktree
+/// `<clone>_<suffix>`, or the linked worktree that already has the branch.
+fn new_branch_worktree(
+    repo: &Repo,
+    branch: String,
+    suffix: &str,
+    default_branch: &str,
+    to: &str,
+) -> Result<Prepared, String> {
     let base = fetch(&repo.path, &repo.base_remote, default_branch)?;
     if let Some(w) = git::worktrees(&repo.path)?
         .into_iter()
@@ -162,10 +204,10 @@ pub fn prepare_issue(
         .path
         .parent()
         .unwrap_or(&repo.path)
-        .join(format!("{dir}_issue{number}"));
+        .join(format!("{dir}_{suffix}"));
     if path.exists() {
         return Err(format!(
-            "{} already exists; move it away to start working on the issue",
+            "{} already exists; move it away to {to}",
             path.display()
         ));
     }
@@ -575,6 +617,30 @@ mod tests {
                 .unwrap()
                 .adopted
         );
+    }
+
+    #[test]
+    fn task_worktree_is_a_new_branch_from_the_default_branch() {
+        let (root, repo, _pr) = setup();
+        let p = prepare_task(&repo, 2, "Why does sync stall?", "main").unwrap();
+        assert_eq!(canon(&p.path), canon(&root.path().join("proj_task2")));
+        assert_eq!(
+            (p.branch.as_str(), p.adopted),
+            ("task-2-why-does-sync-stall", false)
+        );
+        assert_eq!(
+            git::head(&p.path).unwrap(),
+            git_str(&repo.path, &["rev-parse", "origin/main"]).unwrap()
+        );
+        assert_eq!(
+            git_str(
+                &repo.path,
+                &["config", "branch.task-2-why-does-sync-stall.merge"]
+            )
+            .unwrap(),
+            "refs/heads/task-2-why-does-sync-stall"
+        );
+        assert_eq!(task_branch(3, "!"), "task-3");
     }
 
     #[test]

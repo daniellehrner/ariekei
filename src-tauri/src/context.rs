@@ -124,6 +124,32 @@ pub fn render_issue(
     md
 }
 
+/// Markdown for the agent of a task (no PR or issue yet). `notes`: what the user wants
+/// looked into.
+pub fn render_task(name: &str, title: &str, notes: &str, branch: &str, base: &str) -> String {
+    let mut md = String::new();
+    let _ = writeln!(md, "# Work item: task {name}: {title}");
+    let _ = writeln!(md);
+    let _ = writeln!(
+        md,
+        "You are working on this task in a git worktree opened from the Ariekei review \
+         workbench, on the new branch `{branch}` (from `{base}`). The user reviews your changes \
+         there. The task has no pull request or issue yet: it may end as one or more pull \
+         requests, issues, or nothing. Open pull requests with `gh pr create` and issues with \
+         `gh issue create` (only when the user asks); Ariekei links what they print to this \
+         task. Wait for the user's instructions before changing anything."
+    );
+    let notes = notes.trim();
+    if !notes.is_empty() {
+        let _ = writeln!(
+            md,
+            "\n## What to look into\n\n{}",
+            truncate(notes, MAX_BODY)
+        );
+    }
+    md
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,6 +215,22 @@ mod tests {
         assert!(md.contains("branch `issue-7-crash` (from `main`)"));
         assert!(md.contains("## Description\n\nIt crashes."));
         assert!(md.contains("**bob:** Me too"));
+    }
+
+    #[test]
+    fn renders_a_task_with_its_notes() {
+        let md = render_task(
+            "T2",
+            "Flaky sync",
+            "Peers drop.",
+            "task-2-flaky-sync",
+            "main",
+        );
+        assert!(md.starts_with("# Work item: task T2: Flaky sync"));
+        assert!(md.contains("branch `task-2-flaky-sync` (from `main`)"));
+        assert!(md.contains("`gh pr create`"));
+        assert!(md.contains("## What to look into\n\nPeers drop."));
+        assert!(!render_task("T2", "x", " ", "b", "main").contains("## What"));
     }
 
     #[test]

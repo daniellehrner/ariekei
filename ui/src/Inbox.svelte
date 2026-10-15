@@ -3,10 +3,11 @@
   import AttentionPip, { URGENCY } from "./controls/AttentionPip.svelte";
   import Icon from "./controls/Icon.svelte";
   import IconButton from "./controls/IconButton.svelte";
+  import Button from "./controls/Button.svelte";
   import Pill from "./controls/Pill.svelte";
   import StatusDot from "./controls/StatusDot.svelte";
   import { ATTENTION_LABEL, attentionKind } from "./lib/attention";
-  import { api, type Repo, type Row, type SearchHit } from "./lib/api";
+  import { api, shortName, type Repo, type Row, type SearchHit } from "./lib/api";
 
   let {
     repo,
@@ -32,7 +33,7 @@
     ontoggle: () => void;
     onselect: (id: number) => void;
     onrefresh: () => void;
-    /// A PR was added to the Inbox (from search).
+    /// A PR or task was added to the Inbox (from search, or New task).
     onadded: () => void;
     /// This window now shows another repo.
     onswitch: (repo: Repo) => void;
@@ -40,11 +41,14 @@
     onconnect: () => void;
   } = $props();
 
+  // A task's PRs and issues are listed under it, not in their own sections.
+  const own = (r: Row) => r.taskId == null;
   const SECTIONS: { key: string; title: string; empty: string; has: (r: Row) => boolean }[] = [
-    { key: "mine", title: "Mine", empty: "You have no open pull requests here.", has: (r) => r.kind === "pr" && r.role === "author" },
-    { key: "requested", title: "Review requested", empty: "Nothing here.", has: (r) => r.kind === "pr" && r.role === "requested" },
-    { key: "issues", title: "Issues", empty: "Nothing here.", has: (r) => r.kind === "issue" },
-    { key: "opened", title: "Opened", empty: "PRs you open from search appear here.", has: (r) => r.kind === "pr" && r.role === "other" },
+    { key: "tasks", title: "Tasks", empty: "", has: (r) => r.kind === "task" },
+    { key: "mine", title: "Mine", empty: "You have no open pull requests here.", has: (r) => own(r) && r.kind === "pr" && r.role === "author" },
+    { key: "requested", title: "Review requested", empty: "Nothing here.", has: (r) => own(r) && r.kind === "pr" && r.role === "requested" },
+    { key: "issues", title: "Issues", empty: "Nothing here.", has: (r) => own(r) && r.kind === "issue" },
+    { key: "opened", title: "Opened", empty: "PRs you open from search appear here.", has: (r) => own(r) && r.kind === "pr" && r.role === "other" },
   ];
   const DECISION: Record<string, [string, string]> = {
     APPROVED: ["approved", "ok"],
@@ -111,18 +115,94 @@
     }
   }
 
+  // --- New task: work with no PR or issue yet ---
+  let creating = $state(false);
+  let taskTitle = $state("");
+  let taskNotes = $state("");
+  let starting = $state(false);
+  let taskError: string | null = $state(null);
+
+  function newTask() {
+    creating = !creating;
+    taskError = null;
+  }
+
+  async function startTask(e: SubmitEvent) {
+    e.preventDefault();
+    if (!taskTitle.trim() || starting) return;
+    starting = true;
+    taskError = null;
+    try {
+      const id = await api.createTask(taskTitle, taskNotes);
+      creating = false;
+      taskTitle = taskNotes = "";
+      if (folded.includes("tasks")) fold("tasks");
+      onadded();
+      onselect(id);
+    } catch (err) {
+      taskError = String(err);
+    } finally {
+      starting = false;
+    }
+  }
+
+  function onTaskKey(e: KeyboardEvent) {
+    if (e.key === "Escape" && !starting) creating = false;
+  }
+
   function onSearchKey(e: KeyboardEvent) {
     if (e.key === "Escape") query = "";
     if (e.key === "Enter" && hits[0]) pick(hits[0]);
   }
 </script>
 
+{#snippet item(row: Row, section: string, nested: boolean)}
+  {@const kind = attentionKind(row.attention)}
+  {@const decision = row.reviewDecision ? DECISION[row.reviewDecision] : null}
+  <li class:closed={!row.open} class:nested>
+    <button class="row" class:active={row.id === selected} aria-current={row.id === selected} onclick={() => onselect(row.id)}
+      title={row.title} data-number={row.number} data-task={row.kind === "task" ? -row.number : undefined}>
+      <span class="dot"><StatusDot status={row.agent} /></span>
+      <span class="lines">
+        <span class="line1">
+          {#if nested}<span class="kind"><Icon name={row.kind === "pr" ? "pull-request" : "issue"} size={12} label={row.kind === "pr" ? "Pull request" : "Issue"} /></span>{/if}
+          <span class="num">{shortName(row)}</span>
+          <span class="title" class:strong={kind === "needs-you" || row.newActivity}>{row.title}</span>
+          {#if row.newActivity}
+            <svg class="new" width="8" height="8" viewBox="0 0 8 8" role="img" aria-label="New reviews or comments"><path d="M4 0.5L7.5 4 4 7.5 0.5 4z" /></svg>
+          {/if}
+        </span>
+        <span class="line2">
+          {#if section !== "mine" && section !== "tasks"}<span>{row.author}</span>{/if}
+          {#if row.kind === "task" && !rows.some((r) => r.taskId === row.id)}<span class="faint">no PR or issue yet</span>{/if}
+          {#if row.issueNumber}<span>from #{row.issueNumber}</span>{/if}
+          {#if row.ci}
+            {@const ci = row.ci === "SUCCESS" ? "ok" : CI_FAILING.has(row.ci) ? "bad" : "warn"}
+            <span class="ci {ci}" title="CI: {row.ci.toLowerCase()}{row.failingChecks.length ? ` (${row.failingChecks.join(', ')})` : ''}">
+              <Icon name={ci === "ok" ? "check" : ci === "bad" ? "x" : "pending"} size={12} label="CI {row.ci.toLowerCase()}" />
+            </span>
+          {/if}
+          {#if row.isDraft}<span class="faint">draft</span>{/if}
+          {#if !row.open}<span class="faint">closed</span>{/if}
+          {#if row.outcomesClosed}<span class="you" title="All its PRs and issues are closed: mark the task done when you are finished with it">all closed</span>{/if}
+          {#if decision}<span class={decision[1]}>{decision[0]}</span>{/if}
+          {#if row.unresolvedThreads}
+            <span class="threads" title="Unresolved review threads"><Icon name="comment" size={12} />{row.unresolvedThreads}</span>
+          {/if}
+          <span class="spacer"></span>
+          {#if kind !== "none"}<span class="attention {kind}">{ATTENTION_LABEL[kind]}</span>{/if}
+        </span>
+      </span>
+    </button>
+  </li>
+{/snippet}
+
 {#if collapsed}
   <aside class="inbox collapsed" aria-label="Inbox, collapsed">
     <IconButton icon="sidebar-expand" label="Expand Inbox (Ctrl+B)" size={28} onclick={ontoggle} />
     <span class="divider"></span>
     {#each pips as { row, kind } (row.id)}
-      {@const label = `#${row.number} ${row.title} — ${ATTENTION_LABEL[kind]}`}
+      {@const label = `${shortName(row)} ${row.title} — ${ATTENTION_LABEL[kind]}`}
       <button class="pip" class:active={row.id === selected} onclick={() => onselect(row.id)} title={label} aria-label={label} data-pip={row.number}>
         <AttentionPip {kind} label={ATTENTION_LABEL[kind]} />
       </button>
@@ -132,6 +212,7 @@
 <aside class="inbox" aria-label="Inbox">
   <header>
     <RepoMenu {repo} {onswitch} {onconnect} />
+    <IconButton icon="plus" label="New task — work with no PR or issue yet" size={28} onclick={newTask} data-new-task />
     <IconButton icon="refresh" label="Refresh from GitHub" size={28} onclick={onrefresh} />
     <IconButton icon="sidebar-collapse" label="Collapse Inbox (Ctrl+B)" size={28} onclick={ontoggle} />
   </header>
@@ -146,6 +227,19 @@
       />
     </label>
   </div>
+  {#if creating}
+    <form class="new-task" onsubmit={startTask} data-task-form>
+      <!-- svelte-ignore a11y_autofocus -->
+      <input bind:value={taskTitle} placeholder="Task title, e.g. Peers drop after restart" aria-label="Task title" autofocus disabled={starting} onkeydown={onTaskKey} />
+      <textarea bind:value={taskNotes} rows="3" placeholder="What to look into (optional; the agent gets it as context)" aria-label="What to look into" disabled={starting} onkeydown={onTaskKey}></textarea>
+      {#if taskError}<p class="task-error" role="alert">{taskError}</p>{/if}
+      <div class="form-actions">
+        {#if starting}<span class="muted">Creating the worktree…</span>{/if}
+        <Button size="sm" variant="quiet" type="button" onclick={() => (creating = false)} disabled={starting}>Cancel</Button>
+        <Button size="sm" variant="primary" icon="play" type="submit" disabled={!taskTitle.trim() || starting}>Start task</Button>
+      </div>
+    </form>
+  {/if}
   {#if error}
     <div class="poll-error" role="status" title={error}>
       <Icon name="warning" size={14} />
@@ -195,41 +289,12 @@
             {#if open}
               <ul>
                 {#each list as row (row.id)}
-                  {@const kind = attentionKind(row.attention)}
-                  {@const decision = row.reviewDecision ? DECISION[row.reviewDecision] : null}
-                  <li class:closed={!row.open}>
-                    <button class="row" class:active={row.id === selected} aria-current={row.id === selected} onclick={() => onselect(row.id)}
-                      title={row.title} data-number={row.number}>
-                      <span class="dot"><StatusDot status={row.agent} /></span>
-                      <span class="lines">
-                        <span class="line1">
-                          <span class="num">#{row.number}</span>
-                          <span class="title" class:strong={kind === "needs-you" || row.newActivity}>{row.title}</span>
-                          {#if row.newActivity}
-                            <svg class="new" width="8" height="8" viewBox="0 0 8 8" role="img" aria-label="New reviews or comments"><path d="M4 0.5L7.5 4 4 7.5 0.5 4z" /></svg>
-                          {/if}
-                        </span>
-                        <span class="line2">
-                          {#if section.key !== "mine"}<span>{row.author}</span>{/if}
-                          {#if row.issueNumber}<span>from #{row.issueNumber}</span>{/if}
-                          {#if row.ci}
-                            {@const ci = row.ci === "SUCCESS" ? "ok" : CI_FAILING.has(row.ci) ? "bad" : "warn"}
-                            <span class="ci {ci}" title="CI: {row.ci.toLowerCase()}{row.failingChecks.length ? ` (${row.failingChecks.join(', ')})` : ''}">
-                              <Icon name={ci === "ok" ? "check" : ci === "bad" ? "x" : "pending"} size={12} label="CI {row.ci.toLowerCase()}" />
-                            </span>
-                          {/if}
-                          {#if row.isDraft}<span class="faint">draft</span>{/if}
-                          {#if !row.open}<span class="faint">closed</span>{/if}
-                          {#if decision}<span class={decision[1]}>{decision[0]}</span>{/if}
-                          {#if row.unresolvedThreads}
-                            <span class="threads" title="Unresolved review threads"><Icon name="comment" size={12} />{row.unresolvedThreads}</span>
-                          {/if}
-                          <span class="spacer"></span>
-                          {#if kind !== "none"}<span class="attention {kind}">{ATTENTION_LABEL[kind]}</span>{/if}
-                        </span>
-                      </span>
-                    </button>
-                  </li>
+                  {@render item(row, section.key, false)}
+                  {#if row.kind === "task"}
+                    {#each rows.filter((r) => r.taskId === row.id) as link (link.id)}
+                      {@render item(link, section.key, true)}
+                    {/each}
+                  {/if}
                 {:else}
                   <li class="empty">{section.empty}</li>
                 {/each}
@@ -293,6 +358,17 @@
   .count { font-family: var(--font-mono); font-weight: var(--fw-medium); letter-spacing: 0; }
   ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
   li.closed { opacity: 0.6; }
+  li.nested .row { padding-left: 26px; }
+  .kind { flex: none; display: inline-flex; align-self: center; color: var(--text-faint); }
+  .you { color: var(--you-strong); font-weight: var(--fw-medium); }
+  .new-task {
+    flex: none; display: flex; flex-direction: column; gap: var(--sp-3); margin: 0 var(--sp-4) var(--sp-4);
+    padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-raised);
+  }
+  .new-task input, .new-task textarea { font: inherit; font-size: var(--fs-12); resize: vertical; }
+  .form-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-3); font-size: var(--fs-12); }
+  .form-actions .muted { flex: 1; }
+  .task-error { margin: 0; font-size: var(--fs-12); color: var(--bad); }
 
   .row {
     display: flex; gap: var(--sp-4); margin: 0 var(--sp-3); padding: var(--sp-3) var(--sp-4) 7px var(--sp-3);

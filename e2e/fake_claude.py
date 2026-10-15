@@ -11,6 +11,9 @@ Claude Code does (UserPromptSubmit, PermissionRequest, PostToolUse, Stop, Sessio
 - a `❯` prompt with "? for shortcuts", and `/code-review` offered while a `/` command is typed;
 - "Append a line with the word W to F, then commit with the message 'M'" asks permission to
   run git (Enter allows), then appends, commits and finishes the turn;
+- "Open a pull request titled 'T'" pushes the branch and opens the PR, "Open an issue titled
+  'T'" opens the issue (both through $ARIEKEI_GH, the fake gh), reporting them as the
+  `gh pr create` / `gh issue create` Bash call it stands for, with the URL it printed;
 - a line containing "ask" asks permission for a Bash command and waits;
 - anything else finishes the turn at once.
 Turns are kept in a transcript ($FAKE_CLAUDE_DIR, default <tmp>/ariekei-fake-claude), which
@@ -155,7 +158,26 @@ def turn(text, say, hook, keys):
     hook("UserPromptSubmit", prompt=text)
     time.sleep(0.8)  # a turn takes a moment, as the real one does
     task = re.search(r"word (\S+) to (\S+?),? then commit with the message '([^']+)'", text)
-    if task:
+    create = re.search(r"open (a pull request|an issue) titled '([^']+)'", text, re.I)
+    if create:
+        pr, title = create.group(1).lower() == "a pull request", create.group(2)
+        command = f"gh {'pr' if pr else 'issue'} create --title '{title}' --body ''"
+        hook("PreToolUse", tool_name="Bash", tool_input={"command": command})
+        origin = subprocess.run(["git", "config", "remote.origin.url"], capture_output=True, text=True).stdout  # not rewritten by insteadOf
+        slug = re.search(r"github\.com[:/](.+?)(?:\.git)?$", origin.strip()).group(1)
+        body = {"title": title, "body": ""}
+        if pr:
+            branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True).stdout.strip()
+            subprocess.run(["git", "push", "-q"], check=True, capture_output=True)
+            body.update(head=branch, base="main")
+        created = subprocess.run(
+            [sys.executable, os.environ["ARIEKEI_GH"], "api", f"repos/{slug}/{'pulls' if pr else 'issues'}", "--method", "POST", "--input", "-"],
+            input=json.dumps(body), capture_output=True, text=True, check=True)
+        url = json.loads(created.stdout)["html_url"]
+        hook("PostToolUse", tool_name="Bash", tool_input={"command": command},
+             tool_response={"stdout": url + "\n", "stderr": "", "interrupted": False})
+        say(f"⏺ Opened {url}")
+    elif task:
         word, path, message = task.groups()
         command = f"git commit -am '{message}'"
         out(f"Bash({command})\n  Do you want to proceed?\n  ❯ 1. Yes\n    2. No\n")
