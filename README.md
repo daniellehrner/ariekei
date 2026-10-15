@@ -25,7 +25,7 @@ code navigation or debugging, use your IDE on the same worktree. Tauri 2 (Rust) 
   connected repo, opens one in a new window, or connects another. Each repo is shown in one
   window at a time; every open repo is kept current, and the windows come back after a
   restart.
-- **Tasks:** start work with no PR or issue yet (+ in the Inbox, e.g. to investigate a bug). The
+- **Tasks:** start work with no PR or issue yet (Ctrl+N or + in the Inbox, e.g. to investigate a bug). The
   task gets a branch, worktree and agent; the PRs and issues its agent opens (`gh pr create`,
   `gh issue create`) are linked and listed under it. Done or Discard ends it.
 - **Lifecycle:** an issue gets a branch and worktree; its first push opens a draft PR. Merged

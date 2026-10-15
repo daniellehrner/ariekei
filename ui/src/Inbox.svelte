@@ -22,6 +22,7 @@
     onadded,
     onswitch,
     onconnect,
+    creating = $bindable(false),
   }: {
     repo: Repo;
     rows: Row[];
@@ -39,6 +40,8 @@
     onswitch: (repo: Repo) => void;
     /// Show the Connect screen (for another repo).
     onconnect: () => void;
+    /// The New task form is open (Ctrl+N opens it too, see App).
+    creating?: boolean;
   } = $props();
 
   // A task's PRs and issues are listed under it, not in their own sections.
@@ -116,7 +119,6 @@
   }
 
   // --- New task: work with no PR or issue yet ---
-  let creating = $state(false);
   let taskTitle = $state("");
   let taskNotes = $state("");
   let starting = $state(false);
@@ -212,7 +214,7 @@
 <aside class="inbox" aria-label="Inbox">
   <header>
     <RepoMenu {repo} {onswitch} {onconnect} />
-    <IconButton icon="plus" label="New task — work with no PR or issue yet" size={28} onclick={newTask} data-new-task />
+    <IconButton icon="plus" label="New task — work with no PR or issue yet (Ctrl+N)" size={28} onclick={newTask} data-new-task />
     <IconButton icon="refresh" label="Refresh from GitHub" size={28} onclick={onrefresh} />
     <IconButton icon="sidebar-collapse" label="Collapse Inbox (Ctrl+B)" size={28} onclick={ontoggle} />
   </header>

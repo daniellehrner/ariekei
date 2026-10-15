@@ -42,14 +42,26 @@
     api.setUiSetting("inboxCollapsed", String(inboxCollapsed));
   }
 
-  // Ctrl+B (Cmd+B) toggles the Inbox and Ctrl+Shift+N opens a new window, except in the
-  // agent terminal, where the keys belong to Claude Code.
+  // The Inbox's New task form.
+  let creatingTask = $state(false);
+
+  function newTask() {
+    if (collapsed) toggleInbox();
+    if (creatingTask) document.querySelector<HTMLInputElement>("[data-task-form] input")?.focus();
+    creatingTask = true;
+  }
+
+  // Ctrl+B (Cmd+B) toggles the Inbox, Ctrl+N starts a new task and Ctrl+Shift+N opens a new
+  // window, except in the agent terminal, where the keys belong to Claude Code.
   function onKeydown(e: KeyboardEvent) {
     if (!(e.ctrlKey || e.metaKey) || e.altKey || (e.target as Element | null)?.closest?.(".xterm")) return;
     const key = e.key.toLowerCase();
     if (!e.shiftKey && key === "b" && repo) {
       e.preventDefault();
       toggleInbox();
+    } else if (!e.shiftKey && key === "n" && repo && !connecting) {
+      e.preventDefault();
+      newTask();
     } else if (e.shiftKey && key === "n") {
       e.preventDefault();
       api.openWindow(null);
@@ -129,7 +141,7 @@
   {#key repo.id}
   <div class="app">
     <Inbox {repo} {rows} {loaded} {selected} error={pollError} {collapsed} ontoggle={toggleInbox} onselect={select} onrefresh={() => api.refresh()} onadded={reload}
-      onswitch={show} onconnect={() => (connecting = true)} />
+      onswitch={show} onconnect={() => (connecting = true)} bind:creating={creatingTask} />
     {#if current}
       <WorkItem row={current} {rows} repoId={repo.id} viewer={repo.viewer} onchanged={reload} onselect={select} />
     {:else}
@@ -138,10 +150,11 @@
         {#if loaded && !rows.length}
           <strong>Your Inbox is empty</strong>
           <span>Your open pull requests, review requests and assigned issues in {repo.owner}/{repo.name} appear here.
-            To review any other pull request, search for it. To start work that has no PR or issue yet, use + (New task).</span>
+            To review any other pull request, search for it. To start work that has no PR or issue yet, press <Kbd key="Ctrl+N" /> (New task).</span>
         {:else if loaded}
           <strong>{waiting ? `${waiting} item${waiting === 1 ? " wants" : "s want"} your attention` : "You're all caught up"}</strong>
-          <span>Pick an item in the Inbox{waiting ? ", starting at the top" : ""}. <Kbd key="Ctrl+B" /> shows or hides the Inbox.</span>
+          <span>Pick an item in the Inbox{waiting ? ", starting at the top" : ""}. <Kbd key="Ctrl+B" /> shows or hides the Inbox,
+            <Kbd key="Ctrl+N" /> starts a new task.</span>
         {:else}
           <span>Loading your pull requests…</span>
         {/if}

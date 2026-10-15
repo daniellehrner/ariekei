@@ -1,8 +1,8 @@
 """E2E: a task, work that starts with no PR or issue, against a fake GitHub.
 
 GitHub is e2e/fake_gh.py (ARIEKEI_GH) and the agent e2e/fake_claude.py (ARIEKEI_CLAUDE); the
-"GitHub" repo is a local git repo reached through insteadOf. Covers: New task (worktree on
-task-<n>-<slug> from main, the notes in the agent's context, the agent starts), the agent
+"GitHub" repo is a local git repo reached through insteadOf. Covers: New task (Ctrl+N;
+worktree on task-<n>-<slug> from main, the notes in the agent's context, the agent starts), the agent
 opening a PR and an issue (`gh pr create` / `gh issue create`) which are linked to the task
 and listed under it rather than in their sections, a linked PR pointing back to the task,
 a closed issue staying under its task, and Discard (shows the work it loses, then removes
@@ -103,7 +103,8 @@ try:
     equal("Inbox sections before", sections(s), ["Mine 0", "Opened 0"])
 
     # --- New task ---
-    s.click(s.wait("[data-new-task]"))
+    # Ctrl+N, as a user would (+ in the Inbox header does the same).
+    s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, bubbles: true }))")
     s.type(s.wait("[data-task-form] input"), "Peers drop after restart")
     s.type(s.wait("[data-task-form] textarea"), "Look at how the peer table is reset.")
     s.click(s.wait("[data-task-form] button[type=submit]"))
