@@ -69,7 +69,14 @@
     const output = new Channel<ArrayBuffer>();
     output.onmessage = (data) => t.write(new Uint8Array(data));
 
-    const send = (data: string) => opened && api.termWrite(id, data);
+    // What xterm sends before the terminal is open waits for it, in order. Not dropped: on
+    // Windows ConPTY asks for the cursor position (ESC[6n) as the process starts and holds
+    // the process until xterm's answer arrives; a lost answer left the agent hanging.
+    let pending: string[] = [];
+    const send = (data: string) => {
+      if (opened) api.termWrite(id, data);
+      else pending.push(data);
+    };
     t.onData(send);
     t.onBinary(send);
     t.onResize(({ cols, rows }) => opened && api.termResize(id, cols, rows));
@@ -81,6 +88,8 @@
       .termOpen(id, t.cols, t.rows, output)
       .then(() => {
         opened = true;
+        if (pending.length) api.termWrite(id, pending.join(""));
+        pending = [];
         if (disposed) api.termDetach(id, output.id);
         else {
           // Test handle: lets the e2e scenario read the screen buffer.

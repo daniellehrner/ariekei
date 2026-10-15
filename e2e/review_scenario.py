@@ -99,11 +99,20 @@ def tab(s, name):
     s.js("[...document.querySelectorAll('[role=tab]')].find(t => t.textContent.trim().startsWith(arguments[0]))?.click()", name)
 
 
+NEW_SIDE = """const el = document.querySelectorAll('.cm-mergeViewEditor .cm-content')[1];
+        const view = el && (el.cmView?.rootView?.view ?? el.cmTile?.root?.view ?? el.cmView?.view);"""
+
+
+def wait_new_side(s, lines):
+    """Waits until the new side shows a file of at least `lines` lines (after picking a file,
+    the previous one can still be on screen for a moment)."""
+    s.wait_js(NEW_SIDE + f"\n        return !!view && view.state.doc.lines >= {int(lines)};", timeout=20)
+
+
 def select_lines(s, first, last):
     """Selects lines in the right (new) side of the merge view, as a user would."""
     return s.js(
-        """const el = document.querySelectorAll('.cm-mergeViewEditor .cm-content')[1];
-        const view = el && (el.cmView?.rootView?.view ?? el.cmTile?.root?.view ?? el.cmView?.view);
+        NEW_SIDE + """
         if (!view) return 'no view: ' + Object.keys(el || {}).join(',');
         const doc = view.state.doc;
         view.dispatch({ selection: { anchor: doc.line(arguments[0]).from, head: doc.line(arguments[1]).to } });
@@ -193,8 +202,7 @@ try:
     print("[review] c.rs styled tokens:", s.js("return document.querySelectorAll('.cm-mergeViewEditor .cm-line span[class]').length"))
     check("a Rust file is highlighted", s.js("return document.querySelectorAll('.cm-mergeViewEditor .cm-line span[class]').length") > 0)
     s.click(s.wait(".files [data-file='a.txt']"))
-    s.wait(".cm-mergeViewEditor", timeout=20)
-    time.sleep(0.5)
+    wait_new_side(s, 10)
     add_comment(s, 10, 10, "Name this better.")
     add_comment(s, 1, 1, "Unrelated: the header is stale.")
     print("[draft]", s.js("return [...document.querySelectorAll('[data-drafts] li')].map(l => l.innerText.replace(/\\s+/g, ' ').trim())"))
