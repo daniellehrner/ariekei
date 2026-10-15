@@ -35,7 +35,7 @@
   /* Focus — 2px ring, 1px offset, on every interactive element */
   --focus-ring: 0 0 0 1px var(--surface-0), 0 0 0 3px var(--focus);
 
-  /* Motion — only fades and the agent "working" ring */
+  /* Motion — fades, the agent "working" ring, and notices sliding in with a pulse */
   --dur-fast: 120ms; --dur: 180ms; --ease: cubic-bezier(0.2, 0, 0, 1);
 
   /* Surfaces */

@@ -16,7 +16,7 @@ D-Bus; to choose the theme, point D-Bus nowhere and set it in a GTK settings fil
   E2E_WEBDRIVER=http://127.0.0.1:4444 python3 -I e2e/gallery.py <app> <work> [light|dark] [1440x900] [screen,...]
 
 Screens: connect, empty (nothing selected yet), overview, menu, comments, collapsed, waiting, terminal, review, guide,
-selection, drafts, submit, shortcuts, guard, review-hidden.
+selection, drafts, submit, shortcuts, guard, review-hidden, notice-arriving, notices.
 """
 
 import json
@@ -207,6 +207,23 @@ try:
             s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }))")
             click(s, "[data-toggle='side']")
             shot(s, "review-hidden")
+    if need("notice-arriving", "notices"):
+        # One notice of each kind, as the backend sends them (notify.rs).
+        s.js("""const rows = (await window.__TAURI_INTERNALS__.invoke('inbox')).filter((r) => r.kind !== 'task');
+          const emit = (i, kind, title, body) => window.__TAURI_INTERNALS__.invoke('plugin:event|emit',
+            { event: 'notice', payload: { item: rows[i]?.id ?? null, kind, title, body } });
+          await emit(1, 'finished', '#' + rows[1]?.number + ' ' + rows[1]?.title, 'The agent finished.');
+          await emit(2, 'ci-failing', '#' + rows[2]?.number + ' ' + rows[2]?.title, 'CI is failing: build (ubuntu-24.04)');
+          await emit(3, 'activity', '#' + rows[3]?.number + ' ' + rows[3]?.title, 'New reviews or comments.');""")
+        s.wait("[data-notice='activity']", timeout=10)
+        s.js("""const rows = (await window.__TAURI_INTERNALS__.invoke('inbox')).filter((r) => r.kind !== 'task');
+          await window.__TAURI_INTERNALS__.invoke('plugin:event|emit', { event: 'notice', payload: { item: null,
+            kind: 'needs-you', title: '#' + rows[4]?.number + ' ' + rows[4]?.title, body: 'The agent is waiting for your permission: Bash(./gradlew test)' } });""")
+        time.sleep(0.15)
+        if wanted is None or "notice-arriving" in wanted:
+            print("[shot] notice-arriving:", "saved" if s.screenshot(os.path.join(shots, "notice-arriving.png")) else "skipped", flush=True)
+        time.sleep(1)
+        shot(s, "notices")
 except Exception:
     print("[page]", s.js("return document.body.innerText.slice(0, 1500)"))
     raise
