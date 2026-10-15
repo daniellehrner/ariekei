@@ -238,12 +238,12 @@ fn remove_transcript(path: &Path) -> bool {
 
 /// Run after every poll: open draft PRs for pushed issue branches, and clean up items
 /// that are finished.
-pub fn after_poll(state: &AppState, app: &tauri::AppHandle, repo: &Repo) -> Result<(), String> {
+pub fn after_poll(state: &AppState, repo: &Repo) -> Result<(), String> {
     for item in state.store.items(repo.id)? {
         if item.kind == "issue" && item.open && item.worktree_path.is_some() {
             match open_draft_pr(state, repo, &item) {
                 Ok(Some(number)) => crate::notify::lifecycle(
-                    app,
+                    state,
                     &item.id.to_string(),
                     &format!("#{number} {}", item.title()),
                     "Opened a draft pull request for the pushed branch.",
@@ -264,13 +264,13 @@ pub fn after_poll(state: &AppState, app: &tauri::AppHandle, repo: &Repo) -> Resu
         let had_blockers = item.cleanup_blockers.is_some();
         match clean_up(state, item.id)? {
             Cleanup::Cleaned { removed } if !removed.is_empty() => crate::notify::lifecycle(
-                app,
+                state,
                 &item.id.to_string(),
                 &item.label(),
                 &format!("Cleaned up: {}.", removed.join(", ")),
             ),
             Cleanup::Blocked { blockers } if !had_blockers => crate::notify::lifecycle(
-                app,
+                state,
                 &item.id.to_string(),
                 &item.label(),
                 &format!(
@@ -281,7 +281,7 @@ pub fn after_poll(state: &AppState, app: &tauri::AppHandle, repo: &Repo) -> Resu
             _ => {}
         }
         if let Some(task) = item.task_id.filter(|_| !had_blockers) {
-            outcome_closed(state, app, task)?;
+            outcome_closed(state, task)?;
         }
     }
     Ok(())
@@ -290,7 +290,7 @@ pub fn after_poll(state: &AppState, app: &tauri::AppHandle, repo: &Repo) -> Resu
 /// One of task `task`'s PRs or issues just closed: says so when it was the last open one.
 /// The task is not cleaned up by itself: it may still open more, and cleanup would delete
 /// its agent's conversation.
-fn outcome_closed(state: &AppState, app: &tauri::AppHandle, task: i64) -> Result<(), String> {
+fn outcome_closed(state: &AppState, task: i64) -> Result<(), String> {
     let Ok(task) = state.store.item(task) else {
         return Ok(());
     };
@@ -302,7 +302,7 @@ fn outcome_closed(state: &AppState, app: &tauri::AppHandle, task: i64) -> Result
         .all(|i| !i.open);
     if all_closed {
         crate::notify::lifecycle(
-            app,
+            state,
             &task.id.to_string(),
             &task.label(),
             "All its PRs and issues are closed. Mark the task done when you are finished with it.",

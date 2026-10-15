@@ -4,58 +4,12 @@
 //! focused the notice appears in it (an OS notification is easy to miss with the app in
 //! front, and some desktops don't show one then); otherwise it is an OS notification.
 
+use crate::AppState;
 use crate::github::PrSummary;
 use crate::hooks::AgentStatus;
-use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
-use tauri_plugin_notification::NotificationExt;
 
-fn watching(app: &AppHandle, key: &str) -> bool {
-    app.state::<crate::AppState>()
-        .windows
-        .showing(key)
-        .iter()
-        .filter_map(|label| app.get_webview_window(label))
-        .any(|w| w.is_focused().unwrap_or(false))
-}
-
-/// An in-app notice (the `notice` event). `kind`: needs-you, finished, error, ci-failing,
-/// activity or lifecycle.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Notice<'a> {
-    item: Option<i64>,
-    kind: &'a str,
-    title: &'a str,
-    body: &'a str,
-}
-
-fn tell(app: &AppHandle, key: &str, kind: &str, title: &str, body: &str) {
-    let focused = app
-        .webview_windows()
-        .into_iter()
-        .find(|(_, w)| w.is_focused().unwrap_or(false));
-    if let Some((label, _)) = focused {
-        let notice = Notice {
-            item: key.parse().ok(),
-            kind,
-            title,
-            body,
-        };
-        if let Err(e) = app.emit_to(label.as_str(), "notice", notice) {
-            tracing::warn!("notice failed: {e}");
-        }
-    } else if let Err(e) = app.notification().builder().title(title).body(body).show() {
-        tracing::warn!("notification failed: {e}");
-    }
-}
-
-fn label(app: &AppHandle, key: &str) -> String {
-    let item = key
-        .parse()
-        .ok()
-        .and_then(|id| app.state::<crate::AppState>().store.item(id).ok());
-    match item {
+fn label(state: &AppState, key: &str) -> String {
+    match key.parse().ok().and_then(|id| state.store.item(id).ok()) {
         Some(item) => item.label(),
         None => key.to_owned(),
     }
@@ -85,23 +39,23 @@ fn agent_message(
 }
 
 pub fn agent_status(
-    app: &AppHandle,
+    state: &AppState,
     key: &str,
     previous: AgentStatus,
     status: AgentStatus,
     detail: Option<&str>,
 ) {
     if let Some((kind, message)) = agent_message(previous, status, detail)
-        && !watching(app, key)
+        && !state.events.watching(key)
     {
-        tell(app, key, kind, &label(app, key), &message);
+        state.events.notice(key, kind, &label(state, key), &message);
     }
 }
 
 /// A work item started or ended its life (draft PR opened, cleaned up, cleanup blocked).
-pub fn lifecycle(app: &AppHandle, key: &str, title: &str, message: &str) {
-    if !watching(app, key) {
-        tell(app, key, "lifecycle", title, message);
+pub fn lifecycle(state: &AppState, key: &str, title: &str, message: &str) {
+    if !state.events.watching(key) {
+        state.events.notice(key, "lifecycle", title, message);
     }
 }
 
@@ -121,13 +75,12 @@ fn pr_messages(before: &PrSummary, after: &PrSummary) -> Vec<(&'static str, Stri
     messages
 }
 
-pub fn pr_changed(app: &AppHandle, key: &str, before: &PrSummary, after: &PrSummary) {
-    if watching(app, key) {
+pub fn pr_changed(state: &AppState, key: &str, before: &PrSummary, after: &PrSummary) {
+    if state.events.watching(key) {
         return;
     }
     for (kind, message) in pr_messages(before, after) {
-        tell(
-            app,
+        state.events.notice(
             key,
             kind,
             &format!("#{} {}", after.number, after.title),

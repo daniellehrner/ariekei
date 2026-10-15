@@ -2,6 +2,7 @@ mod claude;
 mod context;
 #[cfg(feature = "e2e")]
 mod e2e;
+mod events;
 mod git;
 mod github;
 mod guide;
@@ -34,6 +35,39 @@ pub struct AppState {
     /// The repo and work item each window shows (no notifications for an item while its
     /// window is focused).
     windows: windows::Windows,
+    /// What the backend tells the windows and the desktop.
+    events: Arc<dyn events::Events>,
+}
+
+impl AppState {
+    fn new(
+        store: store::Store,
+        data_dir: PathBuf,
+        events: Arc<dyn events::Events>,
+        launch: Result<Launch, String>,
+        poller: poller::Poller,
+    ) -> Self {
+        Self {
+            terminals: TerminalManager::new(events.clone(), launch),
+            store,
+            poller,
+            data_dir,
+            windows: windows::Windows::default(),
+            events,
+        }
+    }
+
+    /// Records an agent's new status (see `TerminalManager::report`) and tells the user
+    /// about it when it needs them; the status goes out first, so an in-app notice about it
+    /// finds the status it is about.
+    fn report(&self, key: &str, status: hooks::AgentStatus, detail: Option<String>) {
+        let shown = detail.clone();
+        if let Some(previous) = self.terminals.report(key, status, detail)
+            && previous != status
+        {
+            notify::agent_status(self, key, previous, status, shown.as_deref());
+        }
+    }
 }
 
 type Res<T> = Result<T, String>;
@@ -538,16 +572,16 @@ pub fn run() {
                 Err(e) => tracing::warn!("agents unavailable: {e}"),
             }
             let store = store::Store::open(&data_dir.join("ariekei.db"))?;
-            app.manage(AppState {
-                terminals: TerminalManager::new(app.handle().clone(), launch),
+            app.manage(AppState::new(
                 store,
-                poller: poller::Poller::start(
+                data_dir,
+                Arc::new(events::TauriEvents(app.handle().clone())),
+                launch,
+                poller::Poller::start(
                     app.handle().clone(),
                     std::env::var_os("ARIEKEI_NO_POLL").is_none(),
                 ),
-                data_dir,
-                windows: windows::Windows::default(),
-            });
+            ));
             if let Err(e) = workitem::reconcile(&app.state::<AppState>()) {
                 tracing::warn!("reconcile failed: {e}");
             }

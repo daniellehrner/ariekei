@@ -10,7 +10,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager as _};
+use tauri::{AppHandle, Manager as _};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,27 +22,6 @@ pub enum AgentStatus {
     Finished,
     Error,
     Stopped,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-enum AgentEvent {
-    Status {
-        key: String,
-        status: AgentStatus,
-        detail: Option<String>,
-    },
-}
-
-pub fn emit_status(app: &AppHandle, key: &str, status: AgentStatus, detail: Option<String>) {
-    let event = AgentEvent::Status {
-        key: key.to_owned(),
-        status,
-        detail,
-    };
-    if let Err(e) = app.emit("agent-event", &event) {
-        tracing::warn!("failed to emit agent event: {e}");
-    }
 }
 
 /// The fields Ariekei uses from a hook payload; everything else is ignored.
@@ -179,35 +158,42 @@ pub fn created_links(event: &HookEvent, owner: &str, name: &str) -> Vec<(&'stati
     found
 }
 
-/// Links what a task's agent just opened on GitHub to the task (in the background: it
-/// fetches each from GitHub), then refreshes the Inbox.
-fn link_created(app: &AppHandle, state: &crate::AppState, key: &str, event: &HookEvent) {
-    let Some(task) = key.parse().ok().and_then(|id| state.store.item(id).ok()) else {
-        return;
-    };
+/// PRs and issues a task's agent opened on GitHub, to link to the task.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskLinks {
+    pub task: i64,
+    pub repo: i64,
+    /// ("pr" | "issue", number), see `created_links`.
+    pub links: Vec<(&'static str, i64)>,
+}
+
+/// What the task behind terminal `key` just opened on GitHub, if anything.
+fn links_of_task(state: &crate::AppState, key: &str, event: &HookEvent) -> Option<TaskLinks> {
+    let task = state.store.item(key.parse().ok()?).ok()?;
     if !task.is_task() {
-        return;
+        return None;
     }
-    let Ok(Some(repo)) = state.store.repo(task.repo_id) else {
-        return;
-    };
+    let repo = state.store.repo(task.repo_id).ok()??;
     let links = created_links(event, &repo.owner, &repo.name);
-    if links.is_empty() {
-        return;
-    }
-    let app = app.clone();
-    std::thread::spawn(move || {
-        let state = app.state::<crate::AppState>();
-        for (kind, number) in links {
-            if let Err(e) = crate::workitem::link_created(&state, task.id, kind, number) {
-                tracing::warn!(
-                    "could not link {kind} #{number} to {}: {e}",
-                    task.short_name()
-                );
-            }
+    (!links.is_empty()).then_some(TaskLinks {
+        task: task.id,
+        repo: repo.id,
+        links,
+    })
+}
+
+/// Links what a task's agent opened on GitHub to the task (fetching each from GitHub), then
+/// refreshes the Inbox.
+pub fn link_to_task(state: &crate::AppState, links: &TaskLinks) {
+    for (kind, number) in &links.links {
+        if let Err(e) = crate::workitem::link_created(state, links.task, kind, *number) {
+            tracing::warn!(
+                "could not link {kind} #{number} to task {}: {e}",
+                links.task
+            );
         }
-        let _ = app.emit("inbox-changed", repo.id);
-    });
+    }
+    state.events.inbox_changed(links.repo);
 }
 
 /// Hooks settings for `claude --settings`: one http hook per event, posting to `url`.
@@ -298,16 +284,25 @@ fn handle(mut stream: TcpStream, expected_path: &str) -> std::io::Result<Option<
     Ok(serde_json::from_slice(&body).ok())
 }
 
-/// Routes a hook event to its work item and updates the item's status.
+/// Routes a hook event to its work item and updates the item's status. What a task's agent
+/// opened on GitHub is linked in the background (it fetches each from GitHub).
 pub fn dispatch(app: &AppHandle, event: HookEvent) {
     // Events can arrive before the app state exists (startup race): drop those.
     let Some(state) = app.try_state::<crate::AppState>() else {
         return;
     };
-    let Some(key) = state.terminals.key_for_session(&event.session_id) else {
-        // Hooks of sessions Ariekei did not start (or already closed) are ignored.
-        return;
-    };
+    if let Some(links) = record(&state, &event) {
+        let app = app.clone();
+        std::thread::spawn(move || link_to_task(&app.state::<crate::AppState>(), &links));
+    }
+}
+
+/// The part of `dispatch` that needs no app: records the session start and the status of
+/// the event's terminal, and returns what a task's agent opened on GitHub, to be linked
+/// (`link_to_task`).
+pub fn record(state: &crate::AppState, event: &HookEvent) -> Option<TaskLinks> {
+    // Hooks of sessions Ariekei did not start (or already closed) are ignored.
+    let key = state.terminals.key_for_session(&event.session_id)?;
     if event.hook_event_name == "UserPromptSubmit"
         && let Ok(id) = key.parse()
         && let Err(e) = state
@@ -316,10 +311,11 @@ pub fn dispatch(app: &AppHandle, event: HookEvent) {
     {
         tracing::warn!("failed to record session start: {e}");
     }
-    link_created(app, &state, &key, &event);
-    if let Some((status, detail)) = status_for(&event) {
-        state.terminals.report(&key, status, detail);
+    let links = links_of_task(state, &key, event);
+    if let Some((status, detail)) = status_for(event) {
+        state.report(&key, status, detail);
     }
+    links
 }
 
 #[cfg(test)]

@@ -6,15 +6,15 @@
 //! Terminals nobody looks at and whose agent is idle are closed after a while; the
 //! conversation is resumed when the item is opened again.
 
-use crate::hooks::{AgentStatus, emit_status};
+use crate::events::Events;
+use crate::hooks::AgentStatus;
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
-use tauri::AppHandle;
 use tauri::ipc::{Channel, InvokeResponseBody};
 
 const SCROLLBACK_BYTES: usize = 2 << 20;
@@ -95,7 +95,9 @@ pub struct Opened {
 }
 
 pub struct TerminalManager {
-    app: AppHandle,
+    events: Arc<dyn Events>,
+    /// This manager, for the threads of its terminals.
+    me: Weak<TerminalManager>,
     /// Why terminals cannot start (e.g. `claude` not found), reported on open.
     launch: Result<Launch, String>,
     terms: Mutex<HashMap<String, Arc<Term>>>,
@@ -143,9 +145,10 @@ fn idle(status: AgentStatus) -> bool {
 }
 
 impl TerminalManager {
-    pub fn new(app: AppHandle, launch: Result<Launch, String>) -> Arc<Self> {
-        let manager = Arc::new(Self {
-            app,
+    pub fn new(events: Arc<dyn Events>, launch: Result<Launch, String>) -> Arc<Self> {
+        let manager = Arc::new_cyclic(|me| Self {
+            events,
+            me: me.clone(),
             launch,
             terms: Mutex::default(),
         });
@@ -194,16 +197,20 @@ impl TerminalManager {
         self.get(key).ok().map(|t| t.status.lock().unwrap().0)
     }
 
-    /// Records and broadcasts a status change for a running terminal.
-    pub fn report(&self, key: &str, status: AgentStatus, detail: Option<String>) {
-        let Ok(term) = self.get(key) else { return };
+    /// Records and broadcasts a status change for a running terminal; returns the status
+    /// before, or `None` when no terminal runs for the item. (`AppState::report` also tells
+    /// the user about the change.)
+    pub fn report(
+        &self,
+        key: &str,
+        status: AgentStatus,
+        detail: Option<String>,
+    ) -> Option<AgentStatus> {
+        let term = self.get(key).ok()?;
         let previous =
             std::mem::replace(&mut *term.status.lock().unwrap(), (status, Instant::now())).0;
-        // The status first: an in-app notice about it checks the status it arrives with.
-        emit_status(&self.app, key, status, detail.clone());
-        if previous != status {
-            crate::notify::agent_status(&self.app, key, previous, status, detail.as_deref());
-        }
+        self.events.agent_status(key, status, detail);
+        Some(previous)
     }
 
     /// Attaches `view` to the item's terminal, starting `claude` in `cwd` if it isn't
@@ -276,10 +283,10 @@ impl TerminalManager {
             .lock()
             .unwrap()
             .insert(key.to_owned(), term.clone());
-        emit_status(&self.app, key, AgentStatus::Starting, None);
+        self.events.agent_status(key, AgentStatus::Starting, None);
 
-        let (reader_term, reader_app, reader_key) =
-            (term.clone(), self.app.clone(), key.to_owned());
+        let (reader_term, reader_manager, reader_key) =
+            (term.clone(), self.me.clone(), key.to_owned());
         std::thread::Builder::new()
             .name(format!("pty-read {key}"))
             .spawn(move || {
@@ -292,29 +299,27 @@ impl TerminalManager {
                     }
                     total += n;
                     reader_term.output.lock().unwrap().push(&buf[..n]);
-                    if std::mem::take(&mut first) {
+                    if std::mem::take(&mut first)
+                        && let Some(manager) = reader_manager.upgrade()
+                    {
                         // The TUI is up; hooks report everything after this.
-                        use tauri::Manager as _;
-                        reader_app.state::<crate::AppState>().terminals.report(
-                            &reader_key,
-                            AgentStatus::Ready,
-                            None,
-                        );
+                        manager.report(&reader_key, AgentStatus::Ready, None);
                     }
                 }
                 tracing::info!("agent {reader_key} output ended after {total} bytes");
             })
             .map_err(|e| e.to_string())?;
 
-        let (app, wait_key, wait_term) = (self.app.clone(), key.to_owned(), term.clone());
+        let (wait_manager, wait_key, wait_term) = (self.me.clone(), key.to_owned(), term.clone());
         std::thread::Builder::new()
             .name(format!("pty-wait {key}"))
             .spawn(move || {
                 let status = child.wait();
                 tracing::info!("agent {wait_key} exited: {status:?}");
-                use tauri::Manager as _;
-                let state = app.state::<crate::AppState>();
-                let mut terms = state.terminals.terms.lock().unwrap();
+                let Some(manager) = wait_manager.upgrade() else {
+                    return;
+                };
+                let mut terms = manager.terms.lock().unwrap();
                 // Only forget the entry if it is still this process (not a restarted one).
                 if terms
                     .get(&wait_key)
@@ -327,7 +332,9 @@ impl TerminalManager {
                     .ok()
                     .filter(|s| !s.success())
                     .map(|s| format!("exit {}", s.exit_code()));
-                emit_status(&app, &wait_key, AgentStatus::Stopped, detail);
+                manager
+                    .events
+                    .agent_status(&wait_key, AgentStatus::Stopped, detail);
             })
             .map_err(|e| e.to_string())?;
 

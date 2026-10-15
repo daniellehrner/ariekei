@@ -10,10 +10,9 @@
 
 use crate::github::{self, PrSummary};
 use crate::store::{PolledPr, Repo};
-use serde::Serialize;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
 /// Seconds between polls; `ARIEKEI_POLL_SECS` shortens it for tests.
 fn interval() -> Duration {
@@ -47,13 +46,6 @@ impl Poller {
     }
 }
 
-/// A failed poll of one repo (`inbox-error`).
-#[derive(Clone, Serialize)]
-struct PollError {
-    repo: i64,
-    message: String,
-}
-
 /// Every this many polls, all details are fetched again (see the module docs).
 const FULL_EVERY: u32 = 10;
 
@@ -74,35 +66,17 @@ fn run(app: AppHandle, wake: Receiver<()>) {
             let Ok(Some(repo)) = state.store.repo(id) else {
                 continue;
             };
-            // `inbox-changed` and `inbox-error` carry the repo id: each window shows one.
-            match poll(&app, &repo, full) {
-                Ok(()) => {
-                    let _ = app.emit("inbox-changed", repo.id);
-                }
-                Err(message) => {
-                    let message = match rate_limited(&message) {
-                        Some(until_reset) => {
-                            wait = wait.max(until_reset);
-                            format!(
-                                "GitHub's API rate limit is used up (it is shared with gh and your agents); \
-                                 Ariekei polls again in {} min.",
-                                until_reset.as_secs().div_ceil(60)
-                            )
-                        }
-                        None => message,
-                    };
+            match poll(&state, &repo, full) {
+                Ok(()) => state.events.inbox_changed(repo.id),
+                Err(error) => {
+                    let (message, until_reset) = poll_failure(error);
+                    wait = wait.max(until_reset.unwrap_or_default());
                     tracing::warn!(
                         "GitHub poll of {}/{} failed: {message}",
                         repo.owner,
                         repo.name
                     );
-                    let _ = app.emit(
-                        "inbox-error",
-                        PollError {
-                            repo: repo.id,
-                            message,
-                        },
-                    );
+                    state.events.inbox_error(repo.id, &message);
                 }
             }
         }
@@ -113,6 +87,22 @@ fn run(app: AppHandle, wake: Receiver<()>) {
         };
         // Coalesce a burst of refresh requests into one poll.
         while wake.try_recv().is_ok() {}
+    }
+}
+
+/// What the Inbox says about a failed poll, and how long to wait for GitHub's rate limit
+/// to reset when that was the cause.
+fn poll_failure(error: String) -> (String, Option<Duration>) {
+    match rate_limited(&error) {
+        Some(until_reset) => (
+            format!(
+                "GitHub's API rate limit is used up (it is shared with gh and your agents); \
+                 Ariekei polls again in {} min.",
+                until_reset.as_secs().div_ceil(60)
+            ),
+            Some(until_reset),
+        ),
+        None => (error, None),
     }
 }
 
@@ -183,8 +173,7 @@ fn rfc3339_secs(t: &str) -> Option<u64> {
 /// One poll of `repo`: the viewer's PRs, PRs requesting their review, and the PRs they
 /// track (by number, so merged/closed ones get their final state). `full`: fetch the
 /// details of every PR, not only of those that changed.
-pub fn poll(app: &AppHandle, repo: &Repo, full: bool) -> Result<(), String> {
-    let state = app.state::<crate::AppState>();
+pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), String> {
     let (o, n, me) = (&repo.owner, &repo.name, &repo.viewer);
     let before = state.store.items(repo.id)?;
     let mine = github::search_pr_stamps(o, n, &format!("author:{me}"))?;
@@ -282,7 +271,7 @@ pub fn poll(app: &AppHandle, repo: &Repo, full: bool) -> Result<(), String> {
             continue;
         };
         match old.and_then(|o| serde_json::from_value::<PrSummary>(o.snapshot.clone()).ok()) {
-            Some(previous) => crate::notify::pr_changed(app, &item.id.to_string(), &previous, pr),
+            Some(previous) => crate::notify::pr_changed(state, &item.id.to_string(), &previous, pr),
             // First sight of this PR: what is there now counts as seen, so only later
             // activity shows up as new.
             None => state
@@ -292,13 +281,13 @@ pub fn poll(app: &AppHandle, repo: &Repo, full: bool) -> Result<(), String> {
     }
     // After the lifecycle step, which turns pushed issues into their PRs: their commits count
     // as the user's from this poll on, not only from the next one.
-    crate::lifecycle::after_poll(&state, app, repo)?;
+    crate::lifecycle::after_poll(state, repo)?;
     // Whose commits a PR has is needed only to tell whether its worktree has changes to review.
     for item in state.store.items(repo.id)? {
         if item.kind == "pr"
             && item.open
             && item.worktree_path.is_some()
-            && let Err(e) = crate::workitem::refresh_own_commits(&state, repo, &item)
+            && let Err(e) = crate::workitem::refresh_own_commits(state, repo, &item)
         {
             tracing::warn!("could not fetch the commits of PR #{}: {e}", item.number);
         }
