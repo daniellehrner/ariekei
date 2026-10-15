@@ -33,6 +33,20 @@ told apart in grey-scale and with colour blindness:
 - The app icon (`src-tauri/icons/`) is the same mark: a circle (the agent) and a square (you)
   overlapping where the work is decided.
 
+## Notices
+
+A notice tells the focused window about another item (`Notices.svelte`; unfocused, it is an OS
+notification). It sits in the bottom right corner, so it has to be seen without being loud:
+
+- Its kind's colour, the same as the item's attention pip: copper when the agent needs you, blue
+  when it finished (your review is next), red for CI failing or an error, violet for new GitHub
+  activity, the info tone for lifecycle news. The colour is a tinted fill and a border, nothing
+  more (no glow, no accent bar).
+- It fades in with a short slide from the edge (`--dur-slow`, `--ease`) and pulses once
+  (`--dur-pulse`); a permission request pulses three times. Nothing keeps moving after that, and with reduced motion nothing moves.
+- Clicking it opens the item. A permission request stays until the agent moves on; the rest go
+  after ten seconds.
+
 ## Behaviour that comes with the design
 
 - An item opens on the tab that resolves its attention reason: the agent needs you → Terminal,

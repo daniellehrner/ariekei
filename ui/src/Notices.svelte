@@ -2,8 +2,8 @@
   In-app notices (the backend's `notice` event, see notify.rs): shown instead of an OS
   notification while this window is focused. Clicking one opens its item; "waiting for your
   permission" stays until the agent moves on, the rest fade after a while. Each is tinted in
-  its kind's colour and slides in with a pulse, so it catches the eye in a corner; a
-  permission request keeps pulsing until it is answered.
+  its kind's colour and slides in with one pulse (a permission request with three), so it is
+  seen in its corner (docs/design.md, Notices).
 -->
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
@@ -80,24 +80,23 @@
   /* --tone: the kind's colour, as in the Inbox's attention pips. */
   .notice {
     --tone: var(--info);
-    --lift: inset 4px 0 0 var(--tone), var(--shadow-pop), 0 0 22px color-mix(in srgb, var(--tone) 30%, transparent);
-    display: flex; align-items: flex-start; gap: var(--sp-2); padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-4);
+    display: flex; align-items: flex-start; gap: var(--sp-2); padding: var(--sp-2);
     background: color-mix(in srgb, var(--tone) 22%, var(--surface-raised));
     border: 1px solid color-mix(in srgb, var(--tone) 75%, transparent); border-radius: var(--r-lg);
-    box-shadow: var(--lift);
-    animation: arrive 420ms cubic-bezier(0.3, 1.4, 0.5, 1) both, pulse 1.2s 420ms ease-out 2;
+    box-shadow: var(--shadow-pop);
+    animation: arrive var(--dur-slow) var(--ease) both, pulse var(--dur-pulse) var(--dur-slow) ease-out;
   }
-  .notice[data-notice="needs-you"] { --tone: var(--agent); animation-iteration-count: 1, infinite; animation-duration: 420ms, 1.6s; }
+  .notice[data-notice="needs-you"] { --tone: var(--agent); animation-iteration-count: 1, 3; }
   .notice[data-notice="finished"] { --tone: var(--you); }
   .notice[data-notice="error"], .notice[data-notice="ci-failing"] { --tone: var(--bad); }
   .notice[data-notice="activity"] { --tone: var(--gh); }
   @keyframes arrive {
-    from { opacity: 0; transform: translateX(calc(100% + var(--sp-7))); }
+    from { opacity: 0; transform: translateX(var(--sp-7)); }
     to { opacity: 1; transform: none; }
   }
   @keyframes pulse {
-    from { box-shadow: var(--lift), 0 0 0 0 color-mix(in srgb, var(--tone) 70%, transparent); }
-    to { box-shadow: var(--lift), 0 0 0 12px color-mix(in srgb, var(--tone) 0%, transparent); }
+    from { box-shadow: var(--shadow-pop), 0 0 0 0 color-mix(in srgb, var(--tone) 60%, transparent); }
+    to { box-shadow: var(--shadow-pop), 0 0 0 10px color-mix(in srgb, var(--tone) 0%, transparent); }
   }
   @media (prefers-reduced-motion: reduce) {
     .notice { animation: none; }

@@ -35,8 +35,9 @@
   /* Focus — 2px ring, 1px offset, on every interactive element */
   --focus-ring: 0 0 0 1px var(--surface-0), 0 0 0 3px var(--focus);
 
-  /* Motion — fades, the agent "working" ring, and notices sliding in with a pulse */
+  /* Motion — only fades and the agent "working" ring; a notice's arrival (slide in, pulse) */
   --dur-fast: 120ms; --dur: 180ms; --ease: cubic-bezier(0.2, 0, 0, 1);
+  --dur-slow: 240ms; --dur-pulse: 1200ms;
 
   /* Surfaces */
   --surface-0: #FBFBFC;
@@ -274,7 +275,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :root { --dur-fast: 0ms; --dur: 0ms; }
+  :root { --dur-fast: 0ms; --dur: 0ms; --dur-slow: 0ms; --dur-pulse: 0ms; }
 }
 
 /* Focus — one rule for every interactive element */
