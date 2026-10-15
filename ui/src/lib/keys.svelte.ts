@@ -1,4 +1,12 @@
-// Keyboard shortcuts of the review view.
+// Keyboard shortcuts: the app's (anywhere in the window) and the review view's.
+
+export const APP_SHORTCUTS: [string[], string][] = [
+  [["Ctrl+N"], "New task"],
+  [["Ctrl+B"], "Show / hide the Inbox"],
+  [["Ctrl+Shift+N"], "New window"],
+  [["?"], "These shortcuts"],
+  [["Esc"], "Close this"],
+];
 
 export const SHORTCUTS: [string[], string][] = [
   [["n", "p"], "Next / previous change"],
@@ -6,9 +14,11 @@ export const SHORTCUTS: [string[], string][] = [
   [["r"], "Reviewed, next unreviewed"],
   [["u"], "Unified / side-by-side"],
   [["w"], "Hide / show whitespace"],
-  [["?"], "Shortcuts"],
-  [["Esc"], "Close this, or the comment"],
+  [["Esc"], "Drop the selection (comment)"],
 ];
+
+// Whether the shortcuts overlay is open (? anywhere, or the keyboard button in the review).
+export const shortcuts = $state({ open: false });
 
 // Keys belong to whatever the user is typing in: fields, the editable diff, the terminal.
 export function isTyping(target: EventTarget | null): boolean {

@@ -122,6 +122,12 @@ def select_lines(s, first, last):
     )
 
 
+def press_on(s, css, key):
+    """Presses `key` with the focus on the element `css`, as the keyboard would."""
+    s.js("const el = document.querySelector(arguments[0]); el.focus();"
+         "el.dispatchEvent(new KeyboardEvent('keydown', { key: arguments[1], bubbles: true }))", css, key)
+
+
 def dom_click(s, css):
     s.wait(css)
     s.js("document.querySelector(arguments[0]).click()", css)
@@ -160,6 +166,20 @@ try:
     print("[inbox] after opening:", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"))
     check("the description is sanitized", s.js("return document.querySelectorAll('.overview .body script, .overview .body [onerror]').length") == 0 and s.js("return window.__pwned ?? null") is None)
     contains("a PR opened from search goes to Opened", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"), "Opened 1")
+
+    # ? shows the shortcuts anywhere, not only in the review: here with the focus on the
+    # Overview tab, as clicking it leaves it. Esc closes them.
+    press_on(s, "[data-tab=overview]", "?")
+    s.wait("[data-shortcuts]", timeout=10)
+    sections = s.js("return [...document.querySelectorAll('[data-shortcuts] h3')].map(h => h.textContent)")
+    print("[keys] ? on the Overview tab:", sections, "| Ctrl+N listed:", s.js("return document.querySelector('[data-shortcuts]').textContent.includes('Ctrl+N')"))
+    equal("? on the Overview shows all shortcuts", sections, ["Anywhere", "In the review"])
+    press_on(s, "[data-tab=overview]", "Escape")
+    eventually("Esc closes the shortcuts", lambda: bool(s.find("[data-shortcuts]")), lambda v: not v, timeout=10)
+    # Not while typing: ? in the search field is just a character.
+    press_on(s, ".search input", "?")
+    time.sleep(0.3)
+    check("? in a text field types, it does not open the shortcuts", not s.find("[data-shortcuts]"))
 
     tab(s, "Comments")
     s.wait(".thread", timeout=20)
@@ -291,11 +311,11 @@ try:
     equal("unified diff: one editor", s.js("return document.querySelectorAll('.diff .cm-editor').length"), 1)
     s.js("document.querySelector(\"[data-opt='unified']\").click()")
     # With the focus where clicking the Review tab leaves it, as a user would press it.
-    s.js("const t = document.querySelector('[data-tab=review]'); t.focus();"
-         "t.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }))")
-    print("[keys] shortcut overlay:", bool(s.find(".shortcuts")))
-    check("'?' shows the shortcuts", s.find(".shortcuts"))
-    s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))")
+    press_on(s, "[data-tab=review]", "?")
+    print("[keys] shortcut overlay in the review:", bool(s.find("[data-shortcuts]")))
+    check("'?' shows the shortcuts in the review", s.find("[data-shortcuts]"))
+    press_on(s, "[data-tab=review]", "Escape")
+    eventually("Esc closes the shortcuts", lambda: bool(s.find("[data-shortcuts]")), lambda v: not v, timeout=10)
 
     # The author pushes again: the reviewed file a.txt changes, c.rs does not.
     git(upstream, "checkout", "-q", "feature/y")

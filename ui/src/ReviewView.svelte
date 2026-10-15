@@ -37,7 +37,6 @@
   import Icon from "./controls/Icon.svelte";
   import IconButton from "./controls/IconButton.svelte";
   import InlineConfirm from "./controls/InlineConfirm.svelte";
-  import Kbd from "./controls/Kbd.svelte";
   import Pill from "./controls/Pill.svelte";
   import Risk from "./controls/Risk.svelte";
   import Segmented from "./controls/Segmented.svelte";
@@ -48,7 +47,7 @@
   import { currentChange } from "./lib/currentChange";
   import { gitOverride } from "./lib/gitDiff";
   import { externalLinks } from "./lib/html";
-  import { SHORTCUTS, isTyping } from "./lib/keys";
+  import { isTyping, shortcuts } from "./lib/keys.svelte";
   import { languageFor } from "./lib/languages";
   import { layout } from "./lib/layout.svelte";
   import { fileGuide, flatten, nextUnreviewed, progress, rangeOf, scopeOf, sections, type Guide, type ReviewFile } from "./lib/review";
@@ -84,7 +83,6 @@
   let draft = $state("");
   let editedPath: string | null = $state(null);
   let editedFile: string | null = null;
-  let showKeys = $state(false);
   // The file shown has only whitespace changes, and they are hidden.
   let onlyWhitespace = $state(false);
   // Below 720 px the diff column is too narrow for two sides.
@@ -283,7 +281,7 @@
   // tab or an Inbox row), except where the user types: fields, the editable diff, the terminal.
   function onKeydown(e: KeyboardEvent) {
     if (e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target)) return;
-    if (e.key === "Escape" && !showKeys && selection) {
+    if (e.key === "Escape" && !shortcuts.open && selection) {
       clearSelection();
       return;
     }
@@ -295,8 +293,6 @@
       r: () => reviewedAndNext(),
       u: () => (view.unified = !isUnified),
       w: () => (view.ignoreWs = !view.ignoreWs),
-      "?": () => (showKeys = !showKeys),
-      Escape: () => (showKeys = false),
     };
     const action = actions[e.key];
     if (action) {
@@ -491,7 +487,7 @@
     {/if}
     <IconButton icon="panel" label={view.sideHidden ? "Show the side panel" : "Hide the side panel"} pressed={!view.sideHidden}
       onclick={() => (view.sideHidden = !view.sideHidden)} data-toggle="side" />
-    <IconButton icon="keyboard" label="Keyboard shortcuts (?)" onclick={() => (showKeys = !showKeys)} data-keys />
+    <IconButton icon="keyboard" label="Keyboard shortcuts (?)" onclick={() => (shortcuts.open = !shortcuts.open)} data-keys />
   </header>
 
   {#if error}
@@ -748,21 +744,6 @@
     </div>
   </div>
 
-  {#if showKeys}
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div class="scrim" role="presentation" onclick={(e) => e.target === e.currentTarget && (showKeys = false)}>
-      <div class="shortcuts" role="dialog" aria-label="Keyboard shortcuts" data-shortcuts>
-        <div class="dialog-head"><strong>Review shortcuts</strong><IconButton icon="x" label="Close" size={24} onclick={() => (showKeys = false)} /></div>
-        <dl>
-          {#each SHORTCUTS as [keys, what]}
-            <dt>{#each keys as k}<kbd>{k}</kbd>{/each}</dt>
-            <dd>{what}</dd>
-          {/each}
-        </dl>
-        <p class="faint">Shortcuts work in the review, outside text fields and the editable diff. <Kbd key="Esc" /> closes.</p>
-      </div>
-    </div>
-  {/if}
 </div>
 
 <style>
@@ -962,21 +943,4 @@
   .events :global(.event[aria-pressed="true"]) { border-color: var(--gh); background: var(--gh-bg); color: var(--gh-strong); }
   .events .faint { margin-left: var(--sp-3); }
   .preview { margin: 0; color: var(--text-muted); }
-
-  /* Shortcut overlay. */
-  .scrim { position: absolute; inset: 0; z-index: 30; display: grid; place-items: center; background: var(--scrim); }
-  .shortcuts {
-    width: 380px; max-width: calc(100% - 32px); padding: var(--sp-7) 18px; box-sizing: border-box; border-radius: var(--r-xl);
-    background: var(--surface-raised); box-shadow: var(--shadow-pop); display: flex; flex-direction: column; gap: var(--sp-5);
-  }
-  .dialog-head { display: flex; align-items: center; }
-  .dialog-head strong { flex: 1; font-size: 14px; font-weight: var(--fw-semibold); }
-  dl { margin: 0; display: grid; grid-template-columns: 64px minmax(0, 1fr); row-gap: var(--sp-3); font-size: 12.5px; }
-  dt { display: flex; gap: var(--sp-2); }
-  dd { margin: 0; }
-  dl kbd {
-    min-width: 18px; height: 20px; padding: 0 5px; box-sizing: border-box; border: 1px solid var(--border-strong); border-bottom-width: 2px;
-    border-radius: var(--r-sm); background: var(--surface-0); font-size: var(--fs-11); line-height: 17px; text-align: center;
-  }
-  .shortcuts > p { margin: 0; font-size: 11.5px; }
 </style>

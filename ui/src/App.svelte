@@ -4,11 +4,13 @@
   import Connect from "./Connect.svelte";
   import Inbox from "./Inbox.svelte";
   import Notices from "./Notices.svelte";
+  import Shortcuts from "./Shortcuts.svelte";
   import WorkItem from "./WorkItem.svelte";
   import Kbd from "./controls/Kbd.svelte";
   import { homeDir } from "@tauri-apps/api/path";
   import { listenToAgents } from "./lib/agent.svelte";
   import { api, type Repo, type Row } from "./lib/api";
+  import { isTyping, shortcuts } from "./lib/keys.svelte";
   import { layout } from "./lib/layout.svelte";
   import { setHome } from "./lib/paths";
 
@@ -52,8 +54,19 @@
   }
 
   // Ctrl+B (Cmd+B) toggles the Inbox, Ctrl+N starts a new task and Ctrl+Shift+N opens a new
-  // window, except in the agent terminal, where the keys belong to Claude Code.
+  // window, except in the agent terminal, where the keys belong to Claude Code. ? shows the
+  // shortcuts (also the review's), except while typing.
   function onKeydown(e: KeyboardEvent) {
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && !isTyping(e.target)) {
+      if (e.key === "?") {
+        e.preventDefault();
+        shortcuts.open = !shortcuts.open;
+      } else if (e.key === "Escape" && shortcuts.open) {
+        e.preventDefault();
+        shortcuts.open = false;
+      }
+      return;
+    }
     if (!(e.ctrlKey || e.metaKey) || e.altKey || (e.target as Element | null)?.closest?.(".xterm")) return;
     const key = e.key.toLowerCase();
     if (!e.shiftKey && key === "b" && repo) {
@@ -164,6 +177,7 @@
   {/key}
 {/if}
 <Notices {selected} />
+<Shortcuts />
 
 <style>
   .app { display: flex; height: 100vh; min-height: 0; overflow: hidden; }
