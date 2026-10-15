@@ -123,8 +123,9 @@
     api.uiState<ItemUi>(current).then((saved) => {
       if (current !== id) return;
       ui = { ...fresh(), ...saved, review: { ...fresh().review, ...saved?.review } };
-      // A new task opens on its agent.
-      if (!saved && isTask && row.worktree) ui.tab = "terminal";
+      // A new task opens on its agent (shown once the row has the worktree: a reload that
+      // started while the task was being created can still lack it).
+      if (!saved && isTask) ui.tab = "terminal";
       if (landing) ui.tab = landing;
       if (hasReview && (row.worktree || row.kind === "pr")) loadProgress(current);
     });

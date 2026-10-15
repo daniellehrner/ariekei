@@ -20,14 +20,22 @@ Turns are kept in a transcript ($FAKE_CLAUDE_DIR, default <tmp>/ariekei-fake-cla
 `--resume <session>` prints again. Works in a Unix PTY and in a Windows ConPTY.
 """
 
-import json
 import os
-import re
-import subprocess
-import sys
-import tempfile
 import time
-import urllib.request
+
+# First of all, for CI runs where a resumed agent seemed never to start (Windows): note that
+# Python itself is up, before any other import.
+_store = os.environ.get("FAKE_CLAUDE_DIR") or os.path.join(os.environ.get("TEMP", "/tmp"), "ariekei-fake-claude")
+os.makedirs(_store, exist_ok=True)
+with open(os.path.join(_store, "fake-claude.log"), "a", encoding="utf-8") as _log:
+    _log.write(f"{time.strftime('%H:%M:%S')} python up (pid {os.getpid()})\n")
+
+import json  # noqa: E402
+import re  # noqa: E402
+import subprocess  # noqa: E402
+import sys  # noqa: E402
+import tempfile  # noqa: E402
+import urllib.request  # noqa: E402
 
 PROMPT = "\x1b[38;5;173m❯\x1b[0m "
 
