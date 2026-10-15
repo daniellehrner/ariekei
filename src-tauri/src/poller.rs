@@ -121,18 +121,17 @@ fn now_secs() -> u64 {
 
 /// If a failed poll hit GitHub's rate limit: how long until it resets.
 fn rate_limited(message: &str) -> Option<Duration> {
-    rate_limit_wait(message, github::rate_limit_reset, now_secs())
+    // The time is taken once GitHub has answered: asking takes a while.
+    rate_limit_wait(message, || {
+        github::rate_limit_reset().map(|reset| reset.saturating_sub(now_secs()))
+    })
 }
 
-/// How long to wait after `message` (a failed poll's error), given GitHub's `reset` time of
-/// the used-up limit (asked only for a primary limit) and `now` (Unix seconds): until the
-/// reset, at least a minute; five minutes for a secondary limit, which GitHub does not
-/// announce a reset for; `None` if it is no rate limit.
-fn rate_limit_wait(
-    message: &str,
-    reset: impl FnOnce() -> Option<u64>,
-    now: u64,
-) -> Option<Duration> {
+/// How long to wait after `message` (a failed poll's error), given the seconds until GitHub
+/// resets the used-up limit (`until_reset`, asked only for a primary limit): until the reset,
+/// at least a minute; five minutes for a secondary limit, which GitHub does not announce a
+/// reset for; `None` if it is no rate limit.
+fn rate_limit_wait(message: &str, until_reset: impl FnOnce() -> Option<u64>) -> Option<Duration> {
     let lower = message.to_lowercase();
     if lower.contains("secondary rate limit") {
         return Some(Duration::from_secs(300));
@@ -140,8 +139,7 @@ fn rate_limit_wait(
     if !lower.contains("rate limit") {
         return None;
     }
-    let reset = reset().unwrap_or(0);
-    Some(Duration::from_secs(reset.saturating_sub(now).max(60)))
+    Some(Duration::from_secs(until_reset().unwrap_or(0).max(60)))
 }
 
 /// How long after a PR changed it may still get its first checks (none yet right after a
@@ -377,26 +375,24 @@ mod tests {
         assert_eq!(
             rate_limit_wait(
                 "gh api failed: API rate limit exceeded for user ID 1.",
-                || Some(1_000 + 600),
-                1_000
+                || Some(600)
             ),
             Some(Duration::from_secs(600))
         );
-        // A reset that is past or unknown still waits a minute.
+        // A reset that is due or unknown still waits a minute.
         assert_eq!(
-            rate_limit_wait("gh: API rate limit exceeded", || None, 1_000),
+            rate_limit_wait("gh: API rate limit exceeded", || None),
             Some(Duration::from_secs(60))
         );
         assert_eq!(
             rate_limit_wait(
                 "gh api failed: You have exceeded a secondary rate limit.",
-                never,
-                0
+                never
             ),
             Some(Duration::from_secs(300))
         );
         assert_eq!(
-            rate_limit_wait("gh api failed: Could not resolve host", never, 0),
+            rate_limit_wait("gh api failed: Could not resolve host", never),
             None
         );
     }
