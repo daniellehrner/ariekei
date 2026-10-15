@@ -19,6 +19,7 @@ import os
 import re
 import subprocess
 import sys
+import zlib
 
 DIR = os.environ["FAKE_GH_DIR"]
 DATA = json.load(open(os.path.join(DIR, "data.json")))
@@ -67,10 +68,30 @@ def checks(pr):
     return nodes([{"commit": {"statusCheckRollup": {"state": state, "contexts": nodes(runs)}}}])
 
 
+def updated_at(pr):
+    """Moves on whenever the PR changes (its data or its head), as GitHub's updatedAt does:
+    the poller fetches a PR's details only when it changed. A change gets a later time than
+    any before it ($FAKE_GH_DIR/updated.json keeps them)."""
+    path = os.path.join(DIR, "updated.json")
+    try:
+        seen = json.load(open(path))
+    except (OSError, ValueError):
+        seen = {}
+    key, fingerprint = f"{pr.get('repo', 'proj')}#{pr['number']}", zlib.crc32((json.dumps(pr, sort_keys=True) + head_sha(pr)).encode())
+    if key not in seen or seen[key][0] != fingerprint:
+        seen[key] = [fingerprint, max([t for _, t in seen.values()] + [0]) + 1]
+        tmp = f"{path}.{os.getpid()}"
+        with open(tmp, "w") as f:
+            json.dump(seen, f)
+        os.replace(tmp, path)
+    minutes = seen[key][1]
+    return f"2026-10-13T{10 + minutes // 60:02d}:{minutes % 60:02d}:00Z"
+
+
 def summary(pr):
     return {
         "number": pr["number"], "title": pr["title"], "url": f"https://github.com/owner/proj/pull/{pr['number']}",
-        "state": pr.get("state", "OPEN"), "isDraft": pr.get("draft", False), "updatedAt": "2026-10-13T10:00:00Z",
+        "state": pr.get("state", "OPEN"), "isDraft": pr.get("draft", False), "updatedAt": updated_at(pr),
         "author": {"login": pr["author"]}, "headRefName": pr["head_ref"], "headRefOid": head_sha(pr),
         "baseRefName": pr["base_ref"], "reviewDecision": pr.get("decision", "REVIEW_REQUIRED"),
         "headRepository": {"name": "proj", "owner": {"login": "owner"}, "sshUrl": "git@github.com:owner/proj.git", "url": "https://github.com/owner/proj"},

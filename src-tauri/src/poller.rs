@@ -1,5 +1,12 @@
 //! Keeps the Inbox current: polls GitHub for the open PRs of every repo shown in a window
 //! every minute (or right away when asked) and stores the result.
+//!
+//! GitHub's GraphQL budget (5000 points an hour) is shared with `gh` and the agents, so a
+//! poll first asks which PRs exist and when each last changed (1 point per query), and
+//! fetches the details (reviews, threads, checks: 1 point per PR) only of PRs that changed,
+//! have checks still running, or are new; every tenth poll, and one the user asked for,
+//! fetches them all (check runs restarted on an unchanged PR show up then). When the budget
+//! is used up anyway, polling waits for GitHub's reset instead of failing every minute.
 
 use crate::github::{self, PrSummary};
 use crate::store::{PolledPr, Repo};
@@ -47,24 +54,43 @@ struct PollError {
     message: String,
 }
 
+/// Every this many polls, all details are fetched again (see the module docs).
+const FULL_EVERY: u32 = 10;
+
 fn run(app: AppHandle, wake: Receiver<()>) {
     // The poller starts while the app state is being built (it is part of it): wait for it,
     // or a fast thread would find no state yet and never poll.
     while app.try_state::<crate::AppState>().is_none() {
         std::thread::sleep(Duration::from_millis(20));
     }
+    let mut count: u32 = 0;
+    let mut asked = false;
     loop {
         let state = app.state::<crate::AppState>();
+        let full = asked || count.is_multiple_of(FULL_EVERY);
+        count = count.wrapping_add(1);
+        let mut wait = interval();
         for id in state.windows.open_repos() {
             let Ok(Some(repo)) = state.store.repo(id) else {
                 continue;
             };
             // `inbox-changed` and `inbox-error` carry the repo id: each window shows one.
-            match poll(&app, &repo) {
+            match poll(&app, &repo, full) {
                 Ok(()) => {
                     let _ = app.emit("inbox-changed", repo.id);
                 }
                 Err(message) => {
+                    let message = match rate_limited(&message) {
+                        Some(until_reset) => {
+                            wait = wait.max(until_reset);
+                            format!(
+                                "GitHub's API rate limit is used up (it is shared with gh and your agents); \
+                                 Ariekei polls again in {} min.",
+                                until_reset.as_secs().div_ceil(60)
+                            )
+                        }
+                        None => message,
+                    };
                     tracing::warn!(
                         "GitHub poll of {}/{} failed: {message}",
                         repo.owner,
@@ -80,22 +106,51 @@ fn run(app: AppHandle, wake: Receiver<()>) {
                 }
             }
         }
-        match wake.recv_timeout(interval()) {
-            Ok(()) | Err(RecvTimeoutError::Timeout) => {}
+        asked = match wake.recv_timeout(wait) {
+            Ok(()) => true,
+            Err(RecvTimeoutError::Timeout) => false,
             Err(RecvTimeoutError::Disconnected) => return,
-        }
+        };
         // Coalesce a burst of refresh requests into one poll.
         while wake.try_recv().is_ok() {}
     }
 }
 
+/// If a failed poll hit GitHub's rate limit: how long until it resets (at least a minute;
+/// five for a secondary limit, which GitHub does not announce a reset for).
+fn rate_limited(message: &str) -> Option<Duration> {
+    let lower = message.to_lowercase();
+    if lower.contains("secondary rate limit") {
+        return Some(Duration::from_secs(300));
+    }
+    if !lower.contains("rate limit") {
+        return None;
+    }
+    let reset = github::rate_limit_reset().unwrap_or(0);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    Some(Duration::from_secs(reset.saturating_sub(now).max(60)))
+}
+
+/// Whether the stored details of a PR are still current for `stamp`: nothing changed on it,
+/// and its checks are not running (check results do not change a PR's `updatedAt`).
+fn current(stored: &PrSummary, stamp: &github::PrStamp) -> bool {
+    stored.updated_at == stamp.updated_at
+        && stored.state == stamp.state
+        && !matches!(stored.ci.as_deref(), Some("PENDING" | "EXPECTED"))
+}
+
 /// One poll of `repo`: the viewer's PRs, PRs requesting their review, and the PRs they
-/// track (by number, so merged/closed ones get their final state).
-pub fn poll(app: &AppHandle, repo: &Repo) -> Result<(), String> {
+/// track (by number, so merged/closed ones get their final state). `full`: fetch the
+/// details of every PR, not only of those that changed.
+pub fn poll(app: &AppHandle, repo: &Repo, full: bool) -> Result<(), String> {
     let state = app.state::<crate::AppState>();
     let (o, n, me) = (&repo.owner, &repo.name, &repo.viewer);
-    let mine = github::search_prs(o, n, me, &format!("author:{me}"))?;
-    let requested = github::search_prs(o, n, me, &format!("review-requested:{me}"))?;
+    let before = state.store.items(repo.id)?;
+    let mine = github::search_pr_stamps(o, n, &format!("author:{me}"))?;
+    let requested = github::search_pr_stamps(o, n, &format!("review-requested:{me}"))?;
     let known: Vec<i64> = mine.iter().chain(&requested).map(|p| p.number).collect();
     let tracked: Vec<i64> = state
         .store
@@ -103,15 +158,37 @@ pub fn poll(app: &AppHandle, repo: &Repo) -> Result<(), String> {
         .into_iter()
         .filter(|t| !known.contains(t))
         .collect();
-    let others = github::prs_by_number(o, n, me, &tracked)?;
+    let others = github::pr_stamps(o, n, &tracked)?;
 
-    let mut prs: Vec<(PrSummary, &'static str)> = vec![];
-    for pr in mine.into_iter().chain(requested).chain(others) {
-        if prs.iter().any(|(p, _)| p.number == pr.number) {
-            continue;
+    let mut stamps: Vec<github::PrStamp> = vec![];
+    for stamp in mine.into_iter().chain(requested).chain(others) {
+        if !stamps.iter().any(|s| s.number == stamp.number) {
+            stamps.push(stamp);
         }
-        let role = role_of(&pr, me, &known);
-        prs.push((pr, role));
+    }
+    let stored = |number: i64| {
+        before
+            .iter()
+            .find(|i| i.kind == "pr" && i.number == number)
+            .and_then(|i| serde_json::from_value::<PrSummary>(i.snapshot.clone()).ok())
+    };
+    let stale: Vec<i64> = stamps
+        .iter()
+        .filter(|s| full || !stored(s.number).is_some_and(|p| current(&p, s)))
+        .map(|s| s.number)
+        .collect();
+    let fetched = github::prs_by_number(o, n, me, &stale)?;
+    let mut prs: Vec<(PrSummary, &'static str)> = vec![];
+    for stamp in &stamps {
+        let pr = fetched
+            .iter()
+            .find(|p| p.number == stamp.number)
+            .cloned()
+            .or_else(|| stored(stamp.number));
+        if let Some(pr) = pr {
+            let role = role_of(&pr, me, &known);
+            prs.push((pr, role));
+        }
     }
 
     // Issues: the ones assigned to the viewer, plus tracked ones (e.g. with a worktree).
@@ -128,7 +205,6 @@ pub fn poll(app: &AppHandle, repo: &Repo) -> Result<(), String> {
         .chain(github::issues_by_number(o, n, me, &tracked_issues)?)
         .collect();
 
-    let before = state.store.items(repo.id)?;
     let polled: Vec<PolledPr> = prs
         .iter()
         .map(|(p, role)| PolledPr {
@@ -199,5 +275,54 @@ pub fn role_of(pr: &PrSummary, viewer: &str, requested: &[i64]) -> &'static str 
         "requested"
     } else {
         "other"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn details_are_fetched_again_only_when_the_pr_changed_or_its_checks_run() {
+        let stored: PrSummary = serde_json::from_value(serde_json::json!({
+            "number": 1, "title": "t", "url": "", "isDraft": false, "updatedAt": "2026-10-01T00:00:00Z",
+            "headRef": "", "headSha": "", "headOwner": "", "headRepo": "", "headSshUrl": "",
+            "headHttpsUrl": "", "baseRef": "", "reviewDecision": null, "ci": "SUCCESS",
+            "failingChecks": [], "unresolvedThreads": 0, "latestActivity": null, "reviews": []
+        }))
+        .unwrap();
+        let stamp = github::PrStamp {
+            number: 1,
+            title: "t".into(),
+            author: "me".into(),
+            is_draft: false,
+            state: "OPEN".into(),
+            updated_at: "2026-10-01T00:00:00Z".into(),
+        };
+        assert!(current(&stored, &stamp));
+        let updated = github::PrStamp {
+            updated_at: "2026-10-02T00:00:00Z".into(),
+            ..stamp.clone()
+        };
+        assert!(!current(&stored, &updated));
+        let merged = github::PrStamp {
+            state: "MERGED".into(),
+            ..stamp.clone()
+        };
+        assert!(!current(&stored, &merged));
+        let running = PrSummary {
+            ci: Some("PENDING".into()),
+            ..stored.clone()
+        };
+        assert!(!current(&running, &stamp));
+    }
+
+    #[test]
+    fn secondary_rate_limits_wait_five_minutes_and_other_errors_not_at_all() {
+        assert_eq!(
+            rate_limited("gh api failed: You have exceeded a secondary rate limit."),
+            Some(Duration::from_secs(300))
+        );
+        assert_eq!(rate_limited("gh api failed: Could not resolve host"), None);
     }
 }

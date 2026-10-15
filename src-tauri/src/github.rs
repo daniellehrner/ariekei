@@ -67,6 +67,19 @@ fn graphql(query: &str, strings: &[(&str, &str)], ints: &[(&str, i64)]) -> Resul
     Ok(v)
 }
 
+/// When (Unix seconds) the GitHub rate limit that is used up resets: the later of the
+/// GraphQL and REST ones that have nothing left. Asking costs nothing.
+pub fn rate_limit_reset() -> Option<u64> {
+    let out = gh(&["api", "rate_limit"]).ok()?;
+    let v: Value = serde_json::from_slice(&out).ok()?;
+    ["graphql", "core"]
+        .iter()
+        .map(|k| &v["resources"][k])
+        .filter(|r| r["remaining"].as_i64() == Some(0))
+        .filter_map(|r| r["reset"].as_u64())
+        .max()
+}
+
 pub fn viewer() -> Result<String, String> {
     let out = gh(&["api", "user", "--jq", ".login"])?;
     Ok(String::from_utf8_lossy(&out).trim().to_owned())
@@ -128,7 +141,72 @@ const PR_FIELDS: &str = r#"
   } } } } } }
 "#;
 
+/// What a PR search or a poll needs to know about a PR to tell whether it changed. Cheap:
+/// GitHub charges GraphQL by the most nodes a query could return, so PR_FIELDS in a search
+/// of 50 (review threads, checks) costs 53 points of the 5000 an hour, a stamp search 1.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrStamp {
+    pub number: i64,
+    pub title: String,
+    pub author: String,
+    pub is_draft: bool,
+    /// OPEN, CLOSED or MERGED.
+    pub state: String,
+    pub updated_at: String,
+}
+
+const STAMP_FIELDS: &str = "number title isDraft state updatedAt author { login }";
+
+fn parse_stamps(list: &Value) -> Vec<PrStamp> {
+    list.as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter(|p| p["number"].is_i64())
+        .map(|p| PrStamp {
+            number: p["number"].as_i64().unwrap_or_default(),
+            title: s(&p["title"]),
+            author: s(&p["author"]["login"]),
+            is_draft: p["isDraft"].as_bool().unwrap_or_default(),
+            state: p["state"].as_str().unwrap_or("OPEN").to_owned(),
+            updated_at: s(&p["updatedAt"]),
+        })
+        .collect()
+}
+
 /// Open PRs in `owner/name` matching GitHub search `terms`, most recently updated first.
+pub fn search_pr_stamps(owner: &str, name: &str, terms: &str) -> Result<Vec<PrStamp>, String> {
+    let query = format!(
+        "query($q: String!) {{ search(query: $q, type: ISSUE, first: 50) {{ nodes {{ ... on PullRequest {{ {STAMP_FIELDS} }} }} }} }}"
+    );
+    let q = format!("repo:{owner}/{name} is:pr is:open {terms} sort:updated-desc");
+    let v = graphql(&query, &[("q", &q)], &[])?;
+    Ok(parse_stamps(&v["data"]["search"]["nodes"]))
+}
+
+/// Stamps of PRs by number (any state); numbers GitHub does not know are left out.
+pub fn pr_stamps(owner: &str, name: &str, numbers: &[i64]) -> Result<Vec<PrStamp>, String> {
+    if numbers.is_empty() {
+        return Ok(vec![]);
+    }
+    let fields: String = numbers
+        .iter()
+        .map(|n| format!("p{n}: pullRequest(number: {n}) {{ {STAMP_FIELDS} }}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let query = format!(
+        "query($owner: String!, $name: String!) {{ repository(owner: $owner, name: $name) {{ {fields} }} }}"
+    );
+    let v = graphql(&query, &[("owner", owner), ("name", name)], &[])?;
+    let found: Vec<Value> = numbers
+        .iter()
+        .map(|n| v["data"]["repository"][format!("p{n}")].clone())
+        .collect();
+    Ok(parse_stamps(&Value::Array(found)))
+}
+
+/// Open PRs in `owner/name` matching GitHub search `terms`, most recently updated first,
+/// with their details (a stamp search, then the details by number: 1 point per PR).
 /// `viewer` decides what counts as activity by others.
 pub fn search_prs(
     owner: &str,
@@ -136,12 +214,11 @@ pub fn search_prs(
     viewer: &str,
     terms: &str,
 ) -> Result<Vec<PrSummary>, String> {
-    let query = format!(
-        "query($q: String!) {{ search(query: $q, type: ISSUE, first: 50) {{ nodes {{ ... on PullRequest {{ {PR_FIELDS} }} }} }} }}"
-    );
-    let q = format!("repo:{owner}/{name} is:pr is:open {terms} sort:updated-desc");
-    let v = graphql(&query, &[("q", &q)], &[])?;
-    Ok(parse_prs(&v["data"]["search"]["nodes"], viewer))
+    let numbers: Vec<i64> = search_pr_stamps(owner, name, terms)?
+        .iter()
+        .map(|p| p.number)
+        .collect();
+    prs_by_number(owner, name, viewer, &numbers)
 }
 
 /// PRs by number (any state), e.g. ones the user opened from search.
@@ -974,6 +1051,26 @@ mod tests {
         assert_eq!(
             (c.checks[0].name.as_str(), c.checks[0].outcome.as_str()),
             ("build", "IN_PROGRESS")
+        );
+    }
+
+    #[test]
+    fn stamps_say_when_a_pr_last_changed() {
+        let list = json!([
+            {"number": 7, "title": "Fix", "isDraft": true, "state": "OPEN", "updatedAt": "2026-10-01T00:00:00Z",
+             "author": {"login": "me"}},
+            null
+        ]);
+        assert_eq!(
+            parse_stamps(&list),
+            [PrStamp {
+                number: 7,
+                title: "Fix".into(),
+                author: "me".into(),
+                is_draft: true,
+                state: "OPEN".into(),
+                updated_at: "2026-10-01T00:00:00Z".into(),
+            }]
         );
     }
 

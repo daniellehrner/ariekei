@@ -585,19 +585,17 @@ pub fn search(state: &AppState, repo: Option<Repo>, text: &str) -> Result<Vec<Se
     let repo = repo.ok_or("no repository connected")?;
     let items = state.store.items(repo.id)?;
     let terms = text.trim().trim_start_matches('#');
-    Ok(
-        github::search_prs(&repo.owner, &repo.name, &repo.viewer, terms)?
-            .into_iter()
-            .map(|p| SearchHit {
-                item_id: items.iter().find(|i| i.number == p.number).map(|i| i.id),
-                number: p.number,
-                title: p.title,
-                author: p.author,
-                is_draft: p.is_draft,
-                updated_at: p.updated_at,
-            })
-            .collect(),
-    )
+    Ok(github::search_pr_stamps(&repo.owner, &repo.name, terms)?
+        .into_iter()
+        .map(|p| SearchHit {
+            item_id: items.iter().find(|i| i.number == p.number).map(|i| i.id),
+            number: p.number,
+            title: p.title,
+            author: p.author,
+            is_draft: p.is_draft,
+            updated_at: p.updated_at,
+        })
+        .collect())
 }
 
 /// Adds PR `number` to the Inbox (tracked) and returns its work item id.
