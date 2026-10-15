@@ -290,7 +290,9 @@ try:
           "| deleted chunks shown inline:", s.js("return document.querySelectorAll('.diff .cm-deletedChunk').length"))
     equal("unified diff: one editor", s.js("return document.querySelectorAll('.diff .cm-editor').length"), 1)
     s.js("document.querySelector(\"[data-opt='unified']\").click()")
-    s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }))")
+    # With the focus where clicking the Review tab leaves it, as a user would press it.
+    s.js("const t = document.querySelector('[data-tab=review]'); t.focus();"
+         "t.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }))")
     print("[keys] shortcut overlay:", bool(s.find(".shortcuts")))
     check("'?' shows the shortcuts", s.find(".shortcuts"))
     s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))")

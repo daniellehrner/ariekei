@@ -279,11 +279,10 @@
     else say("Every file in this scope is reviewed.");
   }
 
-  // Shortcuts work in the review view (not in fields, the editable diff or the terminal).
+  // Shortcuts work while the review is shown, wherever the focus is (e.g. still on the Review
+  // tab or an Inbox row), except where the user types: fields, the editable diff, the terminal.
   function onKeydown(e: KeyboardEvent) {
     if (e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target)) return;
-    const target = e.target as HTMLElement | null;
-    if (target && target !== document.body && !target.closest?.(".review")) return;
     if (e.key === "Escape" && !showKeys && selection) {
       clearSelection();
       return;
