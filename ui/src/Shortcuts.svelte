@@ -5,7 +5,8 @@
 <script lang="ts">
   import IconButton from "./controls/IconButton.svelte";
   import Kbd from "./controls/Kbd.svelte";
-  import { APP_SHORTCUTS, SHORTCUTS, shortcuts } from "./lib/keys.svelte";
+  import { APP_SHORTCUTS, SHORTCUTS } from "./lib/keys";
+  import { shortcuts } from "./lib/layout.svelte";
 
   const SECTIONS: [string, [string[], string][]][] = [
     ["Anywhere", APP_SHORTCUTS],

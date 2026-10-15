@@ -17,9 +17,6 @@ export const SHORTCUTS: [string[], string][] = [
   [["Esc"], "Drop the selection (comment)"],
 ];
 
-// Whether the shortcuts overlay is open (? anywhere, or the keyboard button in the review).
-export const shortcuts = $state({ open: false });
-
 // Keys belong to whatever the user is typing in: fields, the editable diff, the terminal.
 export function isTyping(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;

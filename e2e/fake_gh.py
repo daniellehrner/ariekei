@@ -19,6 +19,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import zlib
 
 DIR = os.environ["FAKE_GH_DIR"]
@@ -77,7 +78,9 @@ def updated_at(pr):
         seen = json.load(open(path))
     except (OSError, ValueError):
         seen = {}
-    key, fingerprint = f"{pr.get('repo', 'proj')}#{pr['number']}", zlib.crc32((json.dumps(pr, sort_keys=True) + head_sha(pr)).encode())
+    # Like GitHub's, it does not move when only the checks change.
+    changes = {k: v for k, v in pr.items() if k not in ("ci", "failing")}
+    key, fingerprint = f"{pr.get('repo', 'proj')}#{pr['number']}", zlib.crc32((json.dumps(changes, sort_keys=True) + head_sha(pr)).encode())
     if key not in seen or seen[key][0] != fingerprint:
         seen[key] = [fingerprint, max([t for _, t in seen.values()] + [0]) + 1]
         tmp = f"{path}.{os.getpid()}"
@@ -110,7 +113,7 @@ def conversation(pr):
         "reviews": nodes([]),
         "reviewThreads": nodes([{
             "id": t["id"], "isResolved": t.get("resolved", False), "isOutdated": False, "path": t["path"], "line": t["line"], "originalLine": t["line"],
-            "comments": nodes([{"databaseId": t["comment_id"], "author": {"login": t["author"]}, "body": "", "bodyHTML": t["html"],
+            "comments": nodes([{"databaseId": t["comment_id"], "author": {"login": t["author"]}, "body": t.get("body", ""), "bodyHTML": t["html"],
                                 "createdAt": "2026-10-11T11:00:00Z", "diffHunk": t.get("diff_hunk", ""), "url": ""}]),
         } for t in pr.get("threads", [])]),
     })
@@ -167,16 +170,37 @@ def graphql(fields):
         return {"data": {"repository": {"issue": issue_summary(issues[int(fields["number"])])}}}
     issue_aliases = re.findall(r"i(\d+): issue\(number: (\d+)\)", query)
     if issue_aliases:
-        return {"data": {"repository": {f"i{n}": issue_summary(issues[int(n)]) for n, _ in issue_aliases if int(n) in issues}}}
+        return lookups("i", "Issue", [int(n) for n, _ in issue_aliases], issues, issue_summary)
     if "commits(first: 100, after: $after)" in query:
         return {"data": {"repository": {"pullRequest": {"commits": pr_commits(by_number[int(fields["number"])])}}}}
     if "pullRequest(number: $number)" in query:
         return {"data": {"repository": {"pullRequest": conversation(by_number[int(fields["number"])])}}}
     aliases = re.findall(r"p(\d+): pullRequest\(number: (\d+)\)", query)
-    return {"data": {"repository": {f"p{n}": summary(by_number[int(n)]) for n, _ in aliases if int(n) in by_number}}}
+    return lookups("p", "PullRequest", [int(n) for n, _ in aliases], by_number, summary)
+
+
+def lookups(prefix, kind, numbers, known, render):
+    """Aliased lookups by number, answered as GitHub does: an unknown number is null, with a
+    NOT_FOUND error (and gh exits 1)."""
+    answer = {"data": {"repository": {f"{prefix}{n}": render(known[n]) if n in known else None for n in numbers}}}
+    missing = [n for n in numbers if n not in known]
+    if missing:
+        answer["errors"] = [{"type": "NOT_FOUND", "path": ["repository", f"{prefix}{n}"],
+                             "message": f"Could not resolve to a {kind} with the number of {n}."} for n in missing]
+    return answer
 
 
 def main(argv):
+    # While $FAKE_GH_DIR/rate-limited exists, GitHub's API budget is used up (resetting in two
+    # minutes); `gh api rate_limit` itself always answers, as on GitHub.
+    if argv[:2] == ["api", "rate_limit"]:
+        limited = os.path.exists(os.path.join(DIR, "rate-limited"))
+        reset = int(time.time()) + 120
+        print(json.dumps({"resources": {r: {"limit": 5000, "remaining": 0 if limited else 5000, "reset": reset} for r in ("graphql", "core")}}))
+        return 0
+    if os.path.exists(os.path.join(DIR, "rate-limited")):
+        print("gh: API rate limit exceeded for user ID 1.", file=sys.stderr)
+        return 1
     if argv[:2] == ["api", "user"]:
         print(ME)
         return 0
@@ -189,7 +213,11 @@ def main(argv):
                 i += 2
             else:
                 i += 1
-        print(json.dumps(graphql(fields)))
+        answer = graphql(fields)
+        print(json.dumps(answer))
+        if answer.get("errors"):
+            print(f"gh: {answer['errors'][0]['message']}", file=sys.stderr)
+            return 1
         return 0
     if argv[0] == "api" and "--method" in argv and "--input" in argv:
         path = next(a for a in argv[1:] if "/" in a)

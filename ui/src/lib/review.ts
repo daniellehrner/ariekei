@@ -120,6 +120,6 @@ export function scopeOf(review: ReviewState | null, wanted: string): string {
 export function rangeOf(review: ReviewState, scope: string): [string, string | null] {
   const head = review.mode === "worktree" ? null : review.head;
   if (scope === "all") return [review.base, head];
-  if (scope === "review" && review.reviewed) return [review.sinceReviewFrom ?? review.reviewed, head];
+  if (scope === "review") return review.reviewed ? [review.sinceReviewFrom ?? review.reviewed, head] : [review.base, head];
   return [`${scope}^`, scope];
 }

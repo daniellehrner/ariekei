@@ -1071,12 +1071,34 @@ pub fn resolve_thread(state: &AppState, thread_id: &str, resolved: bool) -> Resu
 /// Writes a file edited in the review view. `path` must stay inside the worktree.
 pub fn save_file(state: &AppState, id: i64, path: &str, content: &str) -> Result<(), String> {
     let root = worktree_of(&state.store.item(id)?)?;
-    let relative = Path::new(path);
-    let inside = relative
-        .components()
-        .all(|c| matches!(c, std::path::Component::Normal(_)));
-    if !inside {
+    if !inside_worktree(path) {
         return Err(format!("refusing to write outside the worktree: {path}"));
     }
-    std::fs::write(root.join(relative), content).map_err(|e| format!("{path}: {e}"))
+    std::fs::write(root.join(path), content).map_err(|e| format!("{path}: {e}"))
+}
+
+/// A path relative to the worktree that stays inside it: plain names only (no `..`, no
+/// root or drive, no `.`), and not empty.
+fn inside_worktree(path: &str) -> bool {
+    let relative = Path::new(path);
+    relative.components().next().is_some()
+        && relative
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn edits_are_written_only_inside_the_worktree() {
+        assert!(inside_worktree("src/a.rs"));
+        assert!(inside_worktree("a.txt"));
+        for outside in ["../a.txt", "src/../../a", "/etc/passwd", "", "./a"] {
+            assert!(!inside_worktree(outside), "{outside}");
+        }
+        #[cfg(windows)]
+        assert!(!inside_worktree("C:\\Windows\\a.txt"));
+    }
 }

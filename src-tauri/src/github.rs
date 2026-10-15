@@ -20,6 +20,23 @@ fn gh(args: &[&str]) -> Result<Vec<u8>, String> {
 
 /// Runs `gh`, optionally writing `input` to its stdin (for `--input -`).
 fn gh_with_input(args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, String> {
+    let out = gh_output(args, input)?;
+    if !out.status.success() {
+        return Err(gh_failure(args, &out.stderr));
+    }
+    Ok(out.stdout)
+}
+
+fn gh_failure(args: &[&str], stderr: &[u8]) -> String {
+    format!(
+        "gh {} failed: {}",
+        args.first().unwrap_or(&""),
+        String::from_utf8_lossy(stderr).trim()
+    )
+}
+
+/// Runs `gh` and returns its output whether or not it succeeded.
+fn gh_output(args: &[&str], input: Option<&[u8]>) -> Result<std::process::Output, String> {
     let mut child = gh_command()
         .args(args)
         .stdin(if input.is_some() {
@@ -34,19 +51,10 @@ fn gh_with_input(args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, String>
     if let (Some(data), Some(mut stdin)) = (input, child.stdin.take()) {
         stdin.write_all(data).map_err(|e| e.to_string())?;
     }
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(format!(
-            "gh {} failed: {}",
-            args.first().unwrap_or(&""),
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    Ok(out.stdout)
+    child.wait_with_output().map_err(|e| e.to_string())
 }
 
-/// Runs a GraphQL query; `strings` and `ints` are its variables.
-fn graphql(query: &str, strings: &[(&str, &str)], ints: &[(&str, i64)]) -> Result<Value, String> {
+fn graphql_args(query: &str, strings: &[(&str, &str)], ints: &[(&str, i64)]) -> Vec<String> {
     let mut args = vec![
         "api".to_owned(),
         "graphql".to_owned(),
@@ -59,6 +67,12 @@ fn graphql(query: &str, strings: &[(&str, &str)], ints: &[(&str, i64)]) -> Resul
     for (k, v) in ints {
         args.extend(["-F".to_owned(), format!("{k}={v}")]);
     }
+    args
+}
+
+/// Runs a GraphQL query; `strings` and `ints` are its variables.
+fn graphql(query: &str, strings: &[(&str, &str)], ints: &[(&str, i64)]) -> Result<Value, String> {
+    let args = graphql_args(query, strings, ints);
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let v: Value = serde_json::from_slice(&gh(&args)?).map_err(|e| e.to_string())?;
     if let Some(errors) = v.get("errors") {
@@ -67,11 +81,47 @@ fn graphql(query: &str, strings: &[(&str, &str)], ints: &[(&str, i64)]) -> Resul
     Ok(v)
 }
 
+/// Runs a query of lookups by number (`p12: pullRequest(number: 12) { … }`). A number GitHub
+/// does not know (a deleted PR, a transferred issue) comes back as null with a NOT_FOUND
+/// error, and gh fails; here that number is only left out, or one such item would make
+/// every poll of the repo fail.
+fn graphql_lookups(query: &str, strings: &[(&str, &str)]) -> Result<Value, String> {
+    let args = graphql_args(query, strings, &[]);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let out = gh_output(&args, None)?;
+    lookup_result(out.status.success(), &out.stdout)
+        .ok_or_else(|| gh_failure(&args, &out.stderr))?
+}
+
+/// The outcome of a lookup query from gh's exit status and output: `None` when gh failed
+/// without a GraphQL answer (e.g. no network), else the data, unless an error other than
+/// NOT_FOUND came with it.
+fn lookup_result(success: bool, stdout: &[u8]) -> Option<Result<Value, String>> {
+    let v: Value = match serde_json::from_slice(stdout) {
+        Ok(v) => v,
+        Err(e) if success => return Some(Err(e.to_string())),
+        Err(_) => return None,
+    };
+    match v.get("errors").and_then(Value::as_array) {
+        Some(errors) if errors.iter().any(|e| e["type"] != "NOT_FOUND") => {
+            Some(Err(format!("GitHub GraphQL error: {}", v["errors"])))
+        }
+        _ if v.get("data").is_none_or(Value::is_null) => {
+            Some(Err("GitHub answered without data".to_owned()))
+        }
+        _ => Some(Ok(v)),
+    }
+}
+
 /// When (Unix seconds) the GitHub rate limit that is used up resets: the later of the
 /// GraphQL and REST ones that have nothing left. Asking costs nothing.
 pub fn rate_limit_reset() -> Option<u64> {
     let out = gh(&["api", "rate_limit"]).ok()?;
-    let v: Value = serde_json::from_slice(&out).ok()?;
+    exhausted_reset(&serde_json::from_slice(&out).ok()?)
+}
+
+/// From `gh api rate_limit`'s answer: the reset of the used-up limits (GraphQL, REST).
+fn exhausted_reset(v: &Value) -> Option<u64> {
     ["graphql", "core"]
         .iter()
         .map(|k| &v["resources"][k])
@@ -197,7 +247,7 @@ pub fn pr_stamps(owner: &str, name: &str, numbers: &[i64]) -> Result<Vec<PrStamp
     let query = format!(
         "query($owner: String!, $name: String!) {{ repository(owner: $owner, name: $name) {{ {fields} }} }}"
     );
-    let v = graphql(&query, &[("owner", owner), ("name", name)], &[])?;
+    let v = graphql_lookups(&query, &[("owner", owner), ("name", name)])?;
     let found: Vec<Value> = numbers
         .iter()
         .map(|n| v["data"]["repository"][format!("p{n}")].clone())
@@ -239,7 +289,7 @@ pub fn prs_by_number(
     let query = format!(
         "query($owner: String!, $name: String!) {{ repository(owner: $owner, name: $name) {{ {fields} }} }}"
     );
-    let v = graphql(&query, &[("owner", owner), ("name", name)], &[])?;
+    let v = graphql_lookups(&query, &[("owner", owner), ("name", name)])?;
     let found: Vec<Value> = numbers
         .iter()
         .map(|n| v["data"]["repository"][format!("p{n}")].clone())
@@ -422,7 +472,7 @@ pub fn issues_by_number(
     let query = format!(
         "query($owner: String!, $name: String!) {{ repository(owner: $owner, name: $name) {{ {fields} }} }}"
     );
-    let v = graphql(&query, &[("owner", owner), ("name", name)], &[])?;
+    let v = graphql_lookups(&query, &[("owner", owner), ("name", name)])?;
     let found: Vec<Value> = numbers
         .iter()
         .map(|n| v["data"]["repository"][format!("i{n}")].clone())
@@ -1051,6 +1101,42 @@ mod tests {
         assert_eq!(
             (c.checks[0].name.as_str(), c.checks[0].outcome.as_str()),
             ("build", "IN_PROGRESS")
+        );
+    }
+
+    #[test]
+    fn the_reset_that_matters_is_that_of_the_used_up_limit() {
+        let limits = |graphql: (i64, u64), core: (i64, u64)| {
+            json!({"resources": {
+                "graphql": {"limit": 5000, "remaining": graphql.0, "reset": graphql.1},
+                "core": {"limit": 5000, "remaining": core.0, "reset": core.1},
+                "search": {"limit": 30, "remaining": 0, "reset": 9}
+            }})
+        };
+        assert_eq!(exhausted_reset(&limits((0, 500), (4000, 900))), Some(500));
+        assert_eq!(exhausted_reset(&limits((0, 500), (0, 900))), Some(900));
+        assert_eq!(exhausted_reset(&limits((10, 500), (4000, 900))), None);
+    }
+
+    #[test]
+    fn lookups_leave_out_numbers_github_does_not_know() {
+        // What GitHub answers (and gh exits 1) for an existing and a deleted PR.
+        let answer = br#"{"data":{"repository":{"p1":{"number":9000,"state":"CLOSED"},"p2":null}},
+            "errors":[{"type":"NOT_FOUND","path":["repository","p2"],"message":"Could not resolve"}]}"#;
+        let v = lookup_result(false, answer).unwrap().unwrap();
+        let stamps = parse_stamps(&json!([
+            v["data"]["repository"]["p1"],
+            v["data"]["repository"]["p2"]
+        ]));
+        assert_eq!(stamps.iter().map(|s| s.number).collect::<Vec<_>>(), [9000]);
+        // Other errors still fail, and so does gh failing without an answer.
+        let forbidden = br#"{"data":null,"errors":[{"type":"FORBIDDEN","message":"no"}]}"#;
+        assert!(lookup_result(false, forbidden).unwrap().is_err());
+        assert!(lookup_result(false, b"").is_none());
+        assert!(
+            lookup_result(true, br#"{"data":{"repository":{}}}"#)
+                .unwrap()
+                .is_ok()
         );
     }
 

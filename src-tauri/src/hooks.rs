@@ -144,9 +144,10 @@ pub fn created_links(event: &HookEvent, owner: &str, name: &str) -> Vec<(&'stati
             command.contains("gh issue create"),
         )
     } else {
+        // The tool's own name, not a longer one (`create_pull_request_review` creates no PR).
         (
-            tool.contains("create_pull_request"),
-            tool.contains("create_issue"),
+            tool.ends_with("create_pull_request"),
+            tool.ends_with("create_issue"),
         )
     };
     if !prs && !issues {
@@ -373,6 +374,17 @@ mod tests {
             }),
         );
         assert_eq!(created_links(&mcp, "owner", "proj"), [("issue", 14)]);
+        // A review of an existing PR, or a comment on an issue, creates neither.
+        for tool in [
+            "mcp__github__create_pull_request_review",
+            "mcp__github__create_issue_comment",
+        ] {
+            let other = HookEvent {
+                tool_name: Some(tool.into()),
+                ..mcp.clone()
+            };
+            assert!(created_links(&other, "owner", "proj").is_empty(), "{tool}");
+        }
     }
 
     #[test]

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { classify, reviewBody, type DraftComment } from "./reviewComments.ts";
+import { classify, feedbackMessage, reviewBody, type DraftComment } from "./reviewComments.ts";
 
 const draft = (over: Partial<DraftComment>): DraftComment => ({
   path: "A.java", fromLine: 10, toLine: 10, code: "x", text: "fix", rev: "head", ...over,
@@ -29,4 +29,15 @@ test("other versions, lines outside the diff and unknown files go into the body"
 test("the review body lists folded comments after the summary", () => {
   assert.equal(reviewBody("Looks good", [draft({ fromLine: 3, toLine: 4, text: "nit" })]), "Looks good\n\n- `A.java:3-4` — nit");
   assert.equal(reviewBody("  ", []), "");
+});
+
+test("feedback for the agent quotes each comment's code and location", () => {
+  const msg = feedbackMessage([
+    draft({ fromLine: 3, toLine: 4, code: "a\nb", text: "Rename\nthis" }),
+    draft({ path: "B.java", fromLine: 7, toLine: 7, code: "x\n".repeat(10), text: " ok " }),
+  ]);
+  assert.ok(msg.startsWith("Review feedback on your changes:\n\n1. A.java:3-4\n   > a\n   > b\n   Rename\n   this"), msg);
+  assert.ok(msg.includes("\n\n2. B.java:7\n"), msg);
+  assert.equal(msg.split("\n").filter((l) => l === "   > x").length, 6, "at most 6 quoted lines");
+  assert.ok(msg.endsWith("\n   ok\n\nPlease address each point."), msg);
 });

@@ -116,9 +116,27 @@ fn run(app: AppHandle, wake: Receiver<()>) {
     }
 }
 
-/// If a failed poll hit GitHub's rate limit: how long until it resets (at least a minute;
-/// five for a secondary limit, which GitHub does not announce a reset for).
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// If a failed poll hit GitHub's rate limit: how long until it resets.
 fn rate_limited(message: &str) -> Option<Duration> {
+    rate_limit_wait(message, github::rate_limit_reset, now_secs())
+}
+
+/// How long to wait after `message` (a failed poll's error), given GitHub's `reset` time of
+/// the used-up limit (asked only for a primary limit) and `now` (Unix seconds): until the
+/// reset, at least a minute; five minutes for a secondary limit, which GitHub does not
+/// announce a reset for; `None` if it is no rate limit.
+fn rate_limit_wait(
+    message: &str,
+    reset: impl FnOnce() -> Option<u64>,
+    now: u64,
+) -> Option<Duration> {
     let lower = message.to_lowercase();
     if lower.contains("secondary rate limit") {
         return Some(Duration::from_secs(300));
@@ -126,20 +144,40 @@ fn rate_limited(message: &str) -> Option<Duration> {
     if !lower.contains("rate limit") {
         return None;
     }
-    let reset = github::rate_limit_reset().unwrap_or(0);
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let reset = reset().unwrap_or(0);
     Some(Duration::from_secs(reset.saturating_sub(now).max(60)))
 }
 
+/// How long after a PR changed it may still get its first checks (none yet right after a
+/// push): until then a PR without checks is fetched on every poll.
+const CHECKS_START_SECS: u64 = 15 * 60;
+
 /// Whether the stored details of a PR are still current for `stamp`: nothing changed on it,
-/// and its checks are not running (check results do not change a PR's `updatedAt`).
-fn current(stored: &PrSummary, stamp: &github::PrStamp) -> bool {
-    stored.updated_at == stamp.updated_at
-        && stored.state == stamp.state
-        && !matches!(stored.ci.as_deref(), Some("PENDING" | "EXPECTED"))
+/// and its checks are not running or about to start (check results do not change a PR's
+/// `updatedAt`). `now`: Unix seconds.
+fn current(stored: &PrSummary, stamp: &github::PrStamp, now: u64) -> bool {
+    let checks_settled = match stored.ci.as_deref() {
+        Some("PENDING" | "EXPECTED") => false,
+        Some(_) => true,
+        None => rfc3339_secs(&stamp.updated_at)
+            .is_none_or(|changed| now.saturating_sub(changed) > CHECKS_START_SECS),
+    };
+    stored.updated_at == stamp.updated_at && stored.state == stamp.state && checks_settled
+}
+
+/// Unix seconds of a GitHub timestamp (`2026-10-15T05:21:11Z`).
+fn rfc3339_secs(t: &str) -> Option<u64> {
+    let num = |range: std::ops::Range<usize>| t.get(range)?.parse::<i64>().ok();
+    let (y, m, d) = (num(0..4)?, num(5..7)?, num(8..10)?);
+    let (hh, mm, ss) = (num(11..13)?, num(14..16)?, num(17..19)?);
+    // Days since 1970-01-01 (Howard Hinnant's days_from_civil).
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    u64::try_from(days * 86_400 + hh * 3600 + mm * 60 + ss).ok()
 }
 
 /// One poll of `repo`: the viewer's PRs, PRs requesting their review, and the PRs they
@@ -174,7 +212,7 @@ pub fn poll(app: &AppHandle, repo: &Repo, full: bool) -> Result<(), String> {
     };
     let stale: Vec<i64> = stamps
         .iter()
-        .filter(|s| full || !stored(s.number).is_some_and(|p| current(&p, s)))
+        .filter(|s| full || !stored(s.number).is_some_and(|p| current(&p, s, now_secs())))
         .map(|s| s.number)
         .collect();
     let fetched = github::prs_by_number(o, n, me, &stale)?;
@@ -252,6 +290,9 @@ pub fn poll(app: &AppHandle, repo: &Repo, full: bool) -> Result<(), String> {
                 .set_last_seen(item.id, pr.latest_activity.as_deref().unwrap_or(""))?,
         }
     }
+    // After the lifecycle step, which turns pushed issues into their PRs: their commits count
+    // as the user's from this poll on, not only from the next one.
+    crate::lifecycle::after_poll(&state, app, repo)?;
     // Whose commits a PR has is needed only to tell whether its worktree has changes to review.
     for item in state.store.items(repo.id)? {
         if item.kind == "pr"
@@ -262,7 +303,6 @@ pub fn poll(app: &AppHandle, repo: &Repo, full: bool) -> Result<(), String> {
             tracing::warn!("could not fetch the commits of PR #{}: {e}", item.number);
         }
     }
-    crate::lifecycle::after_poll(&state, app, repo)?;
     Ok(())
 }
 
@@ -299,30 +339,70 @@ mod tests {
             state: "OPEN".into(),
             updated_at: "2026-10-01T00:00:00Z".into(),
         };
-        assert!(current(&stored, &stamp));
+        let changed = rfc3339_secs("2026-10-01T00:00:00Z").unwrap();
+        let later = changed + 3600;
+        assert!(current(&stored, &stamp, later));
         let updated = github::PrStamp {
             updated_at: "2026-10-02T00:00:00Z".into(),
             ..stamp.clone()
         };
-        assert!(!current(&stored, &updated));
+        assert!(!current(&stored, &updated, later));
         let merged = github::PrStamp {
             state: "MERGED".into(),
             ..stamp.clone()
         };
-        assert!(!current(&stored, &merged));
-        let running = PrSummary {
-            ci: Some("PENDING".into()),
+        assert!(!current(&stored, &merged, later));
+        for state in ["PENDING", "EXPECTED"] {
+            let running = PrSummary {
+                ci: Some(state.into()),
+                ..stored.clone()
+            };
+            assert!(!current(&running, &stamp, later), "{state}");
+        }
+        // No checks yet: right after a change they may still start, later there are none.
+        let no_checks = PrSummary {
+            ci: None,
             ..stored.clone()
         };
-        assert!(!current(&running, &stamp));
+        assert!(!current(&no_checks, &stamp, changed + 60));
+        assert!(current(&no_checks, &stamp, changed + CHECKS_START_SECS + 1));
     }
 
     #[test]
-    fn secondary_rate_limits_wait_five_minutes_and_other_errors_not_at_all() {
+    fn github_timestamps_are_read_as_unix_seconds() {
+        assert_eq!(rfc3339_secs("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(rfc3339_secs("2026-10-15T05:21:11Z"), Some(1_792_041_671));
+        assert_eq!(rfc3339_secs("2024-02-29T12:00:00Z"), Some(1_709_208_000));
+        assert_eq!(rfc3339_secs("garbage"), None);
+    }
+
+    #[test]
+    fn a_used_up_rate_limit_waits_for_its_reset() {
+        let never = || -> Option<u64> { panic!("only a primary limit asks for the reset") };
         assert_eq!(
-            rate_limited("gh api failed: You have exceeded a secondary rate limit."),
+            rate_limit_wait(
+                "gh api failed: API rate limit exceeded for user ID 1.",
+                || Some(1_000 + 600),
+                1_000
+            ),
+            Some(Duration::from_secs(600))
+        );
+        // A reset that is past or unknown still waits a minute.
+        assert_eq!(
+            rate_limit_wait("gh: API rate limit exceeded", || None, 1_000),
+            Some(Duration::from_secs(60))
+        );
+        assert_eq!(
+            rate_limit_wait(
+                "gh api failed: You have exceeded a secondary rate limit.",
+                never,
+                0
+            ),
             Some(Duration::from_secs(300))
         );
-        assert_eq!(rate_limited("gh api failed: Could not resolve host"), None);
+        assert_eq!(
+            rate_limit_wait("gh api failed: Could not resolve host", never, 0),
+            None
+        );
     }
 }

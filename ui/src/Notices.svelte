@@ -10,16 +10,12 @@
   import IconButton from "./controls/IconButton.svelte";
   import { agents } from "./lib/agent.svelte";
   import { api } from "./lib/api";
+  import { FADE_MS, fades, stillCurrent, withNotice, type Notice, type NoticeKind } from "./lib/notices";
 
-  type Kind = "needs-you" | "finished" | "error" | "ci-failing" | "activity" | "lifecycle";
-  type Notice = { id: number; item: number | null; kind: Kind; title: string; body: string };
-
-  const PIP: Record<Kind, Attention> = {
+  const PIP: Record<NoticeKind, Attention> = {
     "needs-you": "needs-you", finished: "review", error: "blocked", "ci-failing": "ci-failing", activity: "activity",
     lifecycle: "none",
   };
-  const FADE_MS = 10_000;
-  const MAX = 4;
 
   // The item this window shows: notices about it are done once it is on screen.
   let { selected }: { selected: number | null } = $props();
@@ -35,14 +31,7 @@
     if (n.item != null) api.openItem(n.item);
   }
 
-  // Still worth showing: not about the item on screen, and a permission request only while
-  // the agent still waits.
-  function current(n: Notice) {
-    return (
-      n.item !== selected &&
-      (n.kind !== "needs-you" || n.item == null || agents[String(n.item)]?.status === "waitingForPermission")
-    );
-  }
+  const current = (n: Notice) => stillCurrent(n, selected, (item) => agents[String(item)]?.status);
 
   // Assigns only when something is done, so the rerun it causes changes nothing.
   $effect(() => {
@@ -53,9 +42,8 @@
     const unlisten = listen<Omit<Notice, "id">>("notice", ({ payload }) => {
       const notice = { ...payload, id: next++ };
       if (!current(notice)) return;
-      // A newer notice about the same item replaces the older one.
-      notices = [...notices.filter((n) => n.item == null || n.item !== notice.item), notice].slice(-MAX);
-      if (notice.kind !== "needs-you") setTimeout(() => dismiss(notice.id), FADE_MS);
+      notices = withNotice(notices, notice);
+      if (fades(notice)) setTimeout(() => dismiss(notice.id), FADE_MS);
     });
     return () => unlisten.then((f) => f());
   });

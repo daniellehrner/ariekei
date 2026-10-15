@@ -186,7 +186,6 @@
           {/if}
           {#if row.isDraft}<span class="faint">draft</span>{/if}
           {#if !row.open}<span class="faint">closed</span>{/if}
-          {#if row.outcomesClosed}<span class="you" title="All its PRs and issues are closed: mark the task done when you are finished with it">all closed</span>{/if}
           {#if decision}<span class={decision[1]}>{decision[0]}</span>{/if}
           {#if row.unresolvedThreads}
             <span class="threads" title="Unresolved review threads"><Icon name="comment" size={12} />{row.unresolvedThreads}</span>
@@ -362,7 +361,6 @@
   li.closed { opacity: 0.6; }
   li.nested .row { padding-left: 26px; }
   .kind { flex: none; display: inline-flex; align-self: center; color: var(--text-faint); }
-  .you { color: var(--you-strong); font-weight: var(--fw-medium); }
   .new-task {
     flex: none; display: flex; flex-direction: column; gap: var(--sp-3); margin: 0 var(--sp-4) var(--sp-4);
     padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-raised);
@@ -403,7 +401,7 @@
   .attention.needs-you { color: var(--agent-strong); }
   .attention.blocked, .attention.ci-failing { color: var(--bad); }
   .attention.activity { color: var(--gh-strong); }
-  .attention.review { color: var(--you-strong); }
+  .attention.review, .attention.all-closed { color: var(--you-strong); }
   .attention.working { color: var(--text-muted); }
   .hits .line2 { gap: var(--sp-3); }
   .empty { padding: var(--sp-2) var(--sp-6) var(--sp-5) var(--sp-9); font-size: var(--fs-12); line-height: 16px; color: var(--text-faint); }

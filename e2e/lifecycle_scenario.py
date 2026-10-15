@@ -5,7 +5,12 @@ through insteadOf. Covers: an assigned issue in the Inbox, Start working (branch
 issue-<N>-<slug> from main, push set up), Done refused while a commit is unpushed and while
 a file is uncommitted, git push → draft PR opened ("Closes #N") and the item becomes the PR,
 the PR merged → automatic cleanup (worktree, branch, agent, item); and an adopted worktree
-that is kept when its PR is merged. Commits are made with git directly (no agent turn).
+that is kept when its PR is merged. Also: the rate limit used up (the Inbox says so; a
+refresh recovers), a tracked issue deleted on GitHub (polling goes on), CI going from
+running to failing without the PR changing, your own commits are not "changes to review"
+but a teammate's are, automatic cleanup kept back while a merged PR's worktree has
+uncommitted work, and an issue whose branch already has a PR (no draft opened). Commits are
+made with git directly (no agent turn).
 
 Run it with `python3 e2e/run.py <test-app> lifecycle` (see run.py), which sets the environment.
 """
@@ -18,7 +23,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from check import check, contains, equal  # noqa: E402
+from check import check, contains, equal, eventually  # noqa: E402
 from ui import open_inbox, select_row  # noqa: E402
 from wd import Session  # noqa: E402
 
@@ -32,9 +37,10 @@ def git(cwd, *args):
     return subprocess.run(["git", "-C", cwd, *args], check=True, capture_output=True, text=True).stdout.strip()
 
 
-def commit(cwd, msg):
+def commit(cwd, msg, who="t"):
+    """A commit by `who`, whose name the fake GitHub takes as their login."""
     git(cwd, "add", "-A")
-    git(cwd, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", msg)
+    git(cwd, "-c", f"user.name={who}", "-c", f"user.email={who}@t", "-c", "commit.gpgsign=false", "commit", "-qm", msg)
 
 
 upstream, clone = os.path.join(work, "github-proj"), os.path.join(work, "proj")
@@ -58,16 +64,35 @@ data_file = os.path.join(gh_dir, "data.json")
 json.dump({
     "viewer": "me", "upstream": upstream,
     "prs": [{"number": 42, "title": "Feature x", "author": "me", "head_ref": "feature/x", "base_ref": "main", "state": "OPEN"}],
-    "issues": [{"number": 5, "title": "Crash on start", "author": "carol", "body": "It crashes when the config is empty.", "assigned": True}],
+    "issues": [{"number": 5, "title": "Crash on start", "author": "carol", "body": "It crashes when the config is empty.", "assigned": True},
+               {"number": 6, "title": "Old idea", "author": "carol", "assigned": True},
+               {"number": 7, "title": "Typo in docs", "author": "carol", "assigned": True}],
 }, open(data_file, "w"))
 
 
 def set_state(number, state):
+    set_pr(number, state=state)
+
+
+def set_pr(number, **fields):
     data = json.load(open(data_file))
     for p in data["prs"]:
         if p["number"] == number:
-            p["state"] = state
+            p.update(fields)
     json.dump(data, open(data_file, "w"))
+
+
+def attention(s, number):
+    open_inbox(s)
+    return s.js("return document.querySelector(`.inbox .row[data-number='${arguments[0]}'] .attention`)?.textContent ?? ''", number)
+
+
+def refresh(s):
+    s.js("document.querySelector(\".inbox header button[aria-label='Refresh from GitHub']\").click()")
+
+
+def poll_error(s):
+    return s.js("return document.querySelector('.poll-error')?.textContent ?? ''")
 
 
 def writes():
@@ -104,7 +129,42 @@ try:
     s.click(s.wait(".connect form button"))
     s.wait(".inbox .row[data-number='5']", timeout=60)
     print("[inbox]", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"))
-    equal("Inbox sections", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"), ["Mine 1", "Issues 1", "Opened 0"])
+    equal("Inbox sections", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"), ["Mine 1", "Issues 3", "Opened 0"])
+
+    # --- GitHub's rate limit used up: the Inbox says so; a refresh after the reset recovers ---
+    limit_flag = os.path.join(gh_dir, "rate-limited")
+    open(limit_flag, "w").close()
+    refresh(s)
+    message = eventually("the rate limit message", lambda: poll_error(s), lambda v: "rate limit" in v)
+    print("[rate limit]", " ".join(message.split()))
+    contains("the rate limit message says when polling resumes", message, "polls again in 2 min")
+    os.remove(limit_flag)
+    refresh(s)
+    eventually("the message goes once GitHub answers again", lambda: poll_error(s), lambda v: v == "")
+
+    # --- a tracked issue disappears from GitHub (deleted, transferred): polling goes on ---
+    select_row(s, 6)
+    s.wait(".item header .title", timeout=30, text="Old idea")
+    data = json.load(open(data_file))
+    data["issues"] = [i for i in data["issues"] if i["number"] != 6]
+    json.dump(data, open(data_file, "w"))
+    set_pr(42, title="Feature x, renamed")
+    eventually("other items stay current", lambda: s.js("return document.querySelector(\".inbox .row[data-number='42']\")?.title ?? ''"),
+               lambda v: v == "Feature x, renamed", timeout=30)
+    print("[deleted issue] poll error:", repr(poll_error(s)), "| rows:", rows(s))
+    check("a deleted issue does not break polling", poll_error(s) == "" and "6" not in rows(s), poll_error(s))
+
+    # --- CI: a push starts it (running), then it fails; the PR itself does not change ---
+    git(upstream, "checkout", "-q", "feature/x")
+    open(os.path.join(upstream, "x.txt"), "a").write("more\n")
+    commit(upstream, "more x")
+    git(upstream, "checkout", "-q", "main")
+    set_pr(42, ci="PENDING")
+    eventually("CI shows as running", lambda: s.js("return !!document.querySelector(\".inbox .row[data-number='42'] .ci.warn\")"), lambda v: v, timeout=30)
+    set_pr(42, ci="FAILURE", failing="unit-tests")
+    eventually("CI failing shows without the PR changing", lambda: attention(s, 42), lambda v: v == "CI failing", timeout=30)
+    print("[ci] #42:", attention(s, 42))
+    set_pr(42, ci="SUCCESS", failing=None)
 
     # --- the issue ---
     select_row(s, 5)
@@ -120,9 +180,9 @@ try:
           "| push to:", git(clone, "config", f"branch.{branch}.remote"))
     check("Start working makes a worktree on a branch from main", os.path.isdir(wt) and branch == "issue-5-crash-on-start" and git(wt, "rev-parse", "HEAD") == git(clone, "rev-parse", "origin/main"), branch)
 
-    # The fix (made directly with git), not pushed yet: Done must refuse.
+    # The fix (made directly with git, as the user "me"), not pushed yet: Done must refuse.
     open(os.path.join(wt, "a.txt"), "a").write("fixed\n")
-    commit(wt, "Fix the crash on start")
+    commit(wt, "Fix the crash on start", who="me")
     open(os.path.join(wt, "notes.txt"), "w").write("todo\n")
     press_done(s)
     s.wait("[data-blocked]", timeout=30)
@@ -150,8 +210,28 @@ try:
     print("[push] header:", s.js("return document.querySelector('.item header').innerText.replace(/\\n+/g, ' | ')"))
     contains("the item became the PR", s.js("return document.querySelector('.item header .title').textContent"), "#100")
 
-    # Merged on GitHub: the next poll cleans up on its own.
+    # The user's own pushed commit is not "changes to review"; a teammate's commit is.
+    select_row(s, 42)
+    s.wait(".item header .title", timeout=30, text="#42")
+    time.sleep(7)  # two polls with the PR's commits known
+    print("[own commits] #100:", repr(attention(s, 100)))
+    equal("your own commits are not changes to review (nothing wants attention)", attention(s, 100), "")
+    git(upstream, "checkout", "-q", branch)
+    open(os.path.join(upstream, "b.txt"), "w").write("carol's part\n")
+    commit(upstream, "Add carol's part", who="carol")
+    git(upstream, "checkout", "-q", "main")
+    git(wt, "pull", "-q", "--no-rebase")
+    eventually("a teammate's commit is changes to review", lambda: attention(s, 100), lambda v: v == "Changes to review", timeout=30)
+    print("[own commits] after carol's commit, #100:", attention(s, 100))
+
+    # Merged on GitHub while the worktree has uncommitted work: kept, and the Inbox says why.
+    open(os.path.join(wt, "scratch.txt"), "w").write("not committed\n")
     set_state(100, "MERGED")
+    eventually("a merged PR with uncommitted work is kept", lambda: attention(s, 100), lambda v: v == "Cleanup blocked", timeout=30)
+    print("[merged, blocked]", attention(s, 100), "| worktree kept:", os.path.isdir(wt))
+    check("cleanup never loses uncommitted work", os.path.isdir(wt) and os.path.exists(os.path.join(wt, "scratch.txt")))
+    # Once the work is gone, the next poll cleans up on its own.
+    os.remove(os.path.join(wt, "scratch.txt"))
     wait_gone(s, 100)
     time.sleep(1)
     branch_left = subprocess.run(["git", "-C", clone, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"]).returncode == 0
@@ -159,11 +239,33 @@ try:
           "| agent processes left:", subprocess.run(["pgrep", "-f", "proj_issue5"], capture_output=True, text=True).stdout.split() if shutil.which("pgrep") else "n/a")
     check("merging cleans up the worktree and the branch", not os.path.exists(wt) and not branch_left)
 
+    # --- an issue whose branch already has a PR (opened with gh pr create): no draft ---
+    select_row(s, 7)
+    s.wait(".item header .title", timeout=30, text="Typo in docs")
+    header_button(s, "Start working")
+    s.wait(".terminal", timeout=120)
+    wt7 = os.path.join(work, "proj_issue7")
+    branch7 = git(wt7, "rev-parse", "--abbrev-ref", "HEAD")
+    data = json.load(open(data_file))
+    data["prs"].append({"number": 130, "title": "Fix the typo", "author": "me", "head_ref": branch7, "base_ref": "main", "state": "OPEN"})
+    json.dump(data, open(data_file, "w"))
+    open(os.path.join(wt7, "a.txt"), "a").write("typo fixed\n")
+    commit(wt7, "Fix the typo", who="me")
+    posts_before = len([w for w in writes() if w.get("post", "").endswith("/pulls")])
+    git(wt7, "push", "-q")
+    s.wait(".item header .meta", timeout=30, text="from issue #7")
+    listed = rows(s)
+    posts = len([w for w in writes() if w.get("post", "").endswith("/pulls")])
+    print("[existing PR] header:", s.js("return document.querySelector('.item header .title').textContent"), "| rows:", listed, "| new PR requests:", posts - posts_before)
+    contains("the issue became the existing PR", s.js("return document.querySelector('.item header .title').textContent"), "#130")
+    check("no draft PR is opened when the branch has one", posts == posts_before)
+    equal("the PR is listed once", listed.count("130"), 1)
+
     # --- an adopted worktree: kept when its PR is merged ---
     select_row(s, 42)
     s.wait(".item header .title", timeout=30, text="Feature x")
     header_button(s, "Start working")
-    s.wait("[data-notice]", timeout=60)
+    s.wait(".item [data-notice]", timeout=60)
     print("[adopt]", s.js("return document.querySelector('.item [data-notice]').textContent"))
     contains("an existing worktree is adopted", s.js("return document.querySelector('.item [data-notice]').textContent"), "existing worktree")
     set_state(42, "MERGED")

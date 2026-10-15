@@ -59,8 +59,13 @@ subprocess.run(["git", "init", "-q", "-b", "main", upstream], check=True)
 lines = [f"line{i}" for i in range(1, 13)]
 write(os.path.join(upstream, "a.txt"), "\n".join(lines) + "\n")
 write(os.path.join(upstream, "w.txt"), "keep\n")
+d_lines = [f"d{i}" for i in range(1, 7)]
+write(os.path.join(upstream, "d.txt"), "\n".join(d_lines) + "\n")
 commit(upstream, "init")
-sha42 = branch(upstream, "feature/x", 42, lambda: write(os.path.join(upstream, "a.txt"), "\n".join(lines[:1] + ["line2 mine"] + lines[2:]) + "\n"))
+sha42 = branch(upstream, "feature/x", 42, lambda: (
+    write(os.path.join(upstream, "a.txt"), "\n".join(lines[:1] + ["line2 mine"] + lines[2:]) + "\n"),
+    write(os.path.join(upstream, "d.txt"), "\n".join(["d1 mine"] + d_lines[1:]) + "\n"),
+))
 sha43 = branch(upstream, "feature/y", 43, lambda: (
     write(os.path.join(upstream, "a.txt"), "\n".join(lines[:9] + ["line10 changed"] + lines[10:]) + "\n"),
     write(os.path.join(upstream, "b.txt"), "new file\n"),
@@ -298,18 +303,25 @@ try:
     print("[keys] after 'r':", s.js("return document.querySelector('[data-progress]').textContent.trim()"),
           "| now on:", s.js("return document.querySelector('.side .files button.active')?.dataset.file"))
     contains("'r' marks the file", s.js("return document.querySelector('[data-progress]').textContent"), "2/6")
-    s.js("document.querySelector(\"[data-opt='ws']\").click()")
+    active = lambda: s.js("return document.querySelector('.side .files button.active')?.dataset.file")
+    before = active()
+    press_on(s, "[data-tab=review]", "[")
+    eventually("'[' goes to the previous file", active, lambda v: v and v != before)
+    print("[keys] '[' from", before, "to", active())
+    press_on(s, "[data-tab=review]", "w")
     eventually("whitespace-only files are labelled", lambda: s.js("return document.querySelectorAll('.side .file .ws').length"), lambda v: v > 0)
     print("[ws] labelled whitespace-only:", s.js("return [...document.querySelectorAll('.side .file')].filter(l => l.querySelector('.ws')).map(l => l.querySelector('[data-file]').dataset.file)"))
     equal("whitespace-only files", s.js("return [...document.querySelectorAll('.side .file')].filter(l => l.querySelector('.ws')).map(l => l.querySelector('[data-file]').dataset.file)"), ["w.txt"])
-    s.js("document.querySelector(\"[data-opt='ws']\").click()")
+    press_on(s, "[data-tab=review]", "w")
+    eventually("'w' shows whitespace again", lambda: s.js("return document.querySelectorAll('.side .file .ws').length"), lambda v: v == 0)
     s.click(s.wait("[data-file='a.txt']"))
-    s.js("document.querySelector(\"[data-opt='unified']\").click()")
+    press_on(s, "[data-tab=review]", "u")
     eventually("the unified diff shows", lambda: s.js("return document.querySelectorAll('.diff .cm-editor').length"), lambda v: v == 1)
     print("[unified] editors:", s.js("return document.querySelectorAll('.diff .cm-editor').length"),
           "| deleted chunks shown inline:", s.js("return document.querySelectorAll('.diff .cm-deletedChunk').length"))
     equal("unified diff: one editor", s.js("return document.querySelectorAll('.diff .cm-editor').length"), 1)
-    s.js("document.querySelector(\"[data-opt='unified']\").click()")
+    press_on(s, "[data-tab=review]", "u")
+    eventually("'u' goes back to side by side", lambda: s.js("return document.querySelectorAll('.diff .cm-editor').length"), lambda v: v == 2)
     # With the focus where clicking the Review tab leaves it, as a user would press it.
     press_on(s, "[data-tab=review]", "?")
     print("[keys] shortcut overlay in the review:", bool(s.find("[data-shortcuts]")))
@@ -391,8 +403,10 @@ try:
         print("[own] Mark reviewed asks first:", s.js("return document.querySelector('.review [data-guard] .text').textContent"))
         s.click(s.wait(".review [data-guard] button", text="Mark anyway"))
     s.wait(".review [data-notice]", timeout=15)
-    # main moves on; the branch is rebased onto it and gets one more commit.
+    # main moves on (also in d.txt, far from the PR's line); the branch is rebased onto it
+    # and gets one more commit, in a.txt only.
     write(os.path.join(upstream, "base.txt"), "from main\n")
+    write(os.path.join(upstream, "d.txt"), "\n".join(d_lines[:5] + ["d6 from main"]) + "\n")
     commit(upstream, "main moves on")
     git(upstream, "checkout", "-q", "feature/x")
     git(upstream, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "rebase", "-q", "main")
@@ -418,5 +432,12 @@ try:
     print("[rebase] all changes vs main, files:", s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"),
           "| own PR offers approve:", s.js("return !!document.querySelector(\"[data-event='APPROVE']:not(:disabled)\")"))
     check("no approving your own PR", not s.js("return !!document.querySelector(\"[data-event='APPROVE']:not(:disabled)\")"))
+    # The reviewed marks survive the rebase where only the base changed the file: d.txt's
+    # content is new (main's d6), but not the PR's change in it; a.txt changed after the review.
+    marks = eventually("reviewed marks after the rebase", lambda: s.js(
+        "return Object.fromEntries([...document.querySelectorAll('[data-reviewed]')].map(c => [c.dataset.reviewed, c.getAttribute('aria-checked') === 'true']))"),
+        lambda v: v and set(v) == {"a.txt", "d.txt"})
+    print("[rebase] reviewed marks:", marks)
+    equal("after a rebase only the file changed since the review is unmarked", marks, {"a.txt": False, "d.txt": True})
 finally:
     s.quit()

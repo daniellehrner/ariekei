@@ -47,7 +47,8 @@
   import { currentChange } from "./lib/currentChange";
   import { gitOverride } from "./lib/gitDiff";
   import { externalLinks } from "./lib/html";
-  import { isTyping, shortcuts } from "./lib/keys.svelte";
+  import { isTyping } from "./lib/keys";
+  import { shortcuts } from "./lib/layout.svelte";
   import { languageFor } from "./lib/languages";
   import { layout } from "./lib/layout.svelte";
   import { fileGuide, flatten, nextUnreviewed, progress, rangeOf, scopeOf, sections, type Guide, type ReviewFile } from "./lib/review";

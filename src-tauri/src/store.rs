@@ -396,12 +396,13 @@ impl Store {
         self.update(id, "tracked = ?2", true)
     }
 
-    /// Numbers of the tracked items of `kind` ("pr" or "issue").
+    /// Numbers of the tracked items of `kind` ("pr" or "issue") that are still listed:
+    /// cleaned-up ones are finished, and polling them would cost more with every item.
     pub fn tracked_numbers(&self, repo_id: i64, kind: &str) -> Result<Vec<i64>, String> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT number FROM work_items WHERE repo_id = ?1 AND tracked = 1 AND kind = ?2",
+                "SELECT number FROM work_items WHERE repo_id = ?1 AND tracked = 1 AND kind = ?2 AND hidden = 0",
             )
             .map_err(err)?;
         let rows = stmt
@@ -877,5 +878,108 @@ mod tests {
                 .number,
             -3
         );
+    }
+
+    #[test]
+    fn an_older_database_is_upgraded_with_its_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.db");
+        // A database as the release before tasks left it: migrations 0-4 and a PR row.
+        {
+            let conn = Connection::open(&path).unwrap();
+            for sql in &MIGRATIONS[..5] {
+                conn.execute_batch(sql).unwrap();
+            }
+            conn.pragma_update(None, "user_version", 5).unwrap();
+            conn.execute(
+                "INSERT INTO repos (path, owner, name, base_remote, viewer) VALUES ('/r', 'o', 'n', 'origin', 'me')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO work_items (repo_id, number, snapshot, kind, tracked, worktree_path)
+                 VALUES (1, 7, '{\"title\": \"old\"}', 'pr', 1, '/w')",
+                [],
+            )
+            .unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        let items = store.items(1).unwrap();
+        assert_eq!(items.len(), 1);
+        let item = &items[0];
+        assert_eq!(
+            (
+                item.number,
+                item.title(),
+                item.task_id,
+                item.worktree_path.as_deref()
+            ),
+            (7, "old", None, Some(Path::new("/w")))
+        );
+        let task = store.create_task(1, "new", "").unwrap();
+        store.link_to_task(item.id, task).unwrap();
+        assert_eq!(store.item(item.id).unwrap().task_id, Some(task));
+    }
+
+    #[test]
+    fn cleaned_up_items_are_no_longer_polled_until_tracked_again() {
+        let (store, repo) = store_with_repo();
+        let id = store
+            .track(repo.id, &polled(7, json!({"title": "a"})))
+            .unwrap();
+        store
+            .track(repo.id, &polled(8, json!({"title": "b"})))
+            .unwrap();
+        assert_eq!(store.tracked_numbers(repo.id, "pr").unwrap(), [7, 8]);
+        store.mark_cleaned(id).unwrap();
+        let cleaned = store.item(id).unwrap();
+        assert!(cleaned.hidden && cleaned.tracked);
+        assert_eq!(store.tracked_numbers(repo.id, "pr").unwrap(), [8]);
+        // Opening it again (e.g. from search) brings it back, polled.
+        store
+            .track(repo.id, &polled(7, json!({"title": "a"})))
+            .unwrap();
+        assert!(!store.item(id).unwrap().hidden);
+        assert_eq!(store.tracked_numbers(repo.id, "pr").unwrap(), [7, 8]);
+    }
+
+    #[test]
+    fn an_issue_becomes_its_pr_keeping_its_work() {
+        let (store, repo) = store_with_repo();
+        let issue = PolledPr {
+            kind: "issue",
+            role: "assignee",
+            ..polled(5, json!({"title": "Crash"}))
+        };
+        store.sync_prs(repo.id, &[issue]).unwrap();
+        let id = store.items(repo.id).unwrap()[0].id;
+        store
+            .set_worktree(id, Some(Path::new("/w")), Some("issue-5-crash"), true)
+            .unwrap();
+        store.set_session(id, "s-1").unwrap();
+        store
+            .convert_to_pr(id, 100, &json!({"title": "Crash fix"}))
+            .unwrap();
+        let pr = store.item(id).unwrap();
+        assert_eq!(
+            (
+                pr.kind.as_str(),
+                pr.number,
+                pr.issue_number,
+                pr.role.as_str()
+            ),
+            ("pr", 100, Some(5), "author")
+        );
+        assert!(pr.tracked && pr.open);
+        assert_eq!(pr.title(), "Crash fix");
+        assert_eq!(
+            (
+                pr.worktree_path.as_deref(),
+                pr.branch.as_deref(),
+                pr.session_id.as_deref()
+            ),
+            (Some(Path::new("/w")), Some("issue-5-crash"), Some("s-1"))
+        );
+        assert_eq!(store.tracked_numbers(repo.id, "pr").unwrap(), [100]);
     }
 }

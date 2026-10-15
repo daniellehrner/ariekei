@@ -53,7 +53,9 @@ fn attention(row: &Row) -> (u8, Option<&'static str>) {
     if row.agent == Some(WaitingForPermission) {
         return (0, Some("agent needs you"));
     }
-    if row.cleanup_blockers.is_some() {
+    // Only a finished item waits for its cleanup; an open one whose Done was refused shows
+    // the reasons on the item, and its other states still count.
+    if !row.open && row.cleanup_blockers.is_some() {
         return (1, Some("finished, cleanup blocked"));
     }
     if row.outcomes_closed {
@@ -130,6 +132,30 @@ mod tests {
             notes: None,
             outcomes_closed: false,
         }
+    }
+
+    #[test]
+    fn only_a_finished_item_waits_for_its_cleanup() {
+        let blockers = Some(vec!["1 uncommitted change: a".to_owned()]);
+        let finished = Row {
+            open: false,
+            cleanup_blockers: blockers.clone(),
+            ..row(1, "2026-01-01")
+        };
+        // Done was refused while it was open, and it has changes to review since.
+        let open = Row {
+            cleanup_blockers: blockers,
+            unreviewed: true,
+            ..row(2, "2026-01-01")
+        };
+        let rows = order(vec![open, finished]);
+        assert_eq!(
+            rows.iter().map(|r| (r.id, r.attention)).collect::<Vec<_>>(),
+            [
+                (1, Some("finished, cleanup blocked")),
+                (2, Some("changes to review"))
+            ]
+        );
     }
 
     #[test]

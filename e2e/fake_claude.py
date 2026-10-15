@@ -57,7 +57,9 @@ def guide():
 
 
 class Keys:
-    """Key presses from the terminal, without echo: characters, "\\r", "\\b", "esc"."""
+    """Key presses from the terminal, without echo: characters, "\\r", "\\b", "esc". A bracketed
+    paste (ESC[200~ … ESC[201~, how Ariekei sends text to the agent) arrives as its characters,
+    line breaks as spaces (one prompt, as Claude Code takes a paste)."""
 
     def __init__(self):
         if os.name == "nt":
@@ -82,15 +84,31 @@ class Keys:
 
     def read(self):
         if os.name == "nt":
+            if self.pending:
+                return self.pending.pop(0)
             c = self.msvcrt.getwch()
             if c in ("\x00", "\xe0"):
                 self.msvcrt.getwch()  # arrow and function keys: ignored
                 return ""
+            if c == "\x1b" and self.msvcrt.kbhit():
+                seq = ""
+                while self.msvcrt.kbhit() and len(seq) < 5:
+                    seq += self.msvcrt.getwch()
+                if seq != "[200~":
+                    return ""  # another escape sequence: ignored
+                text = ""
+                while not text.endswith("\x1b[201~"):
+                    text += self.msvcrt.getwch()
+                self.pending = list(pasted(text[:-6]))
+                return self.pending.pop(0) if self.pending else ""
             return {"\x08": "\b", "\x1b": "esc", "\x03": "\x03", "\x04": "\x04"}.get(c, c)
         if not self.pending:
-            data = os.read(self.fd, 1024).decode(errors="replace")
+            data = os.read(self.fd, 65536).decode(errors="replace")
             if not data:
                 return "\x04"
+            while "\x1b[200~" in data and "\x1b[201~" not in data:  # the rest of a long paste
+                data += os.read(self.fd, 65536).decode(errors="replace")
+            data = re.sub(r"\x1b\[200~(.*?)\x1b\[201~", lambda m: pasted(m.group(1)), data, flags=re.S)
             data = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", data)  # arrows etc.: ignored
             self.pending = list(data)
         c = self.pending.pop(0)
@@ -101,6 +119,11 @@ class Keys:
             import termios
 
             termios.tcsetattr(self.fd, termios.TCSADRAIN, self.saved)
+
+
+def pasted(text):
+    """A pasted text as one line of the prompt."""
+    return re.sub(r"\s*[\r\n]+\s*", " ", text).strip()
 
 
 def out(text=""):

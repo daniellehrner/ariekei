@@ -10,8 +10,8 @@
   import { homeDir } from "@tauri-apps/api/path";
   import { listenToAgents } from "./lib/agent.svelte";
   import { api, type Repo, type Row } from "./lib/api";
-  import { isTyping, shortcuts } from "./lib/keys.svelte";
-  import { layout } from "./lib/layout.svelte";
+  import { isTyping } from "./lib/keys";
+  import { layout, shortcuts } from "./lib/layout.svelte";
   import { setHome } from "./lib/paths";
 
   let repo: Repo | null | undefined = $state(undefined);
