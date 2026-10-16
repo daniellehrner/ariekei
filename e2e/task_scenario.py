@@ -17,6 +17,7 @@ Run it with `python3 e2e/run.py <test-app> task` (see run.py), which sets the en
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -227,8 +228,10 @@ try:
     told = eventually("the agent gets the old side's code", transcripts, lambda t: "Where did this line come from?" in t, timeout=30)
     asked = [line for line in told.splitlines() if "Where did this line come from?" in line][-1]
     print("[ask] old side:", asked[:200])
+    # The fake agent shows a paste on one line; on Windows (ConPTY) its line breaks vanish
+    # instead of becoming spaces, so the code block is compared without whitespace.
     check("the old side is named as the version before the change",
-          "About a.txt line 1 (old version, before the change, commit " in asked and "```txt one ```" in asked, asked)
+          "About a.txt line 1 (old version, before the change, commit " in asked and "```txtone```" in re.sub(r"\s+", "", asked), asked)
     eventually("the agent's turn ends", lambda: agent(s, -1), lambda a: a == "finished", timeout=30)
 
     # In the agent's terminal, the app's shortcuts are Claude Code's keys (Ctrl+B is its
