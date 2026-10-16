@@ -674,5 +674,29 @@ mod tests {
                 (130, Some(6), true)
             );
         }
+
+        #[test]
+        fn an_issue_that_became_its_pr_is_not_listed_again_while_the_pr_is_open() {
+            let app = TestApp::new();
+            app.add_issue(json!({"number": 6, "title": "Typo", "assigned": true}));
+            app.poll().unwrap();
+            let id = app.item(6).id;
+            let prepared = prepare(&app.state, id).unwrap();
+            write(&prepared.path.join("a.txt"), "typo fixed\n");
+            commit(&prepared.path, "fix", "me");
+            git(&prepared.path, &["push", "-q"]);
+            app.add_pr(
+                json!({"number": 130, "title": "Fix the typo", "head_ref": prepared.branch}),
+            );
+            app.poll().unwrap();
+            app.poll().unwrap();
+            assert!(app.row(6).is_none(), "the issue is still open and assigned");
+            assert_eq!(app.row(130).unwrap().issue_number, Some(6));
+            // Closed without merging: the issue is listed again.
+            app.set("prs", 130, json!({"state": "CLOSED"}));
+            app.poll().unwrap();
+            app.poll().unwrap();
+            assert!(app.row(6).is_some());
+        }
     }
 }

@@ -239,13 +239,22 @@ pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), Stri
     }
 
     // Issues: the ones assigned to the viewer, plus tracked ones (e.g. with a worktree).
-    let assigned = github::assigned_issues(o, n, me)?;
+    // An issue whose item became its PR is that PR now: left out while the PR is open.
+    let followed: Vec<i64> = before
+        .iter()
+        .filter(|i| i.kind == "pr" && i.open)
+        .filter_map(|i| i.issue_number)
+        .collect();
+    let assigned: Vec<_> = github::assigned_issues(o, n, me)?
+        .into_iter()
+        .filter(|i| !followed.contains(&i.number))
+        .collect();
     let assigned_numbers: Vec<i64> = assigned.iter().map(|i| i.number).collect();
     let tracked_issues: Vec<i64> = state
         .store
         .tracked_numbers(repo.id, "issue")?
         .into_iter()
-        .filter(|t| !assigned_numbers.contains(t))
+        .filter(|t| !assigned_numbers.contains(t) && !followed.contains(t))
         .collect();
     let issues: Vec<_> = assigned
         .into_iter()

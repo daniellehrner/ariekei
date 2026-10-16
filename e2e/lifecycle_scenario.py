@@ -212,6 +212,8 @@ try:
     s.wait(".item header .meta", timeout=20, text="from issue #5")
     print("[push] header:", s.js("return document.querySelector('.item header').innerText.replace(/\\n+/g, ' | ')"))
     contains("the item became the PR", s.js("return document.querySelector('.item header .title').textContent"), "#100")
+    time.sleep(7)  # later polls still find issue #5 open and assigned
+    check("the issue is not listed again while its PR is open", "5" not in (rows(s) or []), rows(s))
 
     # Another item is shown while the PR is merged.
     select_row(s, 42)
