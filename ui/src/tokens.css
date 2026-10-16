@@ -102,7 +102,7 @@
   --diff-fold-bg: #F1F3F6;
   --diff-fold-text: #5A606C;
   --diff-gutter-text: #7A808B;
-  --diff-selection: #D7E3FB;
+  --diff-selection: rgba(47,99,216,0.24); /* a tint: drawn above the line colours */
   --diff-search: #FFE58A;
   --diff-search-active: #FFC94D;
 
@@ -234,7 +234,7 @@
     --diff-fold-bg: #1C1E23;
     --diff-fold-text: #9AA0AC;
     --diff-gutter-text: #6B717D;
-    --diff-selection: #263A66;
+    --diff-selection: rgba(110,155,255,0.30);
     --diff-search: #5C4A12;
     --diff-search-active: #8A6A10;
 

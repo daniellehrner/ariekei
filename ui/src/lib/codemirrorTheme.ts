@@ -9,6 +9,9 @@ export const ariekeiTheme = EditorView.theme({
   ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "var(--lh-code)" },
   ".cm-content": { caretColor: "var(--you)" },
   ".cm-cursor, .cm-dropCursor": { borderLeft: "2px solid var(--you)" },
+  // The selection is drawn above the text, as a tint: below it, the changed lines' backgrounds
+  // would hide it. (CodeMirror sets the layer's z-index inline, hence !important.)
+  ".cm-selectionLayer": { zIndex: "1 !important", pointerEvents: "none" },
   "&.cm-focused .cm-selectionBackground, .cm-selectionBackground":
     { backgroundColor: "var(--diff-selection)" },
   ".cm-activeLine": { backgroundColor: "transparent" },
