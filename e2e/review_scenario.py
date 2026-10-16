@@ -291,6 +291,10 @@ try:
     s.wait_js("return document.querySelectorAll('.cm-mergeViewEditor .cm-line span[class]').length > 0", timeout=20)
     print("[review] c.rs styled tokens:", s.js("return document.querySelectorAll('.cm-mergeViewEditor .cm-line span[class]').length"))
     check("a Rust file is highlighted", s.js("return document.querySelectorAll('.cm-mergeViewEditor .cm-line span[class]').length") > 0)
+    # Code shows as written: no ligatures (-> or <= drawn as one arrow by fonts like JetBrains Mono).
+    lig = s.js("const st = getComputedStyle(document.querySelector('.cm-mergeViewEditor .cm-line')); return [st.fontVariantLigatures, st.fontFeatureSettings]")
+    print("[review] code ligatures:", lig)
+    check("the diff draws no ligatures", lig[0] == "none" and '"calt" 0' in lig[1], lig)
     s.click(s.wait(".files [data-file='a.txt']"))
     wait_new_side(s, 10)
     # A selection shows on changed lines too: it is drawn above their background.

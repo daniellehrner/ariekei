@@ -70,7 +70,7 @@ if not os.path.exists(clone):
     write(os.path.join(upstream, "build.gradle"), "dependencies {\n  implementation 'a:b:1'\n}\n")
     commit(upstream, "init")
     git(upstream, "checkout", "-q", "-b", "snap-pivot-reorg")
-    write(os.path.join(upstream, src, "SnapSyncState.java"), body.replace("    return healing;", "    // A reorged pivot restarts healing.\n    return healing && !pivotReorged;").replace("field7 = 7", "field7 = 70") + "\n")
+    write(os.path.join(upstream, src, "SnapSyncState.java"), body.replace("    return healing;", "    // A reorged pivot restarts healing.\n    return healing && !pivotReorged;").replace("field7 = 7;", "field7 = 70; // a -> b <= c != d >= e") + "\n")
     write(os.path.join(upstream, src, "PivotReorgDetector.java"), "package org.example.sync;\n\n/** Detects a reorged pivot. */\nclass PivotReorgDetector {\n  boolean reorged(long canonical, long pivot) {\n    return canonical != pivot;\n  }\n}\n")
     write(os.path.join(upstream, "src/test/java/org/example/sync/PivotReorgDetectorTest.java"), "class PivotReorgDetectorTest {}\n")
     write(os.path.join(upstream, "build.gradle"), "dependencies {\n  implementation 'a:b:1'\n  testImplementation 'c:d:2'\n}\n")

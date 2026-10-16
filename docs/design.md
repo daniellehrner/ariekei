@@ -26,6 +26,8 @@ told apart in grey-scale and with colour blindness:
 - `ui/src/tokens.css`: every colour (light and dark), type, space, radius, size and motion
   token. Components never hard-code a colour; CodeMirror (`lib/codemirrorTheme.ts`) and xterm
   (`lib/xtermTheme.ts`) read the same tokens.
+- Code (the diff, the terminal, inline code) is shown as written: font ligatures and
+  contextual alternates are off (`app.css`), so `->` or `<=` never turn into arrows.
 - `ui/src/controls/`: the shared controls (`Button`, `IconButton`, `Checkbox`, `Toggle`,
   `Segmented`, `Pill`, `Banner`, `InlineConfirm`, `Kbd`, `StarToggle`), the icon set
   (`icons.ts`, 16 px grid, 1.5 px stroke; `Icon`), the agent `StatusDot`, the Inbox
