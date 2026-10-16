@@ -146,7 +146,7 @@
 {#snippet item(row: Row, section: string, nested: boolean)}
   {@const kind = attentionKind(row.attention)}
   {@const decision = row.reviewDecision ? DECISION[row.reviewDecision] : null}
-  <li class:closed={!row.open} class:nested class:starred={row.starred}>
+  <li class:closed={!row.open} class:nested class:starred={row.starred} class:removable={row.removable}>
     <button class="row" class:active={row.id === selected} aria-current={row.id === selected} onclick={() => onselect(row.id)}
       title={row.title} data-number={row.number} data-task={row.kind === "task" ? -row.number : undefined}>
       <span class="dot"><StatusDot status={row.agent} /></span>
@@ -341,15 +341,15 @@
   ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
   li { position: relative; }
   li.closed { opacity: 0.6; }
-  /* Star and remove sit over the end of the title line: shown while the row is hovered or
-     focused, the star also while it is set (the title leaves it room then). */
-  .acts {
-    position: absolute; top: 3px; right: var(--sp-5); display: none; gap: 1px; border-radius: var(--r-md);
-  }
+  /* Star and remove sit at the end of the title line: shown while the row is hovered or
+     focused, the star also while it is set. The title makes room for them (--acts: the
+     buttons' width, less the row's own padding), so they never cover it. */
+  .acts { position: absolute; top: 3px; right: var(--sp-5); display: none; gap: 1px; }
   li:hover .acts, li:focus-within .acts, li.starred .acts { display: flex; }
-  li:hover .acts, li:focus-within .acts { background: var(--surface-hover); }
   li:not(:hover):not(:focus-within) .acts :global([data-remove]) { display: none; }
-  li.starred .line1 { padding-right: 22px; }
+  .line1 { padding-right: var(--acts, 0px); }
+  li:not(.nested):is(.starred, :hover, :focus-within) { --acts: 22px; }
+  li.removable:is(:hover, :focus-within) { --acts: 45px; }
   li.nested .row { padding-left: 26px; }
   .kind { flex: none; display: inline-flex; align-self: center; color: var(--text-faint); }
   .new-task {

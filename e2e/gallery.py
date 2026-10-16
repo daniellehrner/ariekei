@@ -27,7 +27,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wd import Session  # noqa: E402
+from wd import ELEMENT, Session  # noqa: E402
 
 app, work = sys.argv[1:3]
 theme = sys.argv[3] if len(sys.argv) > 3 else "light"
@@ -133,6 +133,13 @@ def click(s, css):
     s.js("document.querySelector(arguments[0]).click()", css)
 
 
+def hover(s, css):
+    """Moves the pointer over `css`, so :hover styles show."""
+    el = s.find(css)[0]
+    s.s("POST", "/actions", {"actions": [{"type": "pointer", "id": "mouse", "parameters": {"pointerType": "mouse"},
+                                          "actions": [{"type": "pointerMove", "duration": 0, "origin": {ELEMENT: el}, "x": 0, "y": 0}]}]})
+
+
 def key(s, k):
     s.js("document.querySelector('.diff')?.dispatchEvent(new KeyboardEvent('keydown', { key: arguments[0], bubbles: true }))", k)
 
@@ -158,11 +165,14 @@ try:
     s.wait(".overview", timeout=60)
     shot(s, "overview")
     if need("inbox", "browse"):
-        # Star an item, as from its row, and look at the browser of open PRs and issues.
+        # Star an item and add one to Open, as from the Inbox and the browser; the pointer rests
+        # on the added one (its star and Remove show).
         s.js("""const rows = await window.__TAURI_INTERNALS__.invoke('inbox');
-          await window.__TAURI_INTERNALS__.invoke('set_starred', { id: rows.find((r) => r.number === 7973).id, starred: true });""")
+          await window.__TAURI_INTERNALS__.invoke('set_starred', { id: rows.find((r) => r.number === 7973).id, starred: true });
+          await window.__TAURI_INTERNALS__.invoke('track_item', { kind: 'pr', number: 7941 });""")
         s.wait(".inbox [data-section='starred']", timeout=20)
-        s.js("document.querySelector(\".inbox .row[data-number='8015']\").dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))")
+        s.wait(".inbox [data-section='open'] .row[data-number='7941']", timeout=20)
+        hover(s, ".inbox .row[data-number='7941']")
         shot(s, "inbox")
         s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }))")
         s.wait("[data-browse-hit]", timeout=20)
