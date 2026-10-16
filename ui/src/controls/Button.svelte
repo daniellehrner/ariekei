@@ -1,6 +1,5 @@
 <!--
-  Buttons. Filled agent / GitHub variants only where an action leaves Ariekei for that party;
-  "you" is the reviewer's own action (Reviewed, next).
+  Buttons. Filled agent / GitHub variants only where an action leaves Ariekei for that party.
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
@@ -10,7 +9,7 @@
   import Spinner from "./Spinner.svelte";
   import type { IconName } from "./icons";
 
-  type Variant = "primary" | "secondary" | "quiet" | "danger" | "agent" | "gh" | "you";
+  type Variant = "primary" | "secondary" | "quiet" | "danger" | "agent" | "gh";
   let {
     variant = "secondary",
     size = "md",
@@ -71,7 +70,4 @@
   .agent { background: var(--agent); border-color: var(--agent); color: var(--text-on-accent); }
   .gh { background: var(--gh); border-color: var(--gh); color: var(--text-on-accent); }
   .agent:hover:not(:disabled), .gh:hover:not(:disabled) { filter: brightness(0.92); }
-
-  .you { background: var(--you-bg); border-color: var(--you); color: var(--you-strong); font-weight: var(--fw-semibold); }
-  .you:hover:not(:disabled) { background: color-mix(in srgb, var(--you-bg) 80%, var(--you)); }
 </style>

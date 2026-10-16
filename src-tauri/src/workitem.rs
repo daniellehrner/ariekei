@@ -2,7 +2,7 @@
 //! preparing a PR's worktree, starting its agent with context, and review markers.
 
 use crate::AppState;
-use crate::git::{self, git};
+use crate::git;
 use crate::github::{self, PrSummary};
 use crate::inbox::{self, Row};
 use crate::store::{PolledPr, Repo, WorkItem};
@@ -87,15 +87,6 @@ pub fn connect(state: &AppState, path: &str) -> Result<Repo, String> {
     Ok(repo)
 }
 
-/// Where the item's review marker is kept (also deleted by cleanup).
-pub fn reviewed_ref(item: &WorkItem) -> String {
-    if item.is_task() {
-        format!("refs/ariekei/reviewed/task-{}", -item.number)
-    } else {
-        format!("refs/ariekei/reviewed/pr-{}", item.number)
-    }
-}
-
 /// Clears worktree paths that no longer exist (e.g. removed outside Ariekei).
 pub fn reconcile(state: &AppState) -> Result<(), String> {
     for item in state
@@ -115,52 +106,6 @@ pub fn reconcile(state: &AppState) -> Result<(), String> {
     Ok(())
 }
 
-fn reviewed_marker(cwd: &Path, item: &WorkItem) -> Option<String> {
-    item.reviewed_sha
-        .clone()
-        .filter(|sha| git::commit_exists(cwd, sha))
-}
-
-/// Changes since the review (or the branch point) the user has not seen: uncommitted
-/// changes, or commits someone else made. The user's own commits on the PR, and what their
-/// merges brought in, count as seen; local commits GitHub does not know yet do not.
-fn unreviewed(state: &AppState, cwd: &Path, item: &WorkItem, base_ref: &str, repo: &Repo) -> bool {
-    let Ok(head) = git::head(cwd) else {
-        return false;
-    };
-    if git::is_dirty(cwd).unwrap_or(false) {
-        return true;
-    }
-    let base = format!("{}/{}", repo.base_remote, base_ref);
-    let marker = reviewed_marker(cwd, item).or_else(|| git::merge_base(cwd, "HEAD", &base).ok());
-    if marker.as_deref() == Some(head.as_str()) {
-        return false;
-    }
-    let own = state
-        .store
-        .own_commits(item.id)
-        .ok()
-        .flatten()
-        .unwrap_or_default()
-        .1;
-    let exclude: Vec<&str> = [Some(base.as_str()), marker.as_deref()]
-        .into_iter()
-        .flatten()
-        .collect();
-    git::has_others_commits(cwd, &head, &exclude, &own).unwrap_or(true)
-}
-
-/// Fetches which commits of the item's PR are the viewer's, when its head moved since.
-pub fn refresh_own_commits(state: &AppState, repo: &Repo, item: &WorkItem) -> Result<(), String> {
-    let pr = summary(item)?;
-    let known = state.store.own_commits(item.id)?.map(|(head, _)| head);
-    if known.as_deref() == Some(pr.head_sha.as_str()) {
-        return Ok(());
-    }
-    let own = github::commits_by(&repo.owner, &repo.name, item.number, &repo.viewer)?;
-    state.store.set_own_commits(item.id, &pr.head_sha, &own)
-}
-
 /// Whether the item is in the Inbox (or only under its task). Finished items stay only while
 /// cleanup is blocked (they keep a worktree).
 fn listed(item: &WorkItem) -> bool {
@@ -171,7 +116,6 @@ pub fn inbox(state: &AppState, repo: Option<Repo>) -> Result<Vec<Row>, String> {
     let Some(repo) = repo else {
         return Ok(vec![]);
     };
-    let default = default_branch(&repo).unwrap_or_else(|_| "main".into());
     let items = state.store.items(repo.id)?;
     // Finished items stay listed under their task, which shows what came of it.
     let tasks: Vec<&WorkItem> = items.iter().filter(|i| i.is_task() && listed(i)).collect();
@@ -183,7 +127,7 @@ pub fn inbox(state: &AppState, repo: Option<Repo>) -> Result<Vec<Row>, String> {
         .iter()
         .filter(|item| listed(item) || task_of(item).is_some())
         .filter_map(|item| {
-            let mut row = row(state, &repo, &default, item.clone())?;
+            let mut row = row(state, &repo, item.clone())?;
             if let Some(task) = task_of(item) {
                 row.task_id = Some(task.id);
                 if row.worktree.is_none() && task.worktree_path.is_some() {
@@ -196,7 +140,7 @@ pub fn inbox(state: &AppState, repo: Option<Repo>) -> Result<Vec<Row>, String> {
     Ok(inbox::order(rows))
 }
 
-fn row(state: &AppState, repo: &Repo, default_branch: &str, item: WorkItem) -> Option<Row> {
+fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
     let worktree = item.worktree_path.clone().filter(|p| p.exists());
     let agent = state.terminals.status(&item.id.to_string());
     let seen = item.last_seen.clone().unwrap_or_default();
@@ -222,9 +166,6 @@ fn row(state: &AppState, repo: &Repo, default_branch: &str, item: WorkItem) -> O
             new_activity: false,
             agent,
             worktree: None,
-            unreviewed: worktree
-                .as_deref()
-                .is_some_and(|w| unreviewed(state, w, &item, default_branch, repo)),
             attention: None,
             cleanup_blockers: None,
             issue_number: None,
@@ -255,9 +196,6 @@ fn row(state: &AppState, repo: &Repo, default_branch: &str, item: WorkItem) -> O
             new_activity: issue.latest_activity.unwrap_or_default() > seen,
             agent,
             worktree: None,
-            unreviewed: worktree
-                .as_deref()
-                .is_some_and(|w| unreviewed(state, w, &item, default_branch, repo)),
             attention: None,
             cleanup_blockers: None,
             issue_number: None,
@@ -288,9 +226,6 @@ fn row(state: &AppState, repo: &Repo, default_branch: &str, item: WorkItem) -> O
             new_activity: pr.latest_activity.clone().unwrap_or_default() > seen,
             agent,
             worktree: None,
-            unreviewed: worktree
-                .as_deref()
-                .is_some_and(|w| unreviewed(state, w, &item, &pr.base_ref, repo)),
             attention: None,
             cleanup_blockers: None,
             issue_number: item.issue_number,
@@ -729,15 +664,6 @@ pub fn fetch_pr(state: &AppState, id: i64) -> Result<String, String> {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ReviewCommit {
-    #[serde(flatten)]
-    pub commit: git::Commit,
-    /// Newer than the user's review marker.
-    pub after_review: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ReviewState {
     /// "worktree" (diffs reach the working tree) or "ref" (the fetched PR head).
     pub mode: &'static str,
@@ -745,37 +671,27 @@ pub struct ReviewState {
     /// Merge base of the head and the PR's base branch: "all changes" start here.
     pub base: String,
     pub base_ref: String,
-    /// The commit the user marked as reviewed, if it still exists.
-    pub reviewed: Option<String>,
-    /// Where "since your review" starts: the reviewed commit, or, when the branch was
-    /// rebased since, the reviewed state moved onto the new base (a tree id).
-    pub since_review_from: Option<String>,
-    /// Why "since your review" differs from a plain diff, or why it could not be adjusted.
-    pub rebase_note: Option<String>,
     /// HEAD of the worktree, or the fetched PR head.
     pub head: String,
     /// The PR's head commit on GitHub (line comments are made against it).
     pub pr_head: String,
     /// All commits of the PR (base..head), newest first.
-    pub commits: Vec<ReviewCommit>,
+    pub commits: Vec<git::Commit>,
     pub dirty: bool,
     /// The viewer wrote this PR (GitHub does not let them approve it).
     pub own: bool,
 }
 
-/// What the review looks at, with the reviewed marker resolved.
+/// What the review looks at.
 struct Review {
     item: WorkItem,
     dir: PathBuf,
-    /// The head as reviewed content: `None` for the working tree, else the PR head commit.
+    /// The head's content: `None` for the working tree, else the PR head commit.
     view: Option<String>,
     head: String,
     base: String,
     base_ref: String,
     worktree: bool,
-    reviewed: Option<String>,
-    since_review_from: Option<String>,
-    rebase_note: Option<String>,
 }
 
 fn review(state: &AppState, id: i64) -> Result<Review, String> {
@@ -798,25 +714,6 @@ fn review(state: &AppState, id: i64) -> Result<Review, String> {
     };
     let tracking = format!("{}/{}", repo.base_remote, base_ref);
     let base = git::merge_base(&dir, &head, &tracking).unwrap_or_else(|_| head.clone());
-    let reviewed = reviewed_marker(&dir, &item);
-    let (since_review_from, rebase_note) = match &reviewed {
-        None => (None, None),
-        Some(r) => match git::rebase_reviewed(&dir, r, &head, &tracking) {
-            Ok(None) => (Some(r.clone()), None),
-            Ok(Some(tree)) => (
-                Some(tree),
-                Some(format!(
-                    "Rebased since your review: changes that came only from {base_ref} are hidden."
-                )),
-            ),
-            Err(e) => (
-                Some(r.clone()),
-                Some(format!(
-                    "Rebased since your review, but {base_ref}'s changes could not be separated ({e}), so this is the plain diff against the commit you reviewed, including changes from {base_ref}."
-                )),
-            ),
-        },
-    };
     Ok(Review {
         view: if worktree.is_some() {
             None
@@ -829,9 +726,6 @@ fn review(state: &AppState, id: i64) -> Result<Review, String> {
         head,
         base,
         base_ref,
-        reviewed,
-        since_review_from,
-        rebase_note,
     })
 }
 
@@ -842,17 +736,7 @@ pub fn review_state(state: &AppState, id: i64) -> Result<ReviewState, String> {
     } else {
         summary(&r.item)?.head_sha
     };
-    let new: std::collections::HashSet<String> = match &r.reviewed {
-        Some(reviewed) => git::commits_new_since(&r.dir, reviewed, &r.head)?,
-        None => Default::default(),
-    };
-    let commits = git::commits_between(&r.dir, &r.base, &r.head)?
-        .into_iter()
-        .map(|c| ReviewCommit {
-            after_review: new.contains(&c.sha),
-            commit: c,
-        })
-        .collect();
+    let commits = git::commits_between(&r.dir, &r.base, &r.head)?;
     let own = r.item.kind == "issue" || r.item.is_task() || {
         let repo = state
             .store
@@ -873,9 +757,6 @@ pub fn review_state(state: &AppState, id: i64) -> Result<ReviewState, String> {
         own,
         base: r.base,
         base_ref: r.base_ref,
-        reviewed: r.reviewed,
-        since_review_from: r.since_review_from,
-        rebase_note: r.rebase_note,
         pr_head,
         head: r.head,
         commits,
@@ -889,47 +770,11 @@ pub struct ReviewFile {
     /// Git status letter: A, M, D, … ("?" for untracked).
     pub status: String,
     pub group: crate::review_order::Group,
-    /// The user marked this content of the file reviewed (it has not changed since).
-    pub reviewed: bool,
     /// Only whitespace changed (in this scope).
     pub whitespace_only: bool,
 }
 
-/// Whether each path's current content is the one the user marked reviewed. After a rebase,
-/// a marked file whose only changes came from the new base stays reviewed.
-fn reviewed_paths(
-    state: &AppState,
-    r: &Review,
-    paths: &[String],
-) -> Result<std::collections::HashSet<String>, String> {
-    let marks = state.store.reviewed_files(r.item.id)?;
-    let changed_since_review: Option<std::collections::HashSet<String>> =
-        match (&r.since_review_from, &r.reviewed) {
-            (Some(from), Some(reviewed)) if from != reviewed => Some(
-                git::changed_files(&r.dir, from, r.view.as_deref())?
-                    .into_iter()
-                    .map(|f| f.path)
-                    .collect(),
-            ),
-            _ => None,
-        };
-    Ok(paths
-        .iter()
-        .filter(|path| {
-            let Some(mark) = marks.get(*path) else {
-                return false;
-            };
-            *mark == git::blob_id(&r.dir, r.view.as_deref(), path)
-                || changed_since_review
-                    .as_ref()
-                    .is_some_and(|changed| !changed.contains(*path))
-        })
-        .cloned()
-        .collect())
-}
-
-/// The files changed from `from` to `to` (a commit, or the head when `None`) in review order,
-/// with their reviewed state.
+/// The files changed from `from` to `to` (a commit, or the head when `None`) in review order.
 pub fn review_files(
     state: &AppState,
     id: i64,
@@ -942,7 +787,6 @@ pub fn review_files(
     let files = git::changed_files(&r.dir, from, to.as_deref())?;
     let paths: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
     let generated = crate::review_order::attributed_generated(&r.dir, &paths);
-    let reviewed = reviewed_paths(state, &r, &paths)?;
     let whitespace = if ignore_ws {
         git::whitespace_only_files(&r.dir, from, to.as_deref())?
     } else {
@@ -952,7 +796,6 @@ pub fn review_files(
         .into_iter()
         .map(|f| ReviewFile {
             group: crate::review_order::group_of(&f.path, generated.contains(&f.path)),
-            reviewed: reviewed.contains(&f.path),
             whitespace_only: whitespace.contains(&f.path),
             path: f.path,
             status: f.status,
@@ -973,36 +816,6 @@ pub fn review_file(
     let r = review(state, id)?;
     let to = to.map(str::to_owned).or_else(|| r.view.clone());
     git::file_diff(&r.dir, from, to.as_deref(), path, ignore_ws)
-}
-
-/// Marks (or unmarks) the current content of `path` as reviewed.
-pub fn mark_file_reviewed(
-    state: &AppState,
-    id: i64,
-    path: &str,
-    reviewed: bool,
-) -> Result<(), String> {
-    let r = review(state, id)?;
-    let blob = reviewed.then(|| git::blob_id(&r.dir, r.view.as_deref(), path));
-    state.store.set_file_reviewed(id, path, blob.as_deref())
-}
-
-/// Marks the head (worktree HEAD or fetched PR head) as reviewed, and every file of the PR
-/// with its current content. Also kept as `refs/ariekei/reviewed/pr-<N>` in the clone so
-/// the commit stays reachable when the agent rebases or amends.
-pub fn mark_reviewed(state: &AppState, id: i64) -> Result<String, String> {
-    let (item, repo) = item_repo(state, id)?;
-    let r = review(state, id)?;
-    for file in git::changed_files(&r.dir, &r.base, r.view.as_deref())? {
-        state.store.set_file_reviewed(
-            id,
-            &file.path,
-            Some(&git::blob_id(&r.dir, r.view.as_deref(), &file.path)),
-        )?;
-    }
-    git(&repo.path, &["update-ref", &reviewed_ref(&item), &r.head])?;
-    state.store.set_reviewed(id, &r.head)?;
-    Ok(r.head)
 }
 
 /// Line ranges per path, as `(first, last)` lines of the new side.
@@ -1227,100 +1040,6 @@ mod tests {
     }
 
     #[test]
-    fn changes_to_review_are_the_worktrees_changes_by_others() {
-        let app = TestApp::new();
-        let (id, wt) = app.pr_with_worktree(10, "feature/x");
-        app.poll().unwrap(); // learns which of the PR's commits are mine
-        assert!(
-            !app.row(10).unwrap().unreviewed,
-            "my own commit needs no review"
-        );
-
-        write(&wt.join("scratch.txt"), "draft\n");
-        assert!(app.row(10).unwrap().unreviewed, "uncommitted changes do");
-        std::fs::remove_file(wt.join("scratch.txt")).unwrap();
-
-        // A teammate pushes to the branch; the worktree gets their commit.
-        app.push_to("feature/x", &[("c.txt", "carol's\n")], "carol");
-        git(&wt, &["pull", "-q", "--ff-only"]);
-        app.poll().unwrap();
-        assert!(app.row(10).unwrap().unreviewed, "a teammate's commit does");
-
-        mark_reviewed(&app.state, id).unwrap();
-        assert!(!app.row(10).unwrap().unreviewed, "nothing after the review");
-    }
-
-    #[test]
-    fn the_prs_commits_are_fetched_again_only_when_its_head_moved() {
-        let app = TestApp::new();
-        app.pr_with_worktree(10, "feature/x");
-        app.poll().unwrap();
-        app.take_calls();
-        app.poll().unwrap();
-        assert!(!app.take_calls().iter().any(|c| c["commits"] == true));
-        app.push_to("feature/x", &[("c.txt", "more\n")], "me");
-        app.poll().unwrap();
-        assert!(app.take_calls().iter().any(|c| c["commits"] == true));
-    }
-
-    #[test]
-    fn after_a_rebase_a_file_only_the_base_changed_stays_reviewed() {
-        let app = TestApp::new();
-        let d = |last: &str| format!("d1 mine\nd2\nd3\nd4\nd5\n{last}\n");
-        write(&app.upstream.join("d.txt"), "d1\nd2\nd3\nd4\nd5\nd6\n");
-        commit(&app.upstream, "d", "me");
-        git(&app.clone, &["fetch", "-q", "origin"]);
-        app.push_to(
-            "feature/x",
-            &[("a.txt", "one mine\ntwo\nthree\n"), ("d.txt", &d("d6"))],
-            "me",
-        );
-        app.add_pr(json!({"number": 10, "title": "x", "head_ref": "feature/x"}));
-        app.poll().unwrap();
-        let id = app.item(10).id;
-        let wt = prepare(&app.state, id).unwrap().path;
-        mark_reviewed(&app.state, id).unwrap();
-
-        // main changes d.txt far from the PR's line; the branch is rebased onto it and then
-        // changes a.txt again.
-        write(&app.upstream.join("d.txt"), "d1\nd2\nd3\nd4\nd5\nd6 main\n");
-        commit(&app.upstream, "main moves on", "carol");
-        git(&app.upstream, &["checkout", "-q", "feature/x"]);
-        git(
-            &app.upstream,
-            &[
-                "-c",
-                "user.name=me",
-                "-c",
-                "user.email=me@example.com",
-                "rebase",
-                "-q",
-                "main",
-            ],
-        );
-        git(&app.upstream, &["checkout", "-q", "main"]);
-        app.push_to(
-            "feature/x",
-            &[("a.txt", "one mine, better\ntwo\nthree\n")],
-            "me",
-        );
-        git(&wt, &["fetch", "-q", "origin"]);
-        git(&wt, &["reset", "-q", "--hard", "origin/feature/x"]);
-
-        let state = review_state(&app.state, id).unwrap();
-        assert!(
-            state.rebase_note.is_some(),
-            "the review knows about the rebase"
-        );
-        let files = review_files(&app.state, id, &state.base, None, false).unwrap();
-        let marks: Vec<(&str, bool)> = files
-            .iter()
-            .map(|f| (f.path.as_str(), f.reviewed))
-            .collect();
-        assert_eq!(marks, [("a.txt", false), ("d.txt", true)]);
-    }
-
-    #[test]
     fn a_task_lists_what_its_agent_opened_and_lends_it_its_agent() {
         let app = TestApp::new();
         let task = create_task(&app.state, Some(app.repo.clone()), "Investigate", "peers").unwrap();
@@ -1402,10 +1121,6 @@ mod tests {
             ("worktree", "main", "", true)
         );
         assert_eq!(state.commits.len(), 1);
-        assert!(
-            app.row(-1).unwrap().unreviewed,
-            "the agent's commit is to review"
-        );
     }
 
     #[test]

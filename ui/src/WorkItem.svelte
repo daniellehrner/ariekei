@@ -19,7 +19,6 @@
   import { landingTab, type Tab } from "./lib/attention";
   import { openOn } from "./lib/layout.svelte";
   import { shortPath } from "./lib/paths";
-  import { progress, rangeOf, scopeOf } from "./lib/review";
 
   let {
     row,
@@ -53,8 +52,6 @@
   let preparing = $state(false);
   let error: string | null = $state(null);
   let notice: string | null = $state(null);
-  // Files of the review's scope marked reviewed, for the Review tab's label.
-  let reviewProgress = $state<{ reviewed: number; total: number } | null>(null);
 
   const id = $derived(row.id);
   const agent = $derived(agents[String(row.id)]);
@@ -91,19 +88,6 @@
     }
   }
 
-  // The Review tab's "7/12": the files of the scope the review view would show.
-  async function loadProgress(current: number) {
-    try {
-      const state = await api.reviewState(current);
-      const view = ui?.review;
-      const [from, to] = rangeOf(state, scopeOf(state, view?.scope ?? ""));
-      const files = await api.reviewFiles(current, from, to, !!view?.ignoreWs);
-      if (current === id) reviewProgress = files.length ? progress(files) : null;
-    } catch {
-      if (current === id) reviewProgress = null;
-    }
-  }
-
   // Load everything for the item whenever another item is shown. Only `id` is tracked:
   // `row` is a new object after every Inbox reload, which must not reset the view.
   $effect(() => {
@@ -117,11 +101,10 @@
     convError = error = notice = null;
     fetched = false;
     blockers = null;
-    reviewProgress = null;
     confirmDone = false;
     losses = null;
     // Open on the tab that resolves why the item wants attention, else where the user was.
-    const landing = landingTab(row.attention, { terminal: !!row.worktree, review: hasReview });
+    const landing = landingTab(row.attention, { terminal: !!row.worktree });
     api.uiState<ItemUi>(current).then((saved) => {
       if (current !== id) return;
       ui = { ...fresh(), ...saved, review: { ...fresh().review, ...saved?.review } };
@@ -133,7 +116,6 @@
       // agent runs.
       if (openOn.item === current && openOn.tab && (openOn.tab !== "terminal" || row.worktree)) ui.tab = openOn.tab;
       openOn.item = openOn.tab = null;
-      if (hasReview && (row.worktree || row.kind === "pr")) loadProgress(current);
     });
     api.markSeen(current).then(onchanged);
     api.setActiveItem(current);
@@ -386,9 +368,6 @@
             {#if value === "terminal"}<StatusDot {status} size={10} />{/if}
             <span>{label}</span>
             {#if value === "comments" && unresolved}<span class="badge" title="Unresolved review threads">{unresolved}</span>{/if}
-            {#if value === "review" && reviewProgress}
-              <span class="sub" class:complete={reviewProgress.reviewed === reviewProgress.total} title="Files marked reviewed">{reviewProgress.reviewed}/{reviewProgress.total}</span>
-            {/if}
           </button>
         {/if}
       {/each}
@@ -416,8 +395,7 @@
           {#if row.worktree || fetched}
             <ReviewView {id} bind:view={ui.review} onchanged={changed} canSendToAgent={row.agentItem != null}
               agentStatus={row.agentItem == null ? undefined : (agents[String(row.agentItem)]?.status ?? (row.agentItem === row.id ? row.agent ?? undefined : undefined))}
-              onterminal={showAgent}
-              onprogress={(p) => (reviewProgress = p.total ? p : null)} />
+              onterminal={showAgent} />
           {:else}
             <p class="hint"><Icon name="lock" size={14} />Read-only · Fetching the PR head…</p>
           {/if}
@@ -486,8 +464,6 @@
     min-width: 16px; height: 16px; padding: 0 var(--sp-2); box-sizing: border-box; border-radius: 8px;
     background: var(--gh-bg); color: var(--gh-strong); font-size: var(--fs-11); line-height: 16px; font-weight: var(--fw-semibold); text-align: center;
   }
-  .sub { font-size: 11.5px; font-weight: var(--fw-medium); color: var(--text-faint); }
-  .sub.complete { color: var(--you-strong); }
   .tabs > :global(.btn) { align-self: center; }
   .spacer { flex: 1; }
   .pane { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }

@@ -198,11 +198,8 @@ fn remove(
             dir.display()
         ));
     }
-    let mut refs = vec![crate::workitem::reviewed_ref(item)];
     if !item.is_task() {
-        refs.push(worktree::pull_ref(item.number));
-    }
-    for name in refs {
+        let name = worktree::pull_ref(item.number);
         if git::commit_exists(&repo.path, &name)
             && git(&repo.path, &["update-ref", "-d", &name]).is_ok()
         {
@@ -384,7 +381,6 @@ mod tests {
             session_id: None,
             session_started: false,
             transcript_path: None,
-            reviewed_sha: None,
             last_seen: None,
             ui_state: None,
             role: "author".into(),

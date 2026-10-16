@@ -1,7 +1,7 @@
 # Ariekei
 
 A review workbench for coding agents. The unit of work is a GitHub pull request or issue, or a
-task that has neither yet: each work item gets its own worktree, its own Claude Code session and its own review progress, and an
+task that has neither yet: each work item gets its own worktree and its own Claude Code session, and an
 Inbox orders them by what needs you. The agent writes the code; you review it here. For deep
 code navigation or debugging, use your IDE on the same worktree. Tauri 2 (Rust) + Svelte 5.
 
@@ -10,7 +10,7 @@ code navigation or debugging, use your IDE on the same worktree. Tauri 2 (Rust) 
 - **Inbox:** sections **Starred**, **Tasks**, **Assigned** (PRs and issues), **Approved** (your
   PRs ready to merge), **Review requested**, **My PRs**, **Reviewed** (PRs you reviewed) and
   **Open** (what you added); each item is in the first section that fits, and within a section
-  ordered by attention (agent needs you, CI failing, new comments, changes to review, …). Star
+  ordered by attention (agent needs you, CI failing, new comments, …). Star
   any item to keep it at the top. **Browse** (Ctrl+K) lists the repo's open PRs and issues with
   GitHub's search syntax and adds them to Open; what you added can be removed again. Notifications for the same events: in the window while Ariekei is in front
   (click one to open its item), OS notifications otherwise.
@@ -19,11 +19,10 @@ code navigation or debugging, use your IDE on the same worktree. Tauri 2 (Rust) 
 - **Agent:** your installed `claude`, unmodified, in an embedded terminal in the item's
   worktree, with the PR or issue as context. Status comes from Claude Code hooks; conversations
   resume after switching items or restarting.
-- **Review:** all changes vs the base branch, changes since your last review (rebase-aware),
-  or single commits; per-file reviewed marks, a review order instead of alphabetical,
-  whitespace and unified toggles, keyboard navigation; works without a worktree for other people's PRs. Comments go
-  to GitHub as a review or to the agent; right-click code to ask the agent about it (file,
-  lines and code go along). See [docs/review.md](docs/review.md).
+- **Review:** all changes vs the base branch, or single commits; a review order instead of
+  alphabetical, whitespace and unified toggles, keyboard navigation; works without a worktree
+  for other people's PRs. Comments go to GitHub as a review or to the agent; right-click code
+  to ask the agent about it (file, lines and code go along). See [docs/review.md](docs/review.md).
 - **Repos and windows:** the repo name in the Inbox header switches the window to another
   connected repo, opens one in a new window, or connects another. Each repo is shown in one
   window at a time; every open repo is kept current, and the windows come back after a
@@ -66,8 +65,7 @@ npm run check && npm test
 npx tauri build --no-bundle
 ```
 
-`cargo test` also runs the logic behind the commands (Inbox rows, changes to review,
-polling, cleanup, tasks, hooks) against temp git repos, without a Tauri app
+`cargo test` also runs the logic behind the commands (Inbox rows, polling, cleanup, tasks, hooks) against temp git repos, without a Tauri app
 (`src-tauri/src/testkit.rs`): GitHub is `e2e/fake_gh.py` and agents are `e2e/fake_claude.py`,
 as in the e2e tests, so it needs Python 3 (`ARIEKEI_PYTHON` names another interpreter).
 
@@ -91,8 +89,8 @@ On Linux the app runs on a private Xvfb display and D-Bus session (it needs `Xvf
 windows never show up on your desktop or take focus, and its notifications stay out of yours.
 `E2E_HEADED=1` shows the windows on your display instead.
 
-- `review`: Inbox sections, browsing and adding, starring and removing, Overview, Comments, review without a worktree, review order and marks,
-  submitting a review, rebase-aware "since your review".
+- `review`: Inbox sections, browsing and adding, starring and removing, Overview, Comments, review without a worktree, review order,
+  n / p across files, submitting a review, a push showing up in the review.
 - `windows`: two repos, switching, a window per repo, restoring windows after a restart.
 - `lifecycle`: issue → worktree → push → draft PR → merge → cleanup.
 - `task`: new task → the agent opens a PR and an issue → linked under the task → asking the

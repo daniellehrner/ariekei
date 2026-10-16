@@ -473,11 +473,6 @@ async fn review_state(app: tauri::AppHandle, id: i64) -> Res<workitem::ReviewSta
     blocking(app, move |s| workitem::review_state(s, id)).await
 }
 
-#[tauri::command]
-async fn mark_reviewed(app: tauri::AppHandle, id: i64) -> Res<String> {
-    blocking(app, move |s| workitem::mark_reviewed(s, id)).await
-}
-
 /// Changed files from `from` to `to` (a commit), or to the working tree when `to` is null.
 #[tauri::command]
 async fn review_files(
@@ -504,20 +499,6 @@ async fn review_file(
 ) -> Res<git::FileDiff> {
     blocking(app, move |s| {
         workitem::review_file(s, id, &from, to.as_deref(), &path, ignore_ws)
-    })
-    .await
-}
-
-/// Marks the file's current content reviewed (or unmarks it).
-#[tauri::command]
-async fn mark_file_reviewed(
-    app: tauri::AppHandle,
-    id: i64,
-    path: String,
-    reviewed: bool,
-) -> Res<()> {
-    blocking(app, move |s| {
-        workitem::mark_file_reviewed(s, id, &path, reviewed)
     })
     .await
 }
@@ -629,10 +610,8 @@ pub fn run() {
             agent_send,
             send_pr_feedback,
             review_state,
-            mark_reviewed,
             review_files,
             review_file,
-            mark_file_reviewed,
             save_file,
             search_items,
             track_item,

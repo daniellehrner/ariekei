@@ -16,7 +16,7 @@ D-Bus; to choose the theme, point D-Bus nowhere and set it in a GTK settings fil
   E2E_WEBDRIVER=http://127.0.0.1:4444 python3 -I e2e/gallery.py <app> <work> [light|dark] [1440x900] [screen,...]
 
 Screens: connect, empty (nothing selected yet), overview, menu, comments, collapsed, waiting, terminal, review,
-selection, drafts, submit, code-menu, ask-agent, shortcuts, guard, review-hidden, notice-arriving,
+selection, drafts, submit, code-menu, ask-agent, shortcuts, review-hidden, notice-arriving,
 notices, inbox (every section, one item starred), browse, change-end (n past the last change).
 """
 
@@ -204,7 +204,7 @@ try:
         s.wait(".inbox.collapsed", timeout=10)
         shot(s, "collapsed")
         s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }))")
-    if need("review", "change-end", "selection", "drafts", "submit", "code-menu", "ask-agent", "shortcuts", "guard", "review-hidden"):
+    if need("review", "change-end", "selection", "drafts", "submit", "code-menu", "ask-agent", "shortcuts", "review-hidden"):
         tab(s, "Review")
         s.wait("[data-file]", timeout=60)
         shot(s, "review")
@@ -251,9 +251,6 @@ try:
             key(s, "?")
             shot(s, "shortcuts")
             key(s, "Escape")
-        if need("guard"):
-            click(s, "[data-mark-reviewed]")
-            shot(s, "guard")
         if need("review-hidden"):
             s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }))")
             click(s, "[data-toggle='side']")

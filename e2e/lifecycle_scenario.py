@@ -7,10 +7,9 @@ a file is uncommitted, git push → draft PR opened ("Closes #N") and the item b
 the PR merged → automatic cleanup (worktree, branch, agent, item); and an adopted worktree
 that is kept when its PR is merged. Also: the rate limit used up (the Inbox says so; a
 refresh recovers), a tracked issue deleted on GitHub (polling goes on), CI going from
-running to failing without the PR changing, your own commits are not "changes to review"
-but a teammate's are, automatic cleanup kept back while a merged PR's worktree has
-uncommitted work, and an issue whose branch already has a PR (no draft opened). Commits are
-made with git directly (no agent turn).
+running to failing without the PR changing, automatic cleanup kept back while a merged PR's
+worktree has uncommitted work, and an issue whose branch already has a PR (no draft opened).
+Commits are made with git directly (no agent turn).
 
 Run it with `python3 e2e/run.py <test-app> lifecycle` (see run.py), which sets the environment.
 """
@@ -210,19 +209,9 @@ try:
     print("[push] header:", s.js("return document.querySelector('.item header').innerText.replace(/\\n+/g, ' | ')"))
     contains("the item became the PR", s.js("return document.querySelector('.item header .title').textContent"), "#100")
 
-    # The user's own pushed commit is not "changes to review"; a teammate's commit is.
+    # Another item is shown while the PR is merged.
     select_row(s, 42)
     s.wait(".item header .title", timeout=30, text="#42")
-    time.sleep(7)  # two polls with the PR's commits known
-    print("[own commits] #100:", repr(attention(s, 100)))
-    equal("your own commits are not changes to review (nothing wants attention)", attention(s, 100), "")
-    git(upstream, "checkout", "-q", branch)
-    open(os.path.join(upstream, "b.txt"), "w").write("carol's part\n")
-    commit(upstream, "Add carol's part", who="carol")
-    git(upstream, "checkout", "-q", "main")
-    git(wt, "pull", "-q", "--no-rebase")
-    eventually("a teammate's commit is changes to review", lambda: attention(s, 100), lambda v: v == "Changes to review", timeout=30)
-    print("[own commits] after carol's commit, #100:", attention(s, 100))
 
     # Merged on GitHub while the worktree has uncommitted work: kept, and the Inbox says why.
     open(os.path.join(wt, "scratch.txt"), "w").write("not committed\n")

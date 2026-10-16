@@ -11,7 +11,7 @@ told apart in grey-scale and with colour blindness:
 | Source | Shape | Hue | Where |
 |---|---|---|---|
 | Agent (Claude Code) | circle | `--agent` (copper) | Status dot before an item, Terminal tab, waiting strip, terminal cursor |
-| You (the reviewer) | square | `--you` (blue, also the focus colour) | Review progress, reviewed checkboxes, "Reviewed, next", draft comments |
+| You (the reviewer) | square | `--you` (blue, also the focus colour) | Draft comments, the star, the selected item and file, focus |
 | GitHub | diamond, outlined pill | `--gh` (violet) | New activity, Comments badge, CI and review facts, submitting to GitHub |
 
 - Red (`--bad`) means broken (CI failing, errors, work that would be lost). It replaces the hue,
@@ -78,9 +78,8 @@ by the agent's circle and the lines it is about; its one filled button is **Send
 ## Behaviour that comes with the design
 
 - An item opens on the tab that resolves its attention reason: the agent needs you → Terminal,
-  new reviews or comments → Comments, changes to review → Review, CI failing or cleanup blocked
-  → Overview. Otherwise on the tab last used for it.
-- The Review tab shows the progress of the review scope (`7/12`).
+  new reviews or comments → Comments, CI failing or cleanup blocked → Overview. Otherwise on the
+  tab last used for it.
 - While the agent waits for permission, a strip under the header shows what it asks to run, with
   "Answer in Terminal".
 - Below a 720 px diff column the diff is unified, unless chosen otherwise with `u`; below a

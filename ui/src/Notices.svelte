@@ -32,7 +32,7 @@
   }
 
   // Notices from the agent (waiting, finished, stopped with an error) open its Terminal: what
-  // it said or asks is there, whatever else the item wants (e.g. changes to review).
+  // it said or asks is there, whatever else the item wants.
   const FROM_AGENT: NoticeKind[] = ["needs-you", "finished", "error"];
 
   function open(n: Notice) {

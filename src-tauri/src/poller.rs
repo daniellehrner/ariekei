@@ -299,19 +299,7 @@ pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), Stri
                 .set_last_seen(item.id, pr.latest_activity.as_deref().unwrap_or(""))?,
         }
     }
-    // After the lifecycle step, which turns pushed issues into their PRs: their commits count
-    // as the user's from this poll on, not only from the next one.
     crate::lifecycle::after_poll(state, repo)?;
-    // Whose commits a PR has is needed only to tell whether its worktree has changes to review.
-    for item in state.store.items(repo.id)? {
-        if item.kind == "pr"
-            && item.open
-            && item.worktree_path.is_some()
-            && let Err(e) = crate::workitem::refresh_own_commits(state, repo, &item)
-        {
-            tracing::warn!("could not fetch the commits of PR #{}: {e}", item.number);
-        }
-    }
     Ok(())
 }
 

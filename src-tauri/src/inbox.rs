@@ -28,8 +28,6 @@ pub struct Row {
     pub new_activity: bool,
     pub agent: Option<AgentStatus>,
     pub worktree: Option<String>,
-    /// The worktree has commits or uncommitted changes the user has not marked reviewed.
-    pub unreviewed: bool,
     /// Why the row is where it is (for the UI), most urgent first.
     pub attention: Option<&'static str>,
     /// Why the finished item was not cleaned up, if it was not.
@@ -70,9 +68,6 @@ fn attention(row: &Row) -> (u8, Option<&'static str>) {
     }
     if row.new_activity {
         return (2, Some("new reviews or comments"));
-    }
-    if row.unreviewed && matches!(row.agent, Some(Finished | Ready | Error) | None) {
-        return (3, Some("changes to review"));
     }
     if row.agent == Some(Working) {
         return (4, Some("agent working"));
@@ -128,7 +123,6 @@ mod tests {
             new_activity: false,
             agent: None,
             worktree: None,
-            unreviewed: false,
             attention: None,
             cleanup_blockers: None,
             task_id: None,
@@ -148,10 +142,10 @@ mod tests {
             cleanup_blockers: blockers.clone(),
             ..row(1, "2026-01-01")
         };
-        // Done was refused while it was open, and it has changes to review since.
+        // Done was refused while it was open, and it has new comments since.
         let open = Row {
             cleanup_blockers: blockers,
-            unreviewed: true,
+            new_activity: true,
             ..row(2, "2026-01-01")
         };
         let rows = order(vec![open, finished]);
@@ -159,7 +153,7 @@ mod tests {
             rows.iter().map(|r| (r.id, r.attention)).collect::<Vec<_>>(),
             [
                 (1, Some("finished, cleanup blocked")),
-                (2, Some("changes to review"))
+                (2, Some("new reviews or comments"))
             ]
         );
     }
@@ -204,11 +198,6 @@ mod tests {
             agent: Some(AgentStatus::Working),
             ..row(3, "2026-01-01")
         };
-        let to_review = Row {
-            agent: Some(AgentStatus::Finished),
-            unreviewed: true,
-            ..row(4, "2026-01-01")
-        };
         let activity = Row {
             new_activity: true,
             ..row(5, "2026-01-01")
@@ -229,21 +218,11 @@ mod tests {
         };
 
         let ordered = order(vec![
-            quiet_old, closed, quiet_new, working, to_review, activity, ci, needs_you,
+            quiet_old, closed, quiet_new, working, activity, ci, needs_you,
         ]);
         let numbers: Vec<i64> = ordered.iter().map(|r| r.number).collect();
-        assert_eq!(numbers, [7, 6, 5, 4, 3, 2, 1, 8]);
+        assert_eq!(numbers, [7, 6, 5, 3, 2, 1, 8]);
         assert_eq!(ordered[0].attention, Some("agent needs you"));
-        assert_eq!(ordered[5].attention, None);
-    }
-
-    #[test]
-    fn unreviewed_changes_wait_until_the_agent_is_done() {
-        let busy = Row {
-            agent: Some(AgentStatus::Working),
-            unreviewed: true,
-            ..row(1, "x")
-        };
-        assert_eq!(order(vec![busy])[0].attention, Some("agent working"));
+        assert_eq!(ordered[4].attention, None);
     }
 }

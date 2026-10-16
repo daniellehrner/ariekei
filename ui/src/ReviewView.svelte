@@ -3,8 +3,7 @@
   import type { Order } from "./lib/review";
 
   export interface ReviewViewState {
-    // "all" (vs the base branch), "review" (since the user's review) or a commit sha;
-    // empty picks the default.
+    // "all" (vs the base branch) or a commit sha; empty picks the default.
     scope: string;
     file: string | null;
     comments: DraftComment[];
@@ -33,10 +32,8 @@
   import AskAgent from "./AskAgent.svelte";
   import CodeMenu from "./CodeMenu.svelte";
   import Button from "./controls/Button.svelte";
-  import Checkbox from "./controls/Checkbox.svelte";
   import Icon from "./controls/Icon.svelte";
   import IconButton from "./controls/IconButton.svelte";
-  import InlineConfirm from "./controls/InlineConfirm.svelte";
   import Pill from "./controls/Pill.svelte";
   import Segmented from "./controls/Segmented.svelte";
   import Toggle from "./controls/Toggle.svelte";
@@ -49,7 +46,7 @@
   import { shortcuts } from "./lib/layout.svelte";
   import { languageFor } from "./lib/languages";
   import { layout } from "./lib/layout.svelte";
-  import { flatten, neighbourFile, nextChange, nextUnreviewed, progress, rangeOf, scopeOf, sections, type ReviewFile } from "./lib/review";
+  import { flatten, neighbourFile, nextChange, rangeOf, scopeOf, sections, type ReviewFile } from "./lib/review";
   import { askMessage, classify, feedbackMessage, refLines, reviewBody, type CodeRef, type LineComment, type Ranges } from "./lib/reviewComments";
 
   let {
@@ -59,7 +56,6 @@
     canSendToAgent,
     agentStatus,
     onterminal,
-    onprogress,
   }: {
     id: number;
     view: ReviewViewState;
@@ -69,8 +65,6 @@
     agentStatus?: string;
     /// Shows the agent's terminal (where its answer appears); after asking it about code.
     onterminal?: () => void;
-    /// Files of the scope marked reviewed (for the Review tab's label).
-    onprogress?: (p: { reviewed: number; total: number }) => void;
   } = $props();
 
   let review = $state<ReviewState | null>(null);
@@ -87,7 +81,6 @@
   let noticeUrl: string | null = $state(null);
   // Sending to the agent failed: the error offers its terminal.
   let errorTerminal = $state(false);
-  let confirmMark = $state<string | null>(null);
   let host: HTMLElement | undefined = $state();
   let main: HTMLElement | undefined = $state();
   // The diff shown: a side-by-side MergeView, or one editor with the unified merge view.
@@ -117,10 +110,7 @@
   const order = $derived(view.order === "tree" ? "tree" : "review");
   const list = $derived(sections(files, order));
   const ordered = $derived(flatten(list));
-  const done = $derived(progress(files));
-  const complete = $derived(done.total > 0 && done.reviewed === done.total);
   const isUnified = $derived(view.unified ?? mainWidth < 720);
-  $effect(() => onprogress?.(done));
 
   // The Inbox steps aside on narrow windows while the side panel is open.
   $effect(() => {
@@ -133,8 +123,6 @@
   // The commit the right side shows; null when it includes uncommitted changes.
   const shownRev = $derived(range ? (range[1] ?? (review?.dirty ? null : review?.head ?? null)) : null);
   const editable = $derived(range?.[1] === null);
-  const newCommits = $derived(review?.commits.filter((c) => c.afterReview).length ?? 0);
-  const rebaseConflict = $derived(!!review?.rebaseNote && review.sinceReviewFrom === review.reviewed);
 
   async function load() {
     error = null;
@@ -301,7 +289,6 @@
 
   const scopeLabel = $derived.by(() => {
     if (scope === "all") return `All changes vs ${review?.baseRef ?? "base"}`;
-    if (scope === "review") return "Since your review";
     const c = review?.commits.find((c) => c.sha === scope);
     return c ? `${short(c.sha)} ${c.subject}` : scope;
   });
@@ -311,21 +298,6 @@
     if (!ordered.length) return;
     const next = (Math.max(fileIndex, 0) + delta + ordered.length) % ordered.length;
     view.file = ordered[next].path;
-  }
-
-  async function setReviewed(path: string, reviewed: boolean) {
-    await api.markFileReviewed(id, path, reviewed);
-    files = files.map((f) => (f.path === path ? { ...f, reviewed } : f));
-  }
-
-  // Mark the current file reviewed and move on to the next one that is not.
-  async function reviewedAndNext() {
-    if (!view.file) return;
-    const current = view.file;
-    await setReviewed(current, true);
-    const next = nextUnreviewed(ordered.map((f) => (f.path === current ? { ...f, reviewed: true } : f)), current);
-    if (next) view.file = next;
-    else say("Every file in this scope is reviewed.");
   }
 
   // Shortcuts work while the review is shown, wherever the focus is (e.g. still on the Review
@@ -342,7 +314,6 @@
       "[": () => stepFile(-1),
       n: () => stepChange(1),
       p: () => stepChange(-1),
-      r: () => reviewedAndNext(),
       u: () => (view.unified = !isUnified),
       w: () => (view.ignoreWs = !view.ignoreWs),
     };
@@ -357,26 +328,6 @@
     const v = newSide();
     if (v) v.dispatch({ selection: { anchor: v.state.selection.main.head } });
     selection = null;
-  }
-
-  async function markReviewed() {
-    const unreviewed = files.filter((f) => !f.reviewed).length;
-    const reason = review?.dirty
-      ? "Uncommitted changes are not part of the commit and stay unreviewed —"
-      : unreviewed
-        ? `${unreviewed} file${unreviewed === 1 ? "" : "s"} not marked reviewed in this scope —`
-        : null;
-    if (reason && !confirmMark) {
-      confirmMark = reason;
-      return;
-    }
-    confirmMark = null;
-    const sha = await api.markReviewed(id);
-    say(`Marked ${sha.slice(0, 8)} as reviewed.`);
-    view.scope = "review";
-    await load();
-    await loadFiles();
-    onchanged();
   }
 
   function addComment(e?: SubmitEvent) {
@@ -567,7 +518,6 @@
 
   const short = (sha: string) => sha.slice(0, 8);
   const linesOf = (c: DraftComment) => (c.fromLine === c.toLine ? `${c.fromLine}` : `${c.fromLine}–${c.toLine}`);
-  const reviewedOf = (path: string) => files.find((f) => f.path === path)?.reviewed ?? false;
   const statusOf = (f: ReviewFile) => (f.status === "?" ? "U" : f.status);
   const STATUS_TEXT: Record<string, string> = { A: "added", D: "deleted", U: "uncommitted", M: "modified" };
   const ORDERS = [
@@ -589,22 +539,10 @@
       <div class="marker" data-marker title="{review.mode === 'ref' ? 'PR head' : 'Worktree'} {review.head}">
         <Icon name="branch" size={14} />
         <span class="text">
-          {review.mode === "ref" ? "PR head" : "Worktree"} <code>{short(review.head)}</code> · {review.commits.length} commit{review.commits.length === 1 ? "" : "s"} vs {review.baseRef}{#if review.reviewed}{" · "}reviewed <code class="you">{short(review.reviewed)}</code>{newCommits ? `, ${newCommits} new since` : ""}{/if}{#if review.dirty}{" · "}<span class="warn">uncommitted changes</span>{/if}
+          {review.mode === "ref" ? "PR head" : "Worktree"} <code>{short(review.head)}</code> · {review.commits.length} commit{review.commits.length === 1 ? "" : "s"} vs {review.baseRef}{#if review.dirty}{" · "}<span class="warn">uncommitted changes</span>{/if}
         </span>
       </div>
-      <span class="progress" class:complete role="status" title="Files of this scope marked reviewed" data-progress>
-        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-          <rect class="frame" x="1" y="1" width="10" height="10" rx="2" />
-          <rect class="fill" x="1" y={1 + 10 * (1 - (done.total ? done.reviewed / done.total : 0))} width="10" height={10 * (done.total ? done.reviewed / done.total : 0)} rx="2" />
-        </svg>
-        {done.reviewed}/{done.total} reviewed
-      </span>
       <IconButton icon="refresh" label="Reload" onclick={() => { load(); loadFiles(); }} data-reload />
-      {#if confirmMark}
-        <InlineConfirm tone="warn" text={confirmMark} confirm="Mark anyway" onconfirm={markReviewed} oncancel={() => (confirmMark = null)} data-guard />
-      {:else}
-        <Button icon="reviewed" onclick={markReviewed} disabled={review.reviewed === review.head && !review.dirty} data-mark-reviewed>Mark reviewed</Button>
-      {/if}
     {:else}
       <span class="spacer"></span>
     {/if}
@@ -625,12 +563,6 @@
       <IconButton icon="x" label="Dismiss" size={22} onclick={() => (notice = null)} />
     </div>
   {/if}
-  {#if scope === "review" && review?.rebaseNote}
-    <div class="note" class:warn-bg={rebaseConflict} role={rebaseConflict ? "alert" : "status"} data-rebase-note>
-      <Icon name={rebaseConflict ? "warning" : "branch"} size={14} /><span class="grow">{review.rebaseNote}</span>
-    </div>
-  {/if}
-
   <div class="body">
     {#if !view.sideHidden}
       <aside class="side" aria-label="Review side panel">
@@ -643,33 +575,20 @@
           {#if view.commitsOpen}
             <div class="scopes" role="listbox" aria-label="Scope">
               <button role="option" aria-selected={scope === "all"} class:active={scope === "all"} onclick={() => setScope("all")} data-scope="all">
-                <span class="bar"></span><span class="grow">All changes vs {review?.baseRef ?? "base"}</span>
+                <span class="grow">All changes vs {review?.baseRef ?? "base"}</span>
               </button>
-              {#if review?.reviewed}
-                <button role="option" aria-selected={scope === "review"} class:active={scope === "review"} onclick={() => setScope("review")} data-scope="review">
-                  <span class="bar"></span><span class="grow">Since your review</span>
-                </button>
-              {/if}
               {#each review?.commits ?? [] as c (c.sha)}
                 <button role="option" aria-selected={scope === c.sha} class:active={scope === c.sha} onclick={() => setScope(c.sha)}
                   title="{c.subject}&#10;{c.author}, {c.date}" data-scope={c.sha}>
-                  <span class="bar" class:new={c.afterReview}></span>
                   <code class="sha">{short(c.sha)}</code>
                   <span class="grow subject">{c.subject}</span>
-                  {#if c.afterReview}<Pill size="xs" tone="you">new</Pill>{/if}
                 </button>
               {/each}
             </div>
           {:else}
-            <!-- Folded: the active scope, plus quick switches between the two main ones. -->
+            <!-- Folded: the active scope. -->
             <div class="scope-folded">
               <div class="active-scope" title={scopeLabel}>{scopeLabel}</div>
-              {#if review?.reviewed}
-                <div class="quick" role="group" aria-label="Quick scope">
-                  <button aria-pressed={scope === "all"} onclick={() => setScope("all")} data-scope="all">All vs {review.baseRef}</button>
-                  <button aria-pressed={scope === "review"} onclick={() => setScope("review")} data-scope="review">Since review</button>
-                </div>
-              {/if}
             </div>
           {/if}
         </section>
@@ -681,12 +600,11 @@
           </div>
           {#each list as s (s.key)}
             {@const open = isOpen(s)}
-            {@const count = s.files.filter((f) => f.reviewed).length}
             <div class="group" data-group={s.key}>
               <button class="group-title" onclick={() => toggleSection(s)} aria-expanded={open}>
                 <span class="chev" class:folded={!open}><Icon name="chevron-down" size={14} /></span>
                 <span class="grow title">{s.title}</span>
-                <span class="count" class:complete={count === s.files.length}>{count}/{s.files.length}</span>
+                <span class="count">{s.files.length}</span>
               </button>
               {#if open}
                 <ul class="files">
@@ -695,8 +613,7 @@
                     {#if dir && (i === 0 || dirOf(s.files[i - 1].path) !== dir)}
                       <li class="dir" data-dir={dir} title={dir}>{shortDir(dir)}</li>
                     {/if}
-                    <li class="file" class:reviewed={f.reviewed} class:current={f.path === view.file} class:deleted={statusOf(f) === "D"}>
-                      <Checkbox checked={f.reviewed} label="Reviewed {f.path}" onchange={(c) => setReviewed(f.path, c)} data-reviewed={f.path} />
+                    <li class="file" class:current={f.path === view.file} class:deleted={statusOf(f) === "D"}>
                       <span class="st s{statusOf(f)}" title={STATUS_TEXT[statusOf(f)] ?? statusOf(f)}>{statusOf(f)}</span>
                       <button class:active={f.path === view.file} onclick={() => (view.file = f.path)} title={f.path} data-file={f.path}>{!dir ? f.path : nameOf(f.path)}</button>
                       {#if f.whitespaceOnly}<span class="ws"><Pill size="xs">whitespace</Pill></span>{/if}
@@ -732,17 +649,10 @@
         {/if}
         <Toggle pressed={!!view.ignoreWs} icon="whitespace" kbd="w" title="Hide whitespace (w)" onclick={() => (view.ignoreWs = !view.ignoreWs)} data-opt="ws"><span class="tlabel">Whitespace</span></Toggle>
         <Toggle pressed={isUnified} icon="unified" kbd="u" title="Unified diff (u)" onclick={() => (view.unified = !isUnified)} data-opt="unified"><span class="tlabel">Unified</span></Toggle>
-        {#if view.file}
-          <span class="divider"></span>
-          <Button variant="you" icon="reviewed" kbd="r" onclick={reviewedAndNext} disabled={reviewedOf(view.file) && !ordered.some((f) => !f.reviewed)}
-            title="Mark this file reviewed and go to the next unreviewed one (r)" data-reviewed-next>
-            {reviewedOf(view.file) ? "Next unreviewed" : "Reviewed, next"}
-          </Button>
-        {/if}
       </div>
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <div class="diff" bind:this={host} tabindex="0" role="region" oncontextmenu={onContextMenu}
-        aria-label="Diff of {view.file ?? 'no file'}. Shortcuts: r reviewed and next, ] and [ files, n and p changes (on into the next or previous file), u unified, w whitespace, a ask the agent about the selection, ? help. Right-click code to ask the agent about it."></div>
+        aria-label="Diff of {view.file ?? 'no file'}. Shortcuts: ] and [ files, n and p changes (on into the next or previous file), u unified, w whitespace, a ask the agent about the selection, ? help. Right-click code to ask the agent about it."></div>
       {#if edge}
         <!-- At that end of the diff itself (the toolbar above it, the drafts bar below). -->
         <div class="edge" style:top={edge < 0 ? `${(host?.offsetTop ?? 0) + 12}px` : undefined}
@@ -847,15 +757,7 @@
   .marker :global(svg) { flex: none; }
   .marker .text { overflow: hidden; text-overflow: ellipsis; }
   .marker code { font-size: 11.5px; color: var(--text); }
-  .marker code.you { color: var(--you-strong); }
   .warn { color: var(--warn); }
-  .progress {
-    flex: none; display: inline-flex; align-items: center; gap: var(--sp-3); height: 22px; padding: 0 var(--sp-4);
-    border-radius: 11px; font-size: var(--fs-12); font-weight: var(--fw-semibold); background: var(--you-bg); color: var(--you-strong);
-  }
-  .progress .frame { fill: none; stroke: currentColor; stroke-width: 1.5; }
-  .progress .fill { fill: currentColor; }
-  .progress.complete { background: var(--you); color: var(--text-on-accent); }
 
   /* Notes under the header. */
   .note {
@@ -868,8 +770,6 @@
   .note a { font-weight: var(--fw-medium); text-decoration: none; padding: 0 var(--sp-4); }
   .note.bad { background: var(--bad-bg); }
   .note.bad > :global(svg) { color: var(--bad); }
-  .note.warn-bg { background: var(--warn-bg); }
-  .note.warn-bg > :global(svg) { color: var(--warn); }
 
   .body { flex: 1; display: flex; min-height: 0; }
 
@@ -897,19 +797,10 @@
   .scopes button:hover { background: var(--surface-hover); }
   .scopes button.active { background: var(--surface-selected); font-weight: var(--fw-semibold); }
   .scopes button:focus-visible { outline-offset: -2px; }
-  .bar { flex: none; width: 3px; align-self: stretch; border-radius: 2px; }
-  .bar.new { background: var(--you); }
   .sha { flex: none; font-size: var(--fs-11); color: var(--text-muted); }
   .subject { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .scope-folded { padding: 0 var(--sp-5) var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-3); }
   .active-scope { font-weight: var(--fw-semibold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .quick { display: flex; gap: var(--sp-2); }
-  .quick button {
-    height: 22px; padding: 0 var(--sp-4); border: 0; border-radius: var(--r-md); background: transparent;
-    color: var(--text-muted); font-size: 11.5px;
-  }
-  .quick button:hover { background: var(--surface-hover); }
-  .quick button[aria-pressed="true"] { background: var(--surface-raised); box-shadow: inset 0 0 0 1px var(--border); color: var(--text); }
 
   .files-head { display: flex; align-items: center; gap: var(--sp-3); height: 34px; padding: 0 var(--sp-4) 0 var(--sp-5); flex: none; }
   .group { display: flex; flex-direction: column; padding-bottom: var(--sp-2); }
@@ -919,7 +810,6 @@
   }
   .group-title .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .group .count { flex: none; font-family: var(--font-mono); font-size: var(--fs-11); font-weight: var(--fw-medium); color: var(--text-muted); }
-  .group .count.complete { color: var(--you-strong); }
   .files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
   .dir { padding: var(--sp-2) var(--sp-5) 1px var(--sp-7); font-family: var(--font-mono); font-size: var(--fs-11); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .file {
@@ -937,7 +827,6 @@
     font-size: var(--fs-12); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .file button:focus-visible { outline-offset: 0; }
-  .file.reviewed button { color: var(--text-muted); }
   .file.current button { font-weight: var(--fw-semibold); color: var(--text); }
   .file.deleted button { text-decoration: line-through; color: var(--text-muted); }
   .ws { flex: none; display: flex; }
@@ -955,7 +844,6 @@
   .composer { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--sp-3); margin: 0; }
   .composer label { flex: none; font-size: var(--fs-12); font-weight: var(--fw-semibold); color: var(--you-strong); }
   .composer input { flex: 1; min-width: 120px; height: var(--h-control); }
-  .divider { flex: none; width: 1px; height: 16px; background: var(--border); }
   @media (max-width: 1200px) { .tlabel { display: none; } }
 
   /* n / p found no change further on: a raised note at that end of the diff. */

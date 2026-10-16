@@ -4,7 +4,7 @@ The fixture is a clone whose `origin` looks like git@github.com:owner/proj.git (
 a local "GitHub" repo with insteadOf), plus two work items inserted into Ariekei's
 database as if the poller had found them. Covers: Inbox, Start working (worktree on the
 PR branch), the agent in the terminal (slash-command autocomplete, a committing turn),
-Review since the PR base, Mark reviewed, a second agent commit showing up alone,
+Review since the PR base, a second agent commit reviewed on its own (its commit scope),
 Inbox attention, idle shutdown, and resume after an app restart.
 
 The agent is e2e/fake_claude.py (ARIEKEI_CLAUDE): a small terminal agent that commits when
@@ -209,7 +209,7 @@ try:
     print("[turn 1]", st, "| last commit:", git(worktree, "log", "-1", "--format=%s"))
     equal("turn 1 commits", (st, git(worktree, "log", "-1", "--format=%s")), ("finished", "add two"))
     print("[inbox] #42 attention:", row_info(s, 42)["attention"])
-    equal("after the turn: changes to review", row_info(s, 42)["attention"], "Changes to review")
+    equal("after the turn: nothing in the Inbox wants attention", row_info(s, 42)["attention"], None)
     s.screenshot(os.path.join(shots, "m1-terminal.png"))
 
     tab(s, "Review")
@@ -217,32 +217,20 @@ try:
     print("[review]", review_marker(s), "| files:", s.js("return [...document.querySelectorAll('.files [data-file]')].map(b => b.dataset.file)"))
     equal("files vs main", s.js("return [...document.querySelectorAll('.files [data-file]')].map(b => b.dataset.file)"), ["a.txt", "b.txt"])
     s.screenshot(os.path.join(shots, "m1-review-base.png"))
-    s.click(s.wait("[data-mark-reviewed]"))
-    if s.find(".review [data-guard]"):
-        # Files were not marked reviewed one by one: the coverage guard asks first.
-        print("[mark] asks first:", s.js("return document.querySelector('.review [data-guard] .text').textContent"))
-        s.click(s.wait(".review [data-guard] button", text="Mark anyway"))
-    s.wait(".review [data-notice]", timeout=15)
-    marker = eventually("the marker shows the review", lambda: review_marker(s), lambda v: "reviewed" in v)
-    print("[mark]", s.js("return document.querySelector('.review [data-notice]').textContent"), "|", marker,
-          "| ref:", git(clone, "rev-parse", "--short", "refs/ariekei/reviewed/pr-42"))
-    eventually("reviewed: no attention", lambda: (row_info(s, 42) or {}).get("attention", "no row"), lambda v: v is None)
-    print("[inbox] #42 attention after review:", row_info(s, 42)["attention"])
-
     tab(s, "Terminal")
     st = prompt(s, 42, "Append a line with the word three to a.txt, then commit with the message 'add three'. Do nothing else.")
     print("[turn 2]", st, "| last commit:", git(worktree, "log", "-1", "--format=%s"))
     equal("turn 2 commits", (st, git(worktree, "log", "-1", "--format=%s")), ("finished", "add three"))
     tab(s, "Review")
     s.click(s.wait(".review [data-reload]"))
-    eventually("the marker shows the new commit", lambda: review_marker(s), lambda v: "new since" in v)
+    eventually("the review has the new commit", lambda: invoke(s, "review_state", {"id": item_id})["commits"][0]["subject"], lambda v: v == "add three")
     print("[review]", review_marker(s), "| scopes:", s.js("return [...document.querySelectorAll('.scopes button, .scope-folded .active-scope, .scope-folded button')].map(l => l.textContent.trim())"))
-    state = invoke(s, "review_state", {"id": item_id})
-    diff = invoke(s, "review_file", {"id": item_id, "from": state["reviewed"], "to": None, "path": "a.txt", "ignoreWs": False})
-    print("[review] a.txt since review: hunks", diff["hunks"], "| new side ends with:", diff["new"].splitlines()[-2:])
-    equal("since the review, only turn 2's line", diff["new"].splitlines()[-1], "three")
+    newest = invoke(s, "review_state", {"id": item_id})["commits"][0]
+    diff = invoke(s, "review_file", {"id": item_id, "from": newest["sha"] + "^", "to": newest["sha"], "path": "a.txt", "ignoreWs": False})
+    print("[review] a.txt in", newest["sha"][:8], newest["subject"], ": hunks", diff["hunks"], "| new side ends with:", diff["new"].splitlines()[-2:])
+    equal("the newest commit has only turn 2's line", diff["new"].splitlines()[-1], "three")
     equal("in one hunk", len(diff["hunks"]), 1)
-    s.screenshot(os.path.join(shots, "m1-review-since.png"))
+    s.screenshot(os.path.join(shots, "m1-review-commit.png"))
 
     # Leave #42 (its terminal detaches); with ARIEKEI_IDLE_SECS=5 the idle agent closes.
     select(s, 43)

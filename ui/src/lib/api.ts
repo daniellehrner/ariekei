@@ -49,7 +49,6 @@ export interface Row {
   newActivity: boolean;
   agent: AgentStatus | null;
   worktree: string | null;
-  unreviewed: boolean;
   attention: string | null;
   /** For a PR or issue a task's agent opened: the task. */
   taskId: number | null;
@@ -82,7 +81,6 @@ export interface Commit {
   subject: string;
   author: string;
   date: string;
-  afterReview: boolean;
 }
 
 export interface ReviewState {
@@ -90,9 +88,6 @@ export interface ReviewState {
   dir: string;
   base: string;
   baseRef: string;
-  reviewed: string | null;
-  sinceReviewFrom: string | null;
-  rebaseNote: string | null;
   head: string;
   prHead: string;
   commits: Commit[];
@@ -193,12 +188,10 @@ export const api = {
   agentSend: (id: number, text: string) => invoke<void>("agent_send", { id, text }),
   sendPrFeedback: (id: number) => invoke<void>("send_pr_feedback", { id }),
   reviewState: (id: number) => invoke<ReviewState>("review_state", { id }),
-  markReviewed: (id: number) => invoke<string>("mark_reviewed", { id }),
   reviewFiles: (id: number, from: string, to: string | null, ignoreWs: boolean) =>
     invoke<ReviewFile[]>("review_files", { id, from, to, ignoreWs }),
   reviewFile: (id: number, from: string, to: string | null, path: string, ignoreWs: boolean) =>
     invoke<FileDiff>("review_file", { id, from, to, path, ignoreWs }),
-  markFileReviewed: (id: number, path: string, reviewed: boolean) => invoke<void>("mark_file_reviewed", { id, path, reviewed }),
   searchItems: (kind: "pr" | "issue", text: string) => invoke<SearchHit[]>("search_items", { kind, text }),
   trackItem: (kind: "pr" | "issue", number: number) => invoke<number>("track_item", { kind, number }),
   untrack: (id: number) => invoke<void>("untrack", { id }),

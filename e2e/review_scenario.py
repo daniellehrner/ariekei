@@ -6,7 +6,8 @@ Review requested, My PRs, Reviewed, Open), browsing open PRs and issues (Ctrl+K)
 to Open, starring and removing, opening another author's PR, Overview (sanitized description),
 Comments (resolve, reply, new comment), reviewing without a worktree ("All changes vs
 main" from refs/pull/N/head), draft comments, Submit to GitHub (line comment inside the
-PR diff, the other one folded into the body), and "All changes" after Mark reviewed.
+PR diff, the other one folded into the body), a push showing up in the review, and no
+approving your own PR.
 No agent is started.
 
 Run it with `python3 e2e/run.py <test-app> review` (see run.py), which sets the environment.
@@ -359,27 +360,15 @@ try:
     print("[layout] Ctrl+B restored the Inbox; side panel shown again:", bool(s.find(".review .side")))
     check("the side panel is back", s.find(".review .side"))
 
-    # --- review order, reviewed marks, whitespace, unified, keys (PR #43) ---
+    # --- review order, whitespace, unified, keys (PR #43) ---
     s.click(s.wait("[data-toggle='side']")) if not s.find(".review .side") else None
     groups = s.js("return [...document.querySelectorAll('.side .group')].map(g => [g.dataset.group, g.querySelectorAll('li.file').length])")
     print("[order] groups:", groups)
     equal("review order groups", [g[0] for g in groups], ["source", "tests", "generated"])
     print("[order] files in order:", s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"))
-    print("[marks] progress before:", s.js("return document.querySelector('[data-progress]').textContent.trim()"))
-    s.click(s.wait("[data-file='a.txt']"))
-    time.sleep(0.5)
-    dom_click(s, "[data-reviewed-next]")
-    eventually("'Reviewed, next' marks the file", lambda: s.js("return document.querySelector('[data-progress]').textContent"), lambda v: "1/6" in v)
-    print("[marks] after 'reviewed, next':", s.js("return document.querySelector('[data-progress]').textContent.trim()"),
-          "| now on:", s.js("return document.querySelector('.side .files button.active')?.dataset.file"))
-    contains("'Reviewed, next' marks the file", s.js("return document.querySelector('[data-progress]').textContent"), "1/6")
-    equal("and moves on", s.js("return document.querySelector('.side .files button.active')?.dataset.file"), "b.txt")
-    s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', bubbles: true }))")
-    eventually("'r' marks the file", lambda: s.js("return document.querySelector('[data-progress]').textContent"), lambda v: "2/6" in v)
-    print("[keys] after 'r':", s.js("return document.querySelector('[data-progress]').textContent.trim()"),
-          "| now on:", s.js("return document.querySelector('.side .files button.active')?.dataset.file"))
-    contains("'r' marks the file", s.js("return document.querySelector('[data-progress]').textContent"), "2/6")
     active = lambda: s.js("return document.querySelector('.side .files button.active')?.dataset.file")
+    s.click(s.wait("[data-file='b.txt']"))
+    eventually("b.txt shows", active, lambda v: v == "b.txt")
     before = active()
     press_on(s, "[data-tab=review]", "[")
     eventually("'[' goes to the previous file", active, lambda v: v and v != before)
@@ -439,13 +428,12 @@ try:
     press_on(s, "[data-tab=review]", "Escape")
     eventually("Esc closes the shortcuts", lambda: bool(s.find("[data-shortcuts]")), lambda v: not v, timeout=10)
 
-    # The author pushes again: the reviewed file a.txt changes, c.rs does not.
+    # The author pushes again: a.txt changes.
     git(upstream, "checkout", "-q", "feature/y")
     write(os.path.join(upstream, "a.txt"), "\n".join(lines[:9] + ["line10 changed again"] + lines[10:]) + "\n")
     commit(upstream, "address review")
     git(upstream, "update-ref", "refs/pull/43/head", "feature/y")
     git(upstream, "checkout", "-q", "main")
-    reviewed_before = s.js("return [...document.querySelectorAll('[data-reviewed]')].filter(c => c.getAttribute('aria-checked') === 'true').map(c => c.dataset.reviewed)")
 
     # A notice about another item, as the backend sends one while the window is focused
     # (notify.rs): clicking it opens that item, and it goes away.
@@ -466,57 +454,17 @@ try:
     select_row(s, 43)
     s.wait(".item header .title", timeout=30, text="#43")
     tab(s, "Review")
-    s.wait("[data-progress]", timeout=30)
-    s.wait_js("return document.querySelector('.review .marker').textContent.includes('2 commits')", timeout=30)
-    reviewed_after = eventually("after the push, only the unchanged file stays reviewed", lambda: s.js("return [...document.querySelectorAll('[data-reviewed]')].filter(c => c.getAttribute('aria-checked') === 'true').map(c => c.dataset.reviewed)"), lambda v: v == ["b.txt"])
-    print("[marks] reviewed before the push:", reviewed_before, "| after:", reviewed_after)
-    equal("a push unmarks the changed file only", (sorted(reviewed_before), reviewed_after), (["a.txt", "b.txt"], ["b.txt"]))
+    eventually("the push shows up in the review", lambda: s.js("return document.querySelector('.review .marker')?.textContent ?? ''"),
+               lambda v: "2 commits" in v, timeout=30)
 
-    # --- own PR, rebased since the review (PR #42) ---
+    # --- own PR (PR #42): GitHub does not let you approve it ---
     select_row(s, 42)
     s.wait(".item header .title", timeout=30, text="#42")
     tab(s, "Review")
     s.wait(".review .marker", timeout=30)
-    s.click(s.wait("[data-mark-reviewed]"))
-    if s.find(".review [data-guard]"):
-        print("[own] Mark reviewed asks first:", s.js("return document.querySelector('.review [data-guard] .text').textContent"))
-        s.click(s.wait(".review [data-guard] button", text="Mark anyway"))
-    s.wait(".review [data-notice]", timeout=15)
-    # main moves on (also in d.txt, far from the PR's line); the branch is rebased onto it
-    # and gets one more commit, in a.txt only.
-    write(os.path.join(upstream, "base.txt"), "from main\n")
-    write(os.path.join(upstream, "d.txt"), "\n".join(d_lines[:5] + ["d6 from main"]) + "\n")
-    commit(upstream, "main moves on")
-    git(upstream, "checkout", "-q", "feature/x")
-    git(upstream, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "rebase", "-q", "main")
-    write(os.path.join(upstream, "a.txt"), "\n".join(lines[:1] + ["line2 mine, improved"] + lines[2:]) + "\n")
-    commit(upstream, "after the review")
-    git(upstream, "update-ref", "refs/pull/42/head", "feature/x")
-    git(upstream, "checkout", "-q", "main")
-    select_row(s, 43)
-    s.wait(".item header .title", timeout=30, text="#43")
-    select_row(s, 42)
-    s.wait(".item header .title", timeout=30, text="#42")
-    tab(s, "Review")
-    s.wait_js("return document.querySelector('.review .marker')?.textContent.includes('new since')", timeout=30)
-    s.click(s.wait("[data-scope='review']")) if s.find("[data-scope='review']") else None
-    eventually("since your review: the rebase note", lambda: s.js("return document.querySelector('[data-rebase-note]')?.textContent ?? ''"), lambda v: "Rebased" in v)
-    print("[rebase]", " ".join(s.js("return document.querySelector('.review .marker').textContent").split()),
-          "| note:", s.js("return document.querySelector('[data-rebase-note]')?.textContent ?? null"))
-    print("[rebase] since your review, files:", s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"))
-    contains("the rebase note", s.js("return document.querySelector('[data-rebase-note]')?.textContent"), "Rebased since your review")
-    eventually("since the review, only the PR's own change", lambda: s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"), lambda v: v == ["a.txt"])
-    s.click(s.wait("[data-scope='all']"))
     eventually("all changes vs main", lambda: s.js("return document.querySelector('.scope-folded .active-scope, .scopes button.active')?.textContent ?? ''"), lambda v: "All" in v)
-    print("[rebase] all changes vs main, files:", s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"),
+    print("[own] files:", s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"),
           "| own PR offers approve:", s.js("return !!document.querySelector(\"[data-event='APPROVE']:not(:disabled)\")"))
     check("no approving your own PR", not s.js("return !!document.querySelector(\"[data-event='APPROVE']:not(:disabled)\")"))
-    # The reviewed marks survive the rebase where only the base changed the file: d.txt's
-    # content is new (main's d6), but not the PR's change in it; a.txt changed after the review.
-    marks = eventually("reviewed marks after the rebase", lambda: s.js(
-        "return Object.fromEntries([...document.querySelectorAll('[data-reviewed]')].map(c => [c.dataset.reviewed, c.getAttribute('aria-checked') === 'true']))"),
-        lambda v: v and set(v) == {"a.txt", "d.txt"})
-    print("[rebase] reviewed marks:", marks)
-    equal("after a rebase only the file changed since the review is unmarked", marks, {"a.txt": False, "d.txt": True})
 finally:
     s.quit()

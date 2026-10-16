@@ -342,118 +342,6 @@ pub fn whitespace_only_files(
         .collect())
 }
 
-/// Identity of a file's content: its git object id at `to` (a commit), or of the working
-/// tree file when `to` is `None`; "deleted" when the file does not exist there.
-pub fn blob_id(cwd: &Path, to: Option<&str>, path: &str) -> String {
-    let id = match to {
-        Some(rev) => git_str(
-            cwd,
-            &["rev-parse", "--verify", "--quiet", &format!("{rev}:{path}")],
-        )
-        .ok(),
-        None if cwd.join(path).is_file() => git_str(cwd, &["hash-object", "--", path]).ok(),
-        None => None,
-    };
-    id.filter(|i| !i.is_empty())
-        .unwrap_or_else(|| "deleted".to_owned())
-}
-
-/// If the branch was rebased (or the base merged in) since `reviewed`, the tree of
-/// `reviewed` with its base moved to the head's base: comparing that to the head shows only
-/// the branch's own changes since the review. `Ok(None)`: the base did not move.
-/// `Err`: the reviewed changes do not apply cleanly to the new base (or git is too old).
-pub fn rebase_reviewed(
-    cwd: &Path,
-    reviewed: &str,
-    head: &str,
-    base: &str,
-) -> Result<Option<String>, String> {
-    let old_base = merge_base(cwd, reviewed, base)?;
-    let new_base = merge_base(cwd, head, base)?;
-    if old_base == new_base {
-        return Ok(None);
-    }
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(cwd)
-        .args([
-            "merge-tree",
-            "--write-tree",
-            &format!("--merge-base={old_base}"),
-            reviewed,
-            &new_base,
-        ])
-        .output()
-        .map_err(|e| format!("failed to run git: {e}"))?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    match out.status.code() {
-        Some(0) => Ok(text.lines().next().map(str::to_owned)),
-        Some(1) => Err("the reviewed changes conflict with the new base".to_owned()),
-        _ => Err(format!(
-            "git merge-tree failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        )),
-    }
-}
-
-/// Commits of `head` that are new since `reviewed`: not reachable from it and not a
-/// rebased copy (same patch) of a commit it had.
-pub fn commits_new_since(
-    cwd: &Path,
-    reviewed: &str,
-    head: &str,
-) -> Result<HashSet<String>, String> {
-    let out = git_str(
-        cwd,
-        &[
-            "rev-list",
-            "--cherry-mark",
-            "--right-only",
-            "--no-merges",
-            &format!("{reviewed}...{head}"),
-        ],
-    )?;
-    Ok(out
-        .lines()
-        .filter_map(|l| l.strip_prefix('+'))
-        .map(str::to_owned)
-        .collect())
-}
-
-/// Whether `head` has commits not reachable from any of `exclude` that the user did not
-/// make: neither in `own` nor brought in by a merge in `own` (merging accepts them).
-pub fn has_others_commits(
-    cwd: &Path,
-    head: &str,
-    exclude: &[&str],
-    own: &HashSet<String>,
-) -> Result<bool, String> {
-    let mut args = vec![
-        "rev-list".to_owned(),
-        "--parents".to_owned(),
-        head.to_owned(),
-    ];
-    args.extend(exclude.iter().map(|e| format!("^{e}")));
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let commits = git_str(cwd, &args)?;
-    let mut accepted = own.clone();
-    for line in commits.lines() {
-        let mut shas = line.split(' ');
-        let sha = shas.next().unwrap_or_default();
-        if let (true, Some(first_parent), Some(_)) = (own.contains(sha), shas.next(), shas.next()) {
-            accepted.extend(
-                git_str(cwd, &["rev-list", sha, &format!("^{first_parent}")])?
-                    .lines()
-                    .map(str::to_owned),
-            );
-        }
-    }
-    Ok(commits
-        .lines()
-        .filter_map(|l| l.split(' ').next())
-        .any(|sha| !accepted.contains(sha)))
-}
-
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Commit {
@@ -518,53 +406,6 @@ pub mod tests {
         std::fs::write(p.join("gone.txt"), "bye\n").unwrap();
         commit(p, "init");
         dir
-    }
-
-    #[test]
-    fn others_commits_are_the_ones_the_user_neither_made_nor_merged() {
-        let dir = repo();
-        let p = dir.path();
-        let head = || super::head(p).unwrap();
-        let base = head();
-        git(p, &["checkout", "-qb", "feature"]).unwrap();
-        std::fs::write(p.join("a.txt"), "mine\n").unwrap();
-        commit(p, "mine");
-        let mine = head();
-        git(p, &["checkout", "-qb", "theirs", &base]).unwrap();
-        std::fs::write(p.join("b.txt"), "theirs\n").unwrap();
-        commit(p, "theirs");
-        git(p, &["checkout", "-q", "feature"]).unwrap();
-        git(
-            p,
-            &[
-                "-c",
-                "user.name=t",
-                "-c",
-                "user.email=t@t",
-                "-c",
-                "commit.gpgsign=false",
-            ]
-            .into_iter()
-            .chain(["merge", "-q", "--no-edit", "theirs"])
-            .collect::<Vec<_>>(),
-        )
-        .unwrap();
-        let merge = head();
-
-        let others = |own: &[&String]| {
-            let own = own.iter().map(|s| s.to_string()).collect();
-            has_others_commits(p, &merge, &[&base], &own).unwrap()
-        };
-        assert!(
-            !others(&[&mine, &merge]),
-            "a merge by the user accepts what it brings in"
-        );
-        assert!(others(&[&mine]), "a merge by someone else needs review");
-        assert!(
-            others(&[&merge]),
-            "the user's merge does not cover the commit before it"
-        );
-        assert!(!has_others_commits(p, &merge, &[&merge], &HashSet::new()).unwrap());
     }
 
     #[test]
@@ -639,121 +480,22 @@ pub mod tests {
     }
 
     #[test]
-    fn blob_ids_whitespace_and_rebased_reviews() {
+    fn whitespace_only_changes_are_found_and_hidden() {
         let dir = repo();
         let p = dir.path();
         let base = head(p).unwrap();
-        git(p, &["branch", "base"]).unwrap();
-        // The branch: a change to a.txt, then a whitespace-only change to gone.txt.
-        git(p, &["checkout", "-q", "-b", "feature"]).unwrap();
+        // A change to a.txt, then a whitespace-only change to gone.txt.
         std::fs::write(p.join("a.txt"), "one\nfeature\n").unwrap();
         commit(p, "feature");
         std::fs::write(p.join("gone.txt"), "bye  \n").unwrap();
         commit(p, "spacing");
-        let reviewed = head(p).unwrap();
+        let now = head(p).unwrap();
         assert_eq!(
-            blob_id(p, Some(&reviewed), "a.txt"),
-            blob_id(p, None, "a.txt")
-        );
-        assert_eq!(blob_id(p, Some(&base), "missing.txt"), "deleted");
-        assert_eq!(
-            whitespace_only_files(p, &base, Some(&reviewed)).unwrap(),
+            whitespace_only_files(p, &base, Some(&now)).unwrap(),
             HashSet::from(["gone.txt".to_owned()])
         );
-        let d = file_diff(p, &base, Some(&reviewed), "gone.txt", true).unwrap();
+        let d = file_diff(p, &base, Some(&now), "gone.txt", true).unwrap();
         assert!(d.hunks.is_empty(), "-w hides whitespace-only hunks");
-
-        // Not rebased: no adjustment.
-        assert_eq!(
-            rebase_reviewed(p, &reviewed, &reviewed, "base").unwrap(),
-            None
-        );
-
-        // The base moves on and the branch is rebased onto it, plus one new commit.
-        git(p, &["checkout", "-q", "base"]).unwrap();
-        std::fs::write(p.join("base.txt"), "from base\n").unwrap();
-        commit(p, "base moves");
-        git(p, &["checkout", "-q", "feature"]).unwrap();
-        git(
-            p,
-            &[
-                "-c",
-                "user.name=t",
-                "-c",
-                "user.email=t@t",
-                "-c",
-                "commit.gpgsign=false",
-                "rebase",
-                "-q",
-                "base",
-            ],
-        )
-        .unwrap();
-        std::fs::write(p.join("a.txt"), "one\nfeature\nmore\n").unwrap();
-        commit(p, "after review");
-        let head_now = head(p).unwrap();
-
-        let raw: Vec<String> = changed_files(p, &reviewed, Some(&head_now))
-            .unwrap()
-            .into_iter()
-            .map(|f| f.path)
-            .collect();
-        assert_eq!(
-            raw,
-            ["a.txt", "base.txt"],
-            "a raw diff includes the base's change"
-        );
-        let adjusted = rebase_reviewed(p, &reviewed, &head_now, "base")
-            .unwrap()
-            .expect("rebased");
-        let since: Vec<String> = changed_files(p, &adjusted, Some(&head_now))
-            .unwrap()
-            .into_iter()
-            .map(|f| f.path)
-            .collect();
-        assert_eq!(
-            since,
-            ["a.txt"],
-            "only the branch's own change since the review"
-        );
-
-        // Among the branch's commits, only the one made after the review is new: the
-        // rebased copies of reviewed commits are not (the base's own commits are not part of
-        // the branch's commits, which is all the review state looks at).
-        let new = commits_new_since(p, &reviewed, &head_now).unwrap();
-        let branch =
-            commits_between(p, &merge_base(p, &head_now, "base").unwrap(), &head_now).unwrap();
-        let new_in_branch: Vec<&str> = branch
-            .iter()
-            .filter(|c| new.contains(&c.sha))
-            .map(|c| c.subject.as_str())
-            .collect();
-        assert_eq!(new_in_branch, ["after review"]);
-        assert_eq!(
-            branch.len(),
-            3,
-            "feature, spacing (rebased) and after review"
-        );
-    }
-
-    #[test]
-    fn rebase_adjustment_reports_conflicts() {
-        let dir = repo();
-        let p = dir.path();
-        git(p, &["branch", "base"]).unwrap();
-        git(p, &["checkout", "-q", "-b", "feature"]).unwrap();
-        std::fs::write(p.join("a.txt"), "branch\n").unwrap();
-        commit(p, "feature");
-        let reviewed = head(p).unwrap();
-        git(p, &["checkout", "-q", "base"]).unwrap();
-        std::fs::write(p.join("a.txt"), "base\n").unwrap();
-        commit(p, "conflicting base change");
-        let new_base = head(p).unwrap();
-        git(p, &["checkout", "-q", "-b", "rebased", &new_base]).unwrap();
-        std::fs::write(p.join("a.txt"), "resolved\n").unwrap();
-        commit(p, "feature, rebased with a resolution");
-        let head_now = head(p).unwrap();
-        assert!(rebase_reviewed(p, &reviewed, &head_now, "base").is_err());
     }
 
     #[test]

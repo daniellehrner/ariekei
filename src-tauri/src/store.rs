@@ -101,6 +101,13 @@ ALTER TABLE work_items ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;
 -- The agent review guide is gone.
 DROP TABLE review_guides;
 "#,
+    r#"
+-- So are the reviewed marks: per file, per item (the reviewed commit), and the viewer's own
+-- commits that told "changes to review" apart.
+DROP TABLE reviewed_files;
+DROP TABLE own_commits;
+ALTER TABLE work_items DROP COLUMN reviewed_sha;
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -127,7 +134,6 @@ pub struct WorkItem {
     pub session_id: Option<String>,
     pub session_started: bool,
     pub transcript_path: Option<PathBuf>,
-    pub reviewed_sha: Option<String>,
     pub last_seen: Option<String>,
     pub ui_state: Option<serde_json::Value>,
     pub role: String,
@@ -195,7 +201,7 @@ fn err(e: rusqlite::Error) -> String {
 }
 
 const ITEM_COLUMNS: &str = "id, repo_id, number, snapshot, open, worktree_path, branch, session_id, \
-     session_started, transcript_path, reviewed_sha, last_seen, ui_state, role, tracked, kind, \
+     session_started, transcript_path, last_seen, ui_state, role, tracked, kind, \
      issue_number, worktree_created, hidden, cleanup_blockers, task_id, starred";
 
 fn item_from_row(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
@@ -211,20 +217,19 @@ fn item_from_row(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
         session_id: r.get(7)?,
         session_started: r.get(8)?,
         transcript_path: r.get::<_, Option<String>>(9)?.map(PathBuf::from),
-        reviewed_sha: r.get(10)?,
-        last_seen: r.get(11)?,
-        ui_state: json(r.get(12)?),
-        role: r.get(13)?,
-        tracked: r.get(14)?,
-        kind: r.get(15)?,
-        issue_number: r.get(16)?,
-        worktree_created: r.get(17)?,
-        hidden: r.get(18)?,
+        last_seen: r.get(10)?,
+        ui_state: json(r.get(11)?),
+        role: r.get(12)?,
+        tracked: r.get(13)?,
+        kind: r.get(14)?,
+        issue_number: r.get(15)?,
+        worktree_created: r.get(16)?,
+        hidden: r.get(17)?,
         cleanup_blockers: r
-            .get::<_, Option<String>>(19)?
+            .get::<_, Option<String>>(18)?
             .and_then(|s| serde_json::from_str(&s).ok()),
-        task_id: r.get(20)?,
-        starred: r.get(21)?,
+        task_id: r.get(19)?,
+        starred: r.get(20)?,
     })
 }
 
@@ -540,77 +545,12 @@ impl Store {
         self.update(id, "cleanup_blockers = ?2", value)
     }
 
-    /// Marks (`Some(blob)`) or unmarks (`None`) `path` of item `id` as reviewed.
-    pub fn set_file_reviewed(&self, id: i64, path: &str, blob: Option<&str>) -> Result<(), String> {
-        let conn = self.conn.lock().unwrap();
-        match blob {
-            Some(blob) => conn.execute(
-                "INSERT INTO reviewed_files (item_id, path, blob) VALUES (?1, ?2, ?3)
-                 ON CONFLICT (item_id, path) DO UPDATE SET blob = ?3",
-                params![id, path, blob],
-            ),
-            None => conn.execute(
-                "DELETE FROM reviewed_files WHERE item_id = ?1 AND path = ?2",
-                params![id, path],
-            ),
-        }
-        .map(|_| ())
-        .map_err(err)
-    }
-
-    /// The reviewed content per path of item `id`.
-    pub fn reviewed_files(
-        &self,
-        id: i64,
-    ) -> Result<std::collections::HashMap<String, String>, String> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn
-            .prepare("SELECT path, blob FROM reviewed_files WHERE item_id = ?1")
-            .map_err(err)?;
-        let rows = stmt
-            .query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))
-            .map_err(err)?;
-        rows.collect::<Result<_, _>>().map_err(err)
-    }
-
-    /// Records the commits of the PR at `head` that the viewer made.
-    pub fn set_own_commits(&self, id: i64, head: &str, commits: &[String]) -> Result<(), String> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO own_commits (item_id, head, commits) VALUES (?1, ?2, ?3)
-             ON CONFLICT (item_id) DO UPDATE SET head = ?2, commits = ?3",
-            params![id, head, serde_json::to_string(commits).unwrap_or_default()],
-        )
-        .map(|_| ())
-        .map_err(err)
-    }
-
-    /// The PR head the viewer's commits were last fetched at, and those commits.
-    pub fn own_commits(
-        &self,
-        id: i64,
-    ) -> Result<Option<(String, std::collections::HashSet<String>)>, String> {
-        let conn = self.conn.lock().unwrap();
-        conn.query_row(
-            "SELECT head, commits FROM own_commits WHERE item_id = ?1",
-            [id],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
-        )
-        .optional()
-        .map_err(err)
-        .map(|row| row.map(|(h, c)| (h, serde_json::from_str(&c).unwrap_or_default())))
-    }
-
-    /// After cleanup: forget the worktree, agent session and review marker, and hide the item.
+    /// After cleanup: forget the worktree and agent session, and hide the item.
     pub fn mark_cleaned(&self, id: i64) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM reviewed_files WHERE item_id = ?1", [id])
-            .map_err(err)?;
-        conn.execute("DELETE FROM own_commits WHERE item_id = ?1", [id])
-            .map_err(err)?;
         conn.execute(
             "UPDATE work_items SET worktree_path = NULL, branch = NULL, worktree_created = 0, session_id = NULL,
-             session_started = 0, transcript_path = NULL, reviewed_sha = NULL, cleanup_blockers = NULL,
+             session_started = 0, transcript_path = NULL, cleanup_blockers = NULL,
              hidden = 1 WHERE id = ?1",
             [id],
         )
@@ -642,10 +582,6 @@ impl Store {
         )
         .map(|_| ())
         .map_err(err)
-    }
-
-    pub fn set_reviewed(&self, id: i64, sha: &str) -> Result<(), String> {
-        self.update(id, "reviewed_sha = ?2", sha)
     }
 
     pub fn set_last_seen(&self, id: i64, at: &str) -> Result<(), String> {
@@ -732,7 +668,7 @@ mod tests {
         store
             .set_worktree(one.id, Some(Path::new("/src/besu_pr1")), Some("feat"), true)
             .unwrap();
-        store.set_reviewed(one.id, "abc").unwrap();
+        store.set_session(one.id, "s-1").unwrap();
 
         store
             .sync_prs(repo.id, &[polled(1, json!({"title": "a2"}))])
@@ -746,7 +682,7 @@ mod tests {
             one.worktree_path.as_deref(),
             Some(Path::new("/src/besu_pr1"))
         );
-        assert_eq!(one.reviewed_sha.as_deref(), Some("abc"));
+        assert_eq!(one.session_id.as_deref(), Some("s-1"));
     }
 
     #[test]
@@ -783,32 +719,6 @@ mod tests {
             !five.open,
             "an untracked PR no query finds drops out of the Inbox"
         );
-    }
-
-    #[test]
-    fn reviewed_files_are_kept_per_item_and_cleared_on_cleanup() {
-        let (store, repo) = store_with_repo();
-        store.sync_prs(repo.id, &[polled(3, json!({}))]).unwrap();
-        let id = store.items(repo.id).unwrap()[0].id;
-        store.set_file_reviewed(id, "a.rs", Some("blob1")).unwrap();
-        store.set_file_reviewed(id, "b.rs", Some("blob2")).unwrap();
-        store.set_file_reviewed(id, "b.rs", None).unwrap();
-        store.set_file_reviewed(id, "a.rs", Some("blob3")).unwrap();
-        assert_eq!(
-            store.reviewed_files(id).unwrap(),
-            [("a.rs".to_owned(), "blob3".to_owned())].into()
-        );
-        store.set_own_commits(id, "h1", &["c1".into()]).unwrap();
-        store
-            .set_own_commits(id, "h2", &["c1".into(), "c2".into()])
-            .unwrap();
-        assert_eq!(
-            store.own_commits(id).unwrap(),
-            Some(("h2".into(), ["c1".to_owned(), "c2".to_owned()].into()))
-        );
-        store.mark_cleaned(id).unwrap();
-        assert!(store.reviewed_files(id).unwrap().is_empty());
-        assert!(store.own_commits(id).unwrap().is_none());
     }
 
     #[test]

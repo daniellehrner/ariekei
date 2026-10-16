@@ -544,50 +544,6 @@ pub fn default_branch(owner: &str, name: &str) -> Result<String, String> {
         .ok_or_else(|| format!("{owner}/{name} has no default branch"))
 }
 
-const PR_COMMITS: &str = r#"query($owner: String!, $name: String!, $number: Int!, $after: String) {
-  repository(owner: $owner, name: $name) { pullRequest(number: $number) {
-    commits(first: 100, after: $after) { pageInfo { hasNextPage endCursor }
-      nodes { commit { oid author { user { login } } committer { user { login } } } } } } }
-}"#;
-
-/// The PR's commits that `login` authored or committed. GitHub matches the commits'
-/// emails to accounts, so this covers every address the user commits with.
-pub fn commits_by(
-    owner: &str,
-    name: &str,
-    number: i64,
-    login: &str,
-) -> Result<Vec<String>, String> {
-    let (mut found, mut after) = (vec![], None::<String>);
-    loop {
-        let mut strings = vec![("owner", owner), ("name", name)];
-        if let Some(after) = &after {
-            strings.push(("after", after));
-        }
-        let v = graphql(PR_COMMITS, &strings, &[("number", number)])?;
-        let commits = &v["data"]["repository"]["pullRequest"]["commits"];
-        found.extend(parse_commits_by(commits, login));
-        if commits["pageInfo"]["hasNextPage"].as_bool() != Some(true) {
-            return Ok(found);
-        }
-        after = Some(s(&commits["pageInfo"]["endCursor"]));
-    }
-}
-
-fn parse_commits_by(commits: &Value, login: &str) -> Vec<String> {
-    let by = |who: &Value| {
-        who["user"]["login"]
-            .as_str()
-            .is_some_and(|l| l.eq_ignore_ascii_case(login))
-    };
-    nodes(commits)
-        .iter()
-        .map(|n| &n["commit"])
-        .filter(|c| by(&c["author"]) || by(&c["committer"]))
-        .map(|c| s(&c["oid"]))
-        .collect()
-}
-
 /// The open PR whose head is `head_owner:branch`, if any.
 pub fn pull_for_head(
     owner: &str,
@@ -1188,20 +1144,6 @@ mod tests {
                 updated_at: "2026-10-01T00:00:00Z".into(),
             }]
         );
-    }
-
-    #[test]
-    fn commits_by_the_user_are_the_ones_they_authored_or_committed() {
-        let user = |l: Option<&str>| json!({ "user": l.map(|l| json!({ "login": l })) });
-        let commit = |oid: &str, author, committer| json!({ "commit": { "oid": oid, "author": user(author), "committer": user(committer) } });
-        let commits = json!({ "nodes": [
-            commit("a", Some("Me"), Some("me")),
-            commit("b", Some("other"), Some("other")),
-            commit("c", Some("me"), Some("web-flow")),
-            commit("d", Some("other"), Some("me")),
-            commit("e", None, Some("other")),
-        ] });
-        assert_eq!(parse_commits_by(&commits, "me"), ["a", "c", "d"]);
     }
 
     #[test]

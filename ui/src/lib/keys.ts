@@ -12,7 +12,6 @@ export const APP_SHORTCUTS: [string[], string][] = [
 export const SHORTCUTS: [string[], string][] = [
   [["n", "p"], "Next / previous change, on into the next / previous file"],
   [["]", "["], "Next / previous file"],
-  [["r"], "Reviewed, next unreviewed"],
   [["u"], "Unified / side-by-side"],
   [["w"], "Hide / show whitespace"],
   [["a"], "Ask the agent about the selection (or right-click code)"],
