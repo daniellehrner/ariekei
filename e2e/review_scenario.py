@@ -294,15 +294,16 @@ try:
     wait_new_side(s, 10)
     # A selection shows on changed lines too: it is drawn above their background.
     select_lines(s, 10, 10)
-    shown = s.js(NEW_SIDE + """
+    # CodeMirror draws the selection layer in its next measure cycle, so wait for it.
+    shown = eventually("a selection on a changed line is drawn above it", lambda: s.js(NEW_SIDE + """
         const n = view.domAtPos(view.state.doc.line(10).from + 1).node;
         const el10 = (n.nodeType === 1 ? n : n.parentElement).closest('.cm-line'), line = el10.getBoundingClientRect();
         const layer = view.dom.querySelector('.cm-selectionLayer');
         const over = [...layer.querySelectorAll('.cm-selectionBackground')].some((b) => {
           const r = b.getBoundingClientRect(); return r.top < line.bottom && r.bottom > line.top && r.width > 0; });
-        return [Number(getComputedStyle(layer).zIndex), over, el10.className];""")
+        return [Number(getComputedStyle(layer).zIndex), over, el10.className];"""),
+        lambda v: v[0] > 0 and v[1] and "cm-changedLine" in v[2], timeout=10)
     print("[selection] layer z-index, drawn over line 10, its classes:", shown)
-    check("a selection on a changed line is drawn above it", shown[0] > 0 and shown[1] and "cm-changedLine" in shown[2], shown)
     add_comment(s, 10, 10, "Name this better.")
     add_comment(s, 1, 1, "Unrelated: the header is stale.")
     print("[draft]", s.js("return [...document.querySelectorAll('[data-drafts] li')].map(l => l.innerText.replace(/\\s+/g, ' ').trim())"))
