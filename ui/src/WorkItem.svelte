@@ -16,6 +16,7 @@
   import { agents } from "./lib/agent.svelte";
   import { api, shortName, type Conversation, type Row } from "./lib/api";
   import { landingTab, type Tab } from "./lib/attention";
+  import { openOn } from "./lib/layout.svelte";
   import { shortPath } from "./lib/paths";
   import { progress, rangeOf, scopeOf } from "./lib/review";
 
@@ -127,6 +128,8 @@
       // started while the task was being created can still lack it).
       if (!saved && isTask) ui.tab = "terminal";
       if (landing) ui.tab = landing;
+      if (openOn.item === current && openOn.tab) ui.tab = openOn.tab;
+      openOn.item = openOn.tab = null;
       if (hasReview && (row.worktree || row.kind === "pr")) loadProgress(current);
     });
     api.markSeen(current).then(onchanged);
@@ -172,8 +175,10 @@
 
   // The terminal of the agent that gets what is sent: this item's, or its task's.
   function showAgent() {
-    if (viaTask && row.agentItem != null) onselect(row.agentItem);
-    else if (ui) ui.tab = "terminal";
+    if (viaTask && row.agentItem != null) {
+      Object.assign(openOn, { item: row.agentItem, tab: "terminal" });
+      onselect(row.agentItem);
+    } else if (ui) ui.tab = "terminal";
   }
 
   async function sendPrFeedback() {

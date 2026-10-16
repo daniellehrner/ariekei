@@ -1,7 +1,13 @@
+import type { Tab } from "./attention";
+
 // Layout facts shared between views: the review's side panel is open (then the Inbox steps
 // aside on narrow windows, so the diff keeps its room).
 
 export const layout = $state({ reviewPanel: false });
+
+// The tab an item opens on next, once (e.g. the task's Terminal after a PR of the task sent its
+// agent something).
+export const openOn = $state<{ item: number | null; tab: Tab | null }>({ item: null, tab: null });
 
 // Whether the keyboard shortcuts overlay is open (? anywhere, or the review's keyboard button).
 export const shortcuts = $state({ open: false });

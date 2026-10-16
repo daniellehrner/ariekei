@@ -71,7 +71,7 @@
     canSendToAgent: boolean;
     /// The status of the agent that gets what is sent (lib/agent.svelte.ts).
     agentStatus?: string;
-    /// Shows the agent's terminal (where its answer appears).
+    /// Shows the agent's terminal (where its answer appears); after asking it about code.
     onterminal?: () => void;
     /// Files of the scope marked reviewed (for the Review tab's label).
     onprogress?: (p: { reviewed: number; total: number }) => void;
@@ -82,8 +82,7 @@
   let error: string | null = $state(null);
   let notice: string | null = $state(null);
   let noticeUrl: string | null = $state(null);
-  // The note (or error) is about something sent to the agent: it offers its terminal.
-  let noticeTerminal = $state(false);
+  // Sending to the agent failed: the error offers its terminal.
   let errorTerminal = $state(false);
   let confirmMark = $state<string | null>(null);
   let host: HTMLElement | undefined = $state();
@@ -372,7 +371,6 @@
   function say(message: string, url: string | null = null) {
     notice = message;
     noticeUrl = url;
-    noticeTerminal = false;
   }
 
   // The editor an element is in, and its side of the diff.
@@ -459,8 +457,9 @@
     try {
       await api.agentSend(id, askMessage(code, prompt));
       asking = null;
-      say(`Sent ${code.path}:${refLines(code)} and your prompt to the agent.`);
-      noticeTerminal = true;
+      // Its answer appears in the terminal.
+      if (onterminal) onterminal();
+      else say(`Sent ${code.path}:${refLines(code)} and your prompt to the agent.`);
     } catch (e) {
       error = `Could not send to the agent: ${e}`;
       errorTerminal = true;
@@ -609,7 +608,6 @@
     <div class="note" class:gh={!!noticeUrl} role="status" data-notice>
       <Icon name={noticeUrl ? "submit-github" : "info"} size={14} /><span class="grow">{notice}</span>
       {#if noticeUrl}<a href={noticeUrl}>Open</a>{/if}
-      {#if noticeTerminal && onterminal}<Button size="sm" variant="quiet" icon="terminal" onclick={onterminal} data-open-terminal>Open Terminal</Button>{/if}
       <IconButton icon="x" label="Dismiss" size={22} onclick={() => (notice = null)} />
     </div>
   {/if}

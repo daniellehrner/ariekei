@@ -213,16 +213,17 @@ try:
     side_by_side(s)
     s.wait_js(f"return !!{editor('new')}?.state.doc.toString().includes('reset peers once')", timeout=30)
     ask_about(s, "new", 2, "Why only once here?")
-    note = s.text(s.wait(".review [data-notice]", timeout=30, text="and your prompt"))
+    s.wait(".item [data-tab='terminal'][aria-selected='true']", timeout=30)
     told = eventually("the agent gets the code and the prompt", transcripts, lambda t: "Why only once here?" in t, timeout=30)
     asked = [line for line in told.splitlines() if "Why only once here?" in line][-1]
-    print("[ask] note:", note.strip(), "| the agent was told:", asked[:200])
-    contains("the note says what was sent", note, "Sent a.txt:2 and your prompt to the agent.")
+    print("[ask] sent, the Terminal is shown; the agent was told:", asked[:200])
     check("the agent is told the file, line, version and code",
           "About a.txt line 2 (" in asked and "reset peers once" in asked and asked.rstrip().endswith("Why only once here?"), asked)
-    check("the note offers the terminal", bool(s.find(".review [data-open-terminal]")))
     eventually("the agent's turn ends", lambda: agent(s, -1), lambda a: a == "finished", timeout=30)
+    s.click(s.wait(".item [data-tab='review']"))
+    s.wait_js(f"return !!{editor('old')}", timeout=30)
     ask_about(s, "old", 1, "Where did this line come from?", selected=(1, 1), enter=True)
+    s.wait(".item [data-tab='terminal'][aria-selected='true']", timeout=30)
     told = eventually("the agent gets the old side's code", transcripts, lambda t: "Where did this line come from?" in t, timeout=30)
     asked = [line for line in told.splitlines() if "Where did this line come from?" in line][-1]
     print("[ask] old side:", asked[:200])
