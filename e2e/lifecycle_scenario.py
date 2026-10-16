@@ -3,12 +3,12 @@
 GitHub is e2e/fake_gh.py (ARIEKEI_GH); the "GitHub" repo is a local git repo reached
 through insteadOf. Covers: an assigned issue in the Inbox, Start working (branch
 issue-<N>-<slug> from main, push set up), Done refused while a commit is unpushed and while
-a file is uncommitted, git push → draft PR opened ("Closes #N") and the item becomes the PR,
+a file is uncommitted, git push → no PR opened, a PR opened for the branch → the item becomes the PR,
 the PR merged → automatic cleanup (worktree, branch, agent, item); and an adopted worktree
 that is kept when its PR is merged. Also: the rate limit used up (the Inbox says so; a
 refresh recovers), a tracked issue deleted on GitHub (polling goes on), CI going from
 running to failing without the PR changing, automatic cleanup kept back while a merged PR's
-worktree has uncommitted work, and an issue whose branch already has a PR (no draft opened).
+worktree has uncommitted work, and an issue whose branch already has a PR when it is pushed.
 Commits are made with git directly (no agent turn).
 
 Run it with `python3 e2e/run.py <test-app> lifecycle` (see run.py), which sets the environment.
@@ -196,14 +196,18 @@ try:
     print("[review]", " ".join(s.js("return document.querySelector('.review .marker').textContent").split()),
           "| submit to GitHub offered:", s.js("return !!document.querySelector('.review [data-open-submit]')"))
 
-    # Push: the next poll opens a draft PR and the item becomes that PR.
+    # Push: Ariekei opens no PR. Once one is opened for the branch, the item becomes it.
     git(wt, "push", "-q")
+    time.sleep(8)  # a few polls (ARIEKEI_POLL_SECS=3)
+    created = [w for w in writes() if w.get("post", "").endswith("/pulls")]
+    print("[push] PR requests:", len(created), "| inbox:", rows(s))
+    check("a push opens no PR", not created and "5" in (rows(s) or []), created)
+    data = json.load(open(data_file))
+    data["prs"].append({"number": 100, "title": "Fix the crash on start", "author": "me", "head_ref": branch, "base_ref": "main", "state": "OPEN", "draft": True})
+    json.dump(data, open(data_file, "w"))
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline and "100" not in (rows(s) or []):
         time.sleep(0.5)
-    created = [w for w in writes() if w.get("post", "").endswith("/pulls")]
-    print("[push] PR request:", json.dumps(created[-1]["body"]) if created else None)
-    check("the first push opens a draft PR", created and created[-1]["body"]["draft"] and created[-1]["body"]["body"] == "Closes #5.", created)
     print("[push] inbox now:", rows(s), "| sections:", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"))
     s.wait(".item header .meta", timeout=20, text="from issue #5")
     print("[push] header:", s.js("return document.querySelector('.item header').innerText.replace(/\\n+/g, ' | ')"))
@@ -228,7 +232,7 @@ try:
           "| agent processes left:", subprocess.run(["pgrep", "-f", "proj_issue5"], capture_output=True, text=True).stdout.split() if shutil.which("pgrep") else "n/a")
     check("merging cleans up the worktree and the branch", not os.path.exists(wt) and not branch_left)
 
-    # --- an issue whose branch already has a PR (opened with gh pr create): no draft ---
+    # --- an issue whose branch already has a PR when it is pushed ---
     select_row(s, 7)
     s.wait(".item header .title", timeout=30, text="Typo in docs")
     header_button(s, "Start working")
@@ -247,7 +251,7 @@ try:
     posts = len([w for w in writes() if w.get("post", "").endswith("/pulls")])
     print("[existing PR] header:", s.js("return document.querySelector('.item header .title').textContent"), "| rows:", listed, "| new PR requests:", posts - posts_before)
     contains("the issue became the existing PR", s.js("return document.querySelector('.item header .title').textContent"), "#130")
-    check("no draft PR is opened when the branch has one", posts == posts_before)
+    check("no PR is opened when the branch has one", posts == posts_before)
     equal("the PR is listed once", listed.count("130"), 1)
 
     # --- an adopted worktree: kept when its PR is merged ---

@@ -1,5 +1,6 @@
 //! The start and end of a work item's life:
-//! - an issue whose branch was pushed gets a draft PR, and the item becomes that PR;
+//! - an issue whose pushed branch has a PR (opened by the user or the agent; Ariekei opens
+//!   none) becomes that PR;
 //! - a finished item (PR merged/closed, issue closed, or marked done) is cleaned up:
 //!   agent, transcript, worktree and branch (if Ariekei created them), refs and context
 //!   are removed. Cleanup never loses work: it is refused while anything would be lost;
@@ -233,20 +234,20 @@ fn remove_transcript(path: &Path) -> bool {
     removed
 }
 
-/// Run after every poll: open draft PRs for pushed issue branches, and clean up items
-/// that are finished.
+/// Run after every poll: follow the PRs opened for pushed issue branches, and clean up
+/// items that are finished.
 pub fn after_poll(state: &AppState, repo: &Repo) -> Result<(), String> {
     for item in state.store.items(repo.id)? {
         if item.kind == "issue" && item.open && item.worktree_path.is_some() {
-            match open_draft_pr(state, repo, &item) {
-                Ok(Some(number)) => crate::notify::lifecycle(
+            match follow_pr(state, repo, &item) {
+                Ok(true) => crate::notify::lifecycle(
                     state,
                     &item.id.to_string(),
-                    &format!("#{number} {}", item.title()),
-                    "Opened a draft pull request for the pushed branch.",
+                    &state.store.item(item.id)?.label(),
+                    &format!("Issue #{} now follows its pull request.", item.number),
                 ),
-                Ok(None) => {}
-                Err(e) => tracing::warn!("issue #{}: draft PR: {e}", item.number),
+                Ok(false) => {}
+                Err(e) => tracing::warn!("issue #{}: its PR: {e}", item.number),
             }
         }
         // Only GitHub's own state counts: a PR that merely dropped out of a search (e.g.
@@ -308,16 +309,16 @@ fn outcome_closed(state: &AppState, task: i64) -> Result<(), String> {
     Ok(())
 }
 
-/// If the issue's branch is on its push remote, makes sure it has a PR (opening a draft
-/// if there is none) and turns the item into that PR. Returns the PR number when the
-/// item was converted.
-fn open_draft_pr(state: &AppState, repo: &Repo, item: &WorkItem) -> Result<Option<i64>, String> {
+/// If the issue's branch is on its push remote and has a PR, turns the item into that PR.
+/// Returns whether the item was converted. Ariekei never opens the PR itself:
+/// the user or the agent does, with a title and description of their own.
+fn follow_pr(state: &AppState, repo: &Repo, item: &WorkItem) -> Result<bool, String> {
     let Some(branch) = item.branch.as_deref() else {
-        return Ok(None);
+        return Ok(false);
     };
     let remote = git::git_str(&repo.path, &["config", &format!("branch.{branch}.remote")])?;
     if !git::commit_exists(&repo.path, &format!("refs/remotes/{remote}/{branch}")) {
-        return Ok(None); // not pushed yet
+        return Ok(false); // not pushed yet
     }
     let url = git::git_str(
         &repo.path,
@@ -325,21 +326,12 @@ fn open_draft_pr(state: &AppState, repo: &Repo, item: &WorkItem) -> Result<Optio
     )?;
     let (head_owner, _) =
         git::github_slug(&url).ok_or_else(|| format!("remote {remote} is not on GitHub"))?;
-    let base = github::default_branch(&repo.owner, &repo.name)?;
-    let number =
-        match github::pull_for_head(&repo.owner, &repo.name, &repo.viewer, &head_owner, branch)? {
-            Some(pr) => pr.number,
-            None => {
-                let head = if head_owner.eq_ignore_ascii_case(&repo.owner) {
-                    branch.to_owned()
-                } else {
-                    format!("{head_owner}:{branch}")
-                };
-                let title = item.snapshot["title"].as_str().unwrap_or(branch);
-                let body = format!("Closes #{}.", item.number);
-                github::create_draft_pull(&repo.owner, &repo.name, &head, &base, title, &body)?
-            }
-        };
+    let Some(found) =
+        github::pull_for_head(&repo.owner, &repo.name, &repo.viewer, &head_owner, branch)?
+    else {
+        return Ok(false); // no PR yet
+    };
+    let number = found.number;
     let pr = github::prs_by_number(&repo.owner, &repo.name, &repo.viewer, &[number])?
         .into_iter()
         .next()
@@ -361,7 +353,7 @@ fn open_draft_pr(state: &AppState, repo: &Repo, item: &WorkItem) -> Result<Optio
         number,
         &serde_json::to_value(&pr).unwrap_or_default(),
     )?;
-    Ok(Some(number))
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -613,29 +605,28 @@ mod tests {
         }
 
         #[test]
-        fn a_pushed_issue_branch_becomes_its_draft_pr() {
+        fn a_pushed_issue_branch_opens_no_pr_and_follows_the_one_opened() {
             let app = TestApp::new();
             app.add_issue(json!({"number": 5, "title": "Crash", "assigned": true}));
             app.poll().unwrap();
             let id = app.item(5).id;
-            let wt = prepare(&app.state, id).unwrap().path;
-            write(&wt.join("a.txt"), "fixed\n");
-            commit(&wt, "fix", "me");
-            git(&wt, &["push", "-q"]);
+            let prepared = prepare(&app.state, id).unwrap();
+            write(&prepared.path.join("a.txt"), "fixed\n");
+            commit(&prepared.path, "fix", "me");
+            git(&prepared.path, &["push", "-q"]);
             app.poll().unwrap();
-            let posts: Vec<_> = app
-                .writes()
-                .into_iter()
-                .filter(|w| w["post"].as_str().is_some_and(|p| p.ends_with("/pulls")))
-                .collect();
-            assert_eq!(posts.len(), 1);
-            assert_eq!(
-                (
-                    posts[0]["body"]["draft"].as_bool(),
-                    posts[0]["body"]["body"].as_str()
-                ),
-                (Some(true), Some("Closes #5."))
+            assert!(
+                app.writes()
+                    .iter()
+                    .all(|w| w["post"].as_str().is_none_or(|p| !p.ends_with("/pulls"))),
+                "Ariekei opens no PR"
             );
+            assert_eq!(app.state.store.item(id).unwrap().kind, "issue");
+            // The agent (or the user) opens it.
+            app.add_pr(
+                json!({"number": 100, "title": "Fix the crash", "head_ref": prepared.branch}),
+            );
+            app.poll().unwrap();
             let pr = app.state.store.item(id).unwrap();
             assert_eq!(
                 (pr.kind.as_str(), pr.number, pr.issue_number),
@@ -645,7 +636,8 @@ mod tests {
                 app.events
                     .notices()
                     .iter()
-                    .any(|(_, title, _)| title == "#100 Crash")
+                    .any(|(_, title, body)| title == "#100 Fix the crash"
+                        && body == "Issue #5 now follows its pull request.")
             );
         }
 

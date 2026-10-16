@@ -557,25 +557,6 @@ pub fn pull_for_head(
         .find(|p| p.head_ref == branch && p.head_owner.eq_ignore_ascii_case(head_owner)))
 }
 
-/// Opens a draft PR from `head` (`branch`, or `owner:branch` from a fork) into `base`;
-/// returns its number.
-pub fn create_draft_pull(
-    owner: &str,
-    name: &str,
-    head: &str,
-    base: &str,
-    title: &str,
-    body: &str,
-) -> Result<i64, String> {
-    let v = post(
-        &format!("repos/{owner}/{name}/pulls"),
-        &json!({ "title": title, "head": head, "base": base, "body": body, "draft": true }),
-    )?;
-    v["number"]
-        .as_i64()
-        .ok_or_else(|| format!("GitHub did not return a PR number: {v}"))
-}
-
 // --- PR context for the agent ----------------------------------------------------
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

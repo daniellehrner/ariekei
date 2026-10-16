@@ -52,7 +52,7 @@ pub fn agent_status(
     }
 }
 
-/// A work item started or ended its life (draft PR opened, cleaned up, cleanup blocked).
+/// A work item started or ended its life (an issue's PR found, cleaned up, cleanup blocked).
 pub fn lifecycle(state: &AppState, key: &str, title: &str, message: &str) {
     if !state.events.watching(key) {
         state.events.notice(key, "lifecycle", title, message);

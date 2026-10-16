@@ -30,7 +30,7 @@ code navigation or debugging, use your IDE on the same worktree. Tauri 2 (Rust) 
 - **Tasks:** start work with no PR or issue yet (Ctrl+N or + in the Inbox, e.g. to investigate a bug). The
   task gets a branch, worktree and agent; the PRs and issues its agent opens (`gh pr create`,
   `gh issue create`) are linked and listed under it. Done or Discard ends it.
-- **Lifecycle:** an issue gets a branch and worktree; its first push opens a draft PR. Merged
+- **Lifecycle:** an issue gets a branch and worktree; once a PR is opened for the branch (by you or the agent), the item follows it. Merged
   or closed items are cleaned up automatically, never losing uncommitted or unpushed work.
 
 Language-agnostic: the review diff comes from git, any file type is syntax-highlighted, and the
@@ -92,7 +92,7 @@ windows never show up on your desktop or take focus, and its notifications stay 
 - `review`: Inbox sections, browsing and adding, starring and removing, Overview, Comments, review without a worktree, review order,
   n / p across files, submitting a review, a push showing up in the review.
 - `windows`: two repos, switching, a window per repo, restoring windows after a restart.
-- `lifecycle`: issue → worktree → push → draft PR → merge → cleanup.
+- `lifecycle`: issue → worktree → push → its PR → merge → cleanup.
 - `task`: new task → the agent opens a PR and an issue → linked under the task → asking the
   agent about code from the review → discard.
 - `m1`: the agent in the terminal (turns that commit, a permission prompt), the review loop,

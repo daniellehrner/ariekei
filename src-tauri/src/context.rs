@@ -105,9 +105,9 @@ pub fn render_issue(
     let _ = writeln!(
         md,
         "You are working on this issue in a git worktree opened from the Ariekei review workbench, on the new \
-         branch `{branch}` (from `{base}`). The user reviews your changes there. When the branch \
-         is pushed (`git push` is set up for it), Ariekei opens a draft pull request that closes \
-         the issue. This context was captured when the conversation started. Wait for the \
+         branch `{branch}` (from `{base}`). The user reviews your changes there. `git push` is set \
+         up for the branch. Ariekei does not open a pull request: when you are asked to, open it \
+         yourself, and Ariekei follows it in place of the issue. This context was captured when the conversation started. Wait for the \
          user's instructions before changing anything."
     );
     let _ = writeln!(md, "\nURL: {url}");
