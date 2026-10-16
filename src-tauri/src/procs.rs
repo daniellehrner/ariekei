@@ -108,32 +108,42 @@ mod tests {
     fn sees_what_a_running_process_started() {
         #[cfg(unix)]
         let mut child = Command::new("sh")
-            .args(["-c", "sleep 5; :"])
+            .args(["-c", "sleep 30; :"])
             .spawn()
             .unwrap();
         #[cfg(windows)]
         let mut child = Command::new("cmd")
-            .args(["/c", "ping -n 6 127.0.0.1 >nul"])
+            .args(["/c", "ping -n 31 127.0.0.1 >nul"])
             .spawn()
             .unwrap();
+        // Generous: on a busy Windows runner PowerShell alone can take seconds to start.
         let start = Instant::now();
-        let found = loop {
+        let found: Vec<(u32, String)> = loop {
             let table = table().unwrap();
-            let found: Vec<String> = descendants(&table, child.id())
+            let found: Vec<(u32, String)> = descendants(&table, child.id())
                 .iter()
-                .map(|p| p.name.clone())
+                .map(|p| (p.pid, p.name.clone()))
                 .collect();
-            if !found.is_empty() || start.elapsed() > Duration::from_secs(4) {
+            if !found.is_empty() || start.elapsed() > Duration::from_secs(20) {
                 break found;
             }
-            std::thread::sleep(Duration::from_millis(100));
+            std::thread::sleep(Duration::from_millis(200));
         };
+        // Leave nothing running: the grandchild outlives its killed parent.
+        for (pid, _) in &found {
+            #[cfg(unix)]
+            let _ = Command::new("kill").arg(pid.to_string()).status();
+            #[cfg(windows)]
+            let _ = Command::new("taskkill")
+                .args(["/F", "/PID", &pid.to_string()])
+                .output();
+        }
         let _ = child.kill();
         let _ = child.wait();
         assert!(
             found
                 .iter()
-                .any(|n| n.contains("sleep") || n.contains("PING") || n.contains("ping")),
+                .any(|(_, n)| n.contains("sleep") || n.contains("PING") || n.contains("ping")),
             "{found:?}"
         );
     }

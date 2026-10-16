@@ -1230,9 +1230,12 @@ mod tests {
                 "git@github.com:friend/proj.git"
             )
         );
+        // trim: the checkout may have CRLF (Windows).
         assert_eq!(
-            std::fs::read_to_string(path.join("c.txt")).unwrap(),
-            "friend's work\n"
+            std::fs::read_to_string(path.join("c.txt"))
+                .unwrap()
+                .trim_end(),
+            "friend's work"
         );
         // A plain push updates the fork's branch.
         write(&path.join("c.txt"), "more\n");
