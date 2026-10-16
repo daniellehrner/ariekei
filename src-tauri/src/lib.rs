@@ -10,6 +10,7 @@ mod inbox;
 mod lifecycle;
 mod notify;
 mod poller;
+mod procs;
 mod review_order;
 mod store;
 mod terminal;

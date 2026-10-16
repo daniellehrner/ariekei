@@ -81,6 +81,8 @@ struct Term {
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+    /// The agent's process, whose own processes (background shells) keep it open.
+    pid: Option<u32>,
     output: Mutex<Output>,
     /// Latest status and when it was reported.
     status: Mutex<(AgentStatus, Instant)>,
@@ -268,6 +270,7 @@ impl TerminalManager {
             session_id: plan.session_id.clone(),
             writer: Mutex::new(pair.master.take_writer().map_err(|e| e.to_string())?),
             killer: Mutex::new(child.clone_killer()),
+            pid: child.process_id(),
             master: Mutex::new(pair.master),
             output: Mutex::new(Output {
                 scrollback: VecDeque::new(),
@@ -396,9 +399,10 @@ impl TerminalManager {
     }
 
     /// Closes terminals that nobody is viewing and whose agent has waited for the user
-    /// for longer than `after`.
+    /// for longer than `after`, unless the agent still runs processes of its own (e.g.
+    /// background shells): they would end with it, and resuming does not restart them.
     fn close_idle(&self, after: Duration) {
-        let idle_keys: Vec<String> = self
+        let idle: Vec<(String, Option<u32>)> = self
             .terms
             .lock()
             .unwrap()
@@ -407,11 +411,31 @@ impl TerminalManager {
                 let (status, since) = *t.status.lock().unwrap();
                 idle(status) && since.elapsed() >= after && t.output.lock().unwrap().view.is_none()
             })
-            .map(|(k, _)| k.clone())
+            .map(|(k, t)| (k.clone(), t.pid))
             .collect();
-        for key in idle_keys {
-            tracing::info!("closing idle terminal {key}");
-            self.close(&key);
+        if idle.is_empty() {
+            return;
+        }
+        let Ok(table) = crate::procs::table()
+            .inspect_err(|e| tracing::warn!("idle terminals kept open: no process list: {e}"))
+        else {
+            return;
+        };
+        for (key, pid) in idle {
+            let running = pid.map_or(vec![], |pid| crate::procs::descendants(&table, pid));
+            if running.is_empty() {
+                tracing::info!("closing idle terminal {key}");
+                self.close(&key);
+            } else {
+                let names: Vec<String> = running
+                    .iter()
+                    .map(|p| format!("{} ({})", p.name, p.pid))
+                    .collect();
+                tracing::debug!(
+                    "idle terminal {key} kept open, running {}",
+                    names.join(", ")
+                );
+            }
         }
     }
 }

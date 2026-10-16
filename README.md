@@ -96,7 +96,7 @@ windows never show up on your desktop or take focus, and its notifications stay 
 - `task`: new task → the agent opens a PR and an issue → linked under the task → asking the
   agent about code from the review → discard.
 - `m1`: the agent in the terminal (turns that commit, a permission prompt), the review loop,
-  idle shutdown and resume after a restart.
+  idle shutdown (not while a background job runs) and resume after a restart.
 
 Nothing leaves the machine: GitHub is `e2e/fake_gh.py`, a stand-in for `gh` that serves fixture
 PRs and issues and records every write instead of sending it, and the agent is
@@ -111,7 +111,7 @@ design. Test-only environment variables:
 | `ARIEKEI_GH` | Use this binary instead of `gh` |
 | `ARIEKEI_NO_POLL` | Do not poll GitHub |
 | `ARIEKEI_POLL_SECS` | Poll every N seconds instead of 60 |
-| `ARIEKEI_IDLE_SECS` | Close idle, unwatched agents after N seconds instead of 15 minutes |
+| `ARIEKEI_IDLE_SECS` | Close idle, unwatched agents (without background processes) after N seconds instead of 15 minutes |
 | `ARIEKEI_CLAUDE_ARGS` | Extra arguments for `claude` |
 | `ARIEKEI_CLAUDE` | Use this `claude` binary |
 | `ARIEKEI_PYTHON` | Interpreter for a `.py` given as `ARIEKEI_GH` or `ARIEKEI_CLAUDE` (default `python3`) |

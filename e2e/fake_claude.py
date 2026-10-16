@@ -8,6 +8,8 @@ A minimal terminal agent that reports through the hooks of `--settings` like Cla
 - "Open a pull request titled 'T'" pushes the branch and opens the PR, "Open an issue titled
   'T'" opens the issue (both through $ARIEKEI_GH, the fake gh), reporting them as the
   `gh pr create` / `gh issue create` Bash call it stands for, with the URL it printed;
+- "Run a N second job in the background" starts a process that sleeps N seconds, as a
+  background Bash call does (a child of the agent), and finishes the turn;
 - a line containing "ask" asks permission for a Bash command and waits;
 - anything else finishes the turn at once.
 Turns are kept in a transcript ($FAKE_CLAUDE_DIR, default <tmp>/ariekei-fake-claude), which
@@ -29,6 +31,7 @@ import re  # noqa: E402
 import subprocess  # noqa: E402
 import sys  # noqa: E402
 import tempfile  # noqa: E402
+import threading  # noqa: E402
 import urllib.request  # noqa: E402
 
 PROMPT = "\x1b[38;5;173m❯\x1b[0m "
@@ -206,6 +209,13 @@ def turn(text, say, hook, keys):
         subprocess.run([*git, "commit", "-qm", message], check=True, capture_output=True)
         hook("PostToolUse", tool_name="Bash", tool_input={"command": command})
         say(f"⏺ Committed {message}")
+    elif job := re.search(r"(\d+) second job in the background", text):
+        command = f"sleep {job.group(1)}"
+        hook("PreToolUse", tool_name="Bash", tool_input={"command": command, "run_in_background": True})
+        proc = subprocess.Popen([sys.executable, "-c", f"import time; time.sleep({job.group(1)})"])
+        threading.Thread(target=proc.wait, daemon=True).start()  # reaped when it ends, as Claude Code does
+        hook("PostToolUse", tool_name="Bash", tool_input={"command": command, "run_in_background": True})
+        say(f"⏺ Started {command} in the background")
     elif "ask" in text:
         command = "./gradlew :ethereum:eth:test --tests '*SnapSync*'"
         out(f"Bash({command})\n  Do you want to proceed?\n  ❯ 1. Yes\n    2. No\n")

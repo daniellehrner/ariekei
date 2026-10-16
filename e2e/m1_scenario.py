@@ -232,10 +232,16 @@ try:
     equal("in one hunk", len(diff["hunks"]), 1)
     s.screenshot(os.path.join(shots, "m1-review-commit.png"))
 
-    # Leave #42 (its terminal detaches); with ARIEKEI_IDLE_SECS=5 the idle agent closes.
+    # Leave #42 (its terminal detaches); with ARIEKEI_IDLE_SECS=5 the idle agent closes, but
+    # not while a background job it started still runs (closing would end the job).
+    tab(s, "Terminal")
+    st = prompt(s, 42, "Run a 25 second job in the background")
+    equal("the background job's turn finishes", st, "finished")
     select(s, 43)
     s.wait("[data-start]", timeout=10)
     t0 = time.monotonic()
+    time.sleep(15)
+    equal("an idle agent with a background job stays open", (row_info(s, 42) or {}).get("agent"), "finished")
     wait_agent(s, 42, {"none"}, timeout=90)
     print(f"[idle] #42's agent closed {time.monotonic() - t0:.0f}s after it was left idle")
     select(s, 42)
