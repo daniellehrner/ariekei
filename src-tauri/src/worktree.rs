@@ -1,10 +1,10 @@
-//! A PR's isolated working copy: an existing worktree that already has the PR's branch,
-//! or a new one next to the main clone (`<clone>_pr<N>`).
+//! A work item's isolated working copy: an existing worktree that already has its branch,
+//! or a new one next to the main clone (`<clone>_pr<N>`, `<clone>_issue<N>`, `<clone>_task<n>`).
 
 use crate::git::{self, git, git_str};
 use crate::github::PrSummary;
 use crate::store::Repo;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -38,11 +38,30 @@ pub struct Prepared {
     pub note: Option<String>,
 }
 
-/// The remote for the PR's head repository, adding one named after its owner if the
-/// clone has none (as `gh pr checkout` does). Uses ssh when the base remote does.
+/// The remote for the PR's head repository, adding one if the clone has none.
 fn head_remote(repo: &Repo, pr: &PrSummary) -> Result<String, String> {
-    if let Some(remote) = git::remote_for(&repo.path, &pr.head_owner, &pr.head_repo)? {
-        return Ok(remote);
+    remote_for_repo(
+        repo,
+        &pr.head_owner,
+        &pr.head_repo,
+        &pr.head_ssh_url,
+        &pr.head_https_url,
+    )
+    .map(|(remote, _)| remote)
+}
+
+/// The remote for GitHub's `owner/name`. If the clone has none, adds one named after the
+/// owner as `gh pr checkout` does (`<owner>-<name>` if that name is taken), using ssh when
+/// the base remote does. Returns the remote and whether it was added.
+fn remote_for_repo(
+    repo: &Repo,
+    owner: &str,
+    name: &str,
+    ssh_url: &str,
+    https_url: &str,
+) -> Result<(String, bool), String> {
+    if let Some(remote) = git::remote_for(&repo.path, owner, name)? {
+        return Ok((remote, false));
     }
     let base_url = git_str(
         &repo.path,
@@ -54,13 +73,20 @@ fn head_remote(repo: &Repo, pr: &PrSummary) -> Result<String, String> {
     )
     .unwrap_or_default();
     let url = if base_url.starts_with("https://") {
-        &pr.head_https_url
+        https_url
     } else {
-        &pr.head_ssh_url
+        ssh_url
     };
-    let name = &pr.head_owner;
-    git(&repo.path, &["remote", "add", name, url])?;
-    Ok(name.clone())
+    let taken = git::remotes(&repo.path)?
+        .into_iter()
+        .any(|(r, _)| r == owner);
+    let remote = if taken {
+        format!("{owner}-{name}")
+    } else {
+        owner.to_owned()
+    };
+    git(&repo.path, &["remote", "add", &remote, url])?;
+    Ok((remote, true))
 }
 
 /// Fetches `branch` of `remote` into `refs/remotes/<remote>/<branch>` regardless of the
@@ -81,24 +107,89 @@ fn fetch(repo: &Path, remote: &str, branch: &str) -> Result<String, String> {
     Ok(tracking)
 }
 
-/// An existing linked worktree that belongs to this PR: its branch is the PR's branch,
-/// `pr-<N>`, or tracks the PR's head. The main checkout is never adopted.
+/// An existing linked worktree for the branch `tracking`: its branch tracks it, is `own`
+/// (the item's own name, e.g. `pr-<N>`), or is `plain` (the remote's branch name) with no
+/// upstream. The main checkout is never adopted.
 fn find_existing(
     repo: &Path,
-    pr: &PrSummary,
+    own: &str,
+    plain: &str,
     tracking: &str,
 ) -> Result<Option<git::Worktree>, String> {
-    let pr_branch = format!("pr-{}", pr.number);
     Ok(git::worktrees(repo)?
         .into_iter()
         .filter(|w| !w.main && w.path.exists())
         .find(|w| {
             w.branch.as_deref().is_some_and(|b| {
-                b == pr_branch
+                b == own
                     || git::upstream(repo, b).as_deref() == Some(tracking)
-                    || (b == pr.head_ref && git::upstream(repo, b).is_none())
+                    || (b == plain && git::upstream(repo, b).is_none())
             })
         }))
+}
+
+/// A branch on GitHub to work on: `branch` of `owner/repo` (the base repo or a fork).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BranchRef {
+    pub owner: String,
+    pub repo: String,
+    pub branch: String,
+}
+
+/// What the user typed for an existing branch: `owner:branch` (a fork with the base repo's
+/// name, as in GitHub's `head` notation), `owner/repo:branch`, a GitHub branch URL
+/// (`https://github.com/owner/repo/tree/<branch>`), or a branch of the base repo.
+pub fn parse_branch_ref(
+    input: &str,
+    base_owner: &str,
+    base_name: &str,
+) -> Result<BranchRef, String> {
+    let input = input.trim();
+    let bad = || {
+        format!(
+            "{input:?} is not a branch: use owner:branch, owner/repo:branch, a GitHub branch URL or a branch name"
+        )
+    };
+    let url = ["https://github.com/", "http://github.com/", "github.com/"]
+        .iter()
+        .find_map(|prefix| input.strip_prefix(prefix));
+    let (owner, repo, branch) = if let Some(rest) = url {
+        let mut parts = rest.splitn(4, '/');
+        match (parts.next(), parts.next(), parts.next(), parts.next()) {
+            (Some(o), Some(r), Some("tree"), Some(b)) => (o, r, b.trim_end_matches('/')),
+            _ => return Err(bad()),
+        }
+    } else if let Some((head, branch)) = input.split_once(':') {
+        match head.split_once('/') {
+            Some((o, r)) => (o, r, branch),
+            None => (head, base_name, branch),
+        }
+    } else {
+        (base_owner, base_name, input)
+    };
+    let name_ok = |s: &str| {
+        !s.is_empty()
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+    };
+    // Roughly `git check-ref-format`, and never an option (a leading `-`) for git.
+    let branch_ok = !branch.is_empty()
+        && !branch.starts_with(['-', '/'])
+        && !branch.ends_with(['/', '.'])
+        && !branch.contains("..")
+        && !branch.contains("//")
+        && !branch.ends_with(".lock")
+        && !branch
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || ":~^?*[\\".contains(c));
+    if !name_ok(owner) || !name_ok(repo) || !branch_ok {
+        return Err(bad());
+    }
+    Ok(BranchRef {
+        owner: owner.to_owned(),
+        repo: repo.to_owned(),
+        branch: branch.to_owned(),
+    })
 }
 
 /// Branch name for an issue: `issue-<N>-<words of the title>`.
@@ -174,6 +265,67 @@ pub fn prepare_task(
     )
 }
 
+/// A worktree for task `T<n>` on an existing branch (e.g. on a fork): adds a remote for its
+/// repository if the clone has none, fetches the branch and checks it out in
+/// `<clone>_task<n>`, tracking it, so a plain `git push` updates it.
+pub fn prepare_task_on(
+    repo: &Repo,
+    n: i64,
+    title: &str,
+    head: &BranchRef,
+    default_branch: &str,
+) -> Result<Prepared, String> {
+    let BranchRef {
+        owner,
+        repo: name,
+        branch,
+    } = head;
+    let (remote, added) = remote_for_repo(
+        repo,
+        owner,
+        name,
+        &format!("git@github.com:{owner}/{name}.git"),
+        &format!("https://github.com/{owner}/{name}.git"),
+    )?;
+    let tracking = match fetch(&repo.path, &remote, branch) {
+        Ok(tracking) => tracking,
+        Err(e) => {
+            // E.g. a typo in the branch or the fork: leave no remote behind.
+            if added {
+                let _ = git(&repo.path, &["remote", "remove", &remote]);
+            }
+            return Err(format!("could not fetch {branch} from {owner}/{name}: {e}"));
+        }
+    };
+    // The review compares with the default branch; not fatal if it can't be fetched.
+    if let Err(e) = fetch(&repo.path, &repo.base_remote, default_branch) {
+        tracing::warn!("could not fetch {default_branch}: {e}");
+    }
+    let own = task_branch(n, title);
+    if let Some(w) = find_existing(&repo.path, &own, branch, &tracking)? {
+        return Ok(Prepared {
+            path: w.path,
+            branch: w.branch.unwrap_or_default(),
+            adopted: true,
+            note: None,
+        });
+    }
+    let path = sibling(repo, &format!("task{n}"));
+    if path.exists() {
+        return Err(format!(
+            "{} already exists; move it away to start the task",
+            path.display()
+        ));
+    }
+    let (branch, note) = track_worktree(&repo.path, &path, branch, own, &tracking, &tracking)?;
+    Ok(Prepared {
+        path,
+        branch,
+        adopted: false,
+        note,
+    })
+}
+
 /// A new `branch` from the base remote's `default_branch` in the worktree
 /// `<clone>_<suffix>`, or the linked worktree that already has the branch.
 fn new_branch_worktree(
@@ -195,16 +347,7 @@ fn new_branch_worktree(
             note: None,
         });
     }
-    let dir = repo
-        .path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| repo.name.clone());
-    let path = repo
-        .path
-        .parent()
-        .unwrap_or(&repo.path)
-        .join(format!("{dir}_{suffix}"));
+    let path = sibling(repo, suffix);
     if path.exists() {
         return Err(format!(
             "{} already exists; move it away to {to}",
@@ -282,6 +425,11 @@ pub fn fetch_pr_head(
 }
 
 pub fn worktree_path(repo: &Repo, number: i64) -> PathBuf {
+    sibling(repo, &format!("pr{number}"))
+}
+
+/// `<clone>_<suffix>`, next to the main clone.
+fn sibling(repo: &Repo, suffix: &str) -> PathBuf {
     let dir = repo
         .path
         .file_name()
@@ -290,7 +438,7 @@ pub fn worktree_path(repo: &Repo, number: i64) -> PathBuf {
     repo.path
         .parent()
         .unwrap_or(&repo.path)
-        .join(format!("{dir}_pr{number}"))
+        .join(format!("{dir}_{suffix}"))
 }
 
 /// Makes the PR's worktree ready: fetches the head and base branches, then adopts or
@@ -303,7 +451,12 @@ pub fn prepare(repo: &Repo, pr: &PrSummary) -> Result<Prepared, String> {
         tracing::warn!("could not fetch base {}: {e}", pr.base_ref);
     }
 
-    if let Some(w) = find_existing(&repo.path, pr, &tracking)? {
+    if let Some(w) = find_existing(
+        &repo.path,
+        &format!("pr-{}", pr.number),
+        &pr.head_ref,
+        &tracking,
+    )? {
         return Ok(Prepared {
             path: w.path,
             branch: w.branch.unwrap_or_default(),
@@ -320,19 +473,47 @@ pub fn prepare(repo: &Repo, pr: &PrSummary) -> Result<Prepared, String> {
         ));
     }
 
-    // Keep the PR's branch name when possible: with the same name, a plain `git push`
-    // updates the PR. Fall back to pr-<N> if a different branch already has that name.
-    let reusable = git::branch_exists(&repo.path, &pr.head_ref)
-        && git::upstream(&repo.path, &pr.head_ref).is_none_or(|u| u == tracking);
-    let branch = if !git::branch_exists(&repo.path, &pr.head_ref) || reusable {
-        pr.head_ref.clone()
+    let (branch, note) = track_worktree(
+        &repo.path,
+        &path,
+        &pr.head_ref,
+        format!("pr-{}", pr.number),
+        &tracking,
+        &format!("the PR ({tracking})"),
+    )?;
+    Ok(Prepared {
+        path,
+        branch,
+        adopted: false,
+        note,
+    })
+}
+
+/// Checks out a branch tracking `tracking` in a new worktree at `path`, and returns it with a
+/// note for the user, if any. The branch keeps the remote's name `wanted` when possible
+/// (with the same name, a plain `git push` goes back there), else is `fallback` (a local
+/// `wanted` tracks something else). A reused local branch is fast-forwarded to `tracking`;
+/// if it has commits of its own it is left as it is and the note says so (`upstream` names
+/// `tracking` in it).
+fn track_worktree(
+    clone: &Path,
+    path: &Path,
+    wanted: &str,
+    fallback: String,
+    tracking: &str,
+    upstream: &str,
+) -> Result<(String, Option<String>), String> {
+    let reusable = git::branch_exists(clone, wanted)
+        && git::upstream(clone, wanted).is_none_or(|u| u == tracking);
+    let branch = if !git::branch_exists(clone, wanted) || reusable {
+        wanted.to_owned()
     } else {
-        format!("pr-{}", pr.number)
+        fallback
     };
     let path_arg = path.to_string_lossy().into_owned();
     let mut note = None;
-    if git::branch_exists(&repo.path, &branch) {
-        let checked_out = git::worktrees(&repo.path)?
+    if git::branch_exists(clone, &branch) {
+        let checked_out = git::worktrees(clone)?
             .into_iter()
             .find(|w| w.branch.as_deref() == Some(&branch));
         if let Some(w) = checked_out {
@@ -341,35 +522,25 @@ pub fn prepare(repo: &Repo, pr: &PrSummary) -> Result<Prepared, String> {
                 w.path.display()
             ));
         }
-        git(
-            &repo.path,
-            &["worktree", "add", "--quiet", &path_arg, &branch],
-        )?;
-        // A reused local branch may be behind the PR: bring it up to date if that is a
-        // fast-forward, otherwise leave the user's commits alone and say so.
-        if git(&path, &["merge", "--ff-only", "--quiet", &tracking]).is_err() {
+        git(clone, &["worktree", "add", "--quiet", &path_arg, &branch])?;
+        if git(path, &["merge", "--ff-only", "--quiet", tracking]).is_err() {
             note = Some(format!(
-                "Your local branch {branch} has commits that are not in the PR ({tracking}), so it was left as it is."
+                "Your local branch {branch} has commits that are not in {upstream}, so it was left as it is."
             ));
         }
     } else {
         git(
-            &repo.path,
+            clone,
             &[
-                "worktree", "add", "--quiet", "-b", &branch, &path_arg, &tracking,
+                "worktree", "add", "--quiet", "-b", &branch, &path_arg, tracking,
             ],
         )?;
     }
     git(
-        &repo.path,
-        &["branch", "--quiet", "--set-upstream-to", &tracking, &branch],
+        clone,
+        &["branch", "--quiet", "--set-upstream-to", tracking, &branch],
     )?;
-    Ok(Prepared {
-        path,
-        branch,
-        adopted: false,
-        note,
-    })
+    Ok((branch, note))
 }
 
 #[cfg(test)]
@@ -448,6 +619,46 @@ mod tests {
             reviews: vec![],
         };
         (root, repo, pr)
+    }
+
+    #[test]
+    fn parses_the_ways_to_name_an_existing_branch() {
+        let parse = |s: &str| parse_branch_ref(s, "hyperledger", "besu");
+        let r = |o: &str, n: &str, b: &str| {
+            Ok(BranchRef {
+                owner: o.into(),
+                repo: n.into(),
+                branch: b.into(),
+            })
+        };
+        assert_eq!(
+            parse("daniellehrner:feat/evm-v2-all-opcodes"),
+            r("daniellehrner", "besu", "feat/evm-v2-all-opcodes")
+        );
+        assert_eq!(
+            parse("friend/besu-fork:fix"),
+            r("friend", "besu-fork", "fix")
+        );
+        assert_eq!(
+            parse("https://github.com/friend/besu/tree/feat/x/"),
+            r("friend", "besu", "feat/x")
+        );
+        assert_eq!(
+            parse(" release-25.1 "),
+            r("hyperledger", "besu", "release-25.1")
+        );
+        for bad in [
+            "",
+            "friend:",
+            ":x",
+            "a b",
+            "friend:-x",
+            "friend:a..b",
+            "https://github.com/friend/besu/pull/3",
+            "friend:x:y",
+        ] {
+            assert!(parse(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

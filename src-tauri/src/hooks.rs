@@ -530,7 +530,7 @@ mod tests {
         #[test]
         fn hooks_of_a_tasks_agent_set_its_status_and_link_what_it_opened() {
             let app = TestApp::new();
-            let task = create_task(&app.state, Some(app.repo.clone()), "Hooks", "").unwrap();
+            let task = create_task(&app.state, Some(app.repo.clone()), "Hooks", "", "").unwrap();
             app.start_agent(task);
             let key = task.to_string();
             let session = app.state.store.item(task).unwrap().session_id.unwrap();

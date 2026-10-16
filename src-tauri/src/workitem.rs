@@ -287,7 +287,15 @@ pub fn prepare(state: &AppState, id: i64) -> Result<Prepared, String> {
             note: None,
         });
     }
-    let prepared = if item.is_task() {
+    let prepared = if let Some(head) = task_head(&item) {
+        worktree::prepare_task_on(
+            &repo,
+            -item.number,
+            item.title(),
+            &head,
+            &default_branch(&repo)?,
+        )?
+    } else if item.is_task() {
         worktree::prepare_task(&repo, -item.number, item.title(), &default_branch(&repo)?)?
     } else if item.kind == "issue" {
         let issue = issue_summary(&item)?;
@@ -406,6 +414,13 @@ fn write_issue_context(data_dir: &Path, repo: &Repo, item: &WorkItem) -> Result<
     Ok(file)
 }
 
+/// The existing branch a task works on, if it was started on one.
+pub fn task_head(item: &WorkItem) -> Option<worktree::BranchRef> {
+    item.is_task()
+        .then(|| serde_json::from_value(item.snapshot["head"].clone()).ok())
+        .flatten()
+}
+
 fn write_task_context(data_dir: &Path, repo: &Repo, item: &WorkItem) -> Result<PathBuf, String> {
     let md = crate::context::render_task(
         &item.short_name(),
@@ -413,6 +428,7 @@ fn write_task_context(data_dir: &Path, repo: &Repo, item: &WorkItem) -> Result<P
         item.snapshot["notes"].as_str().unwrap_or_default(),
         item.branch.as_deref().unwrap_or_default(),
         &default_branch(repo)?,
+        task_head(item).as_ref(),
     );
     let dir = data_dir.join("context");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -421,22 +437,42 @@ fn write_task_context(data_dir: &Path, repo: &Repo, item: &WorkItem) -> Result<P
     Ok(file)
 }
 
-/// Starts a task (work with no PR or issue yet): the item and its worktree on a new branch.
+/// Starts a task (work with no PR or issue yet): the item and its worktree, on a new branch
+/// or on the existing `branch` (see `worktree::parse_branch_ref`; e.g. a fork's), whose
+/// name is the title if none is given.
 pub fn create_task(
     state: &AppState,
     repo: Option<Repo>,
     title: &str,
     notes: &str,
+    branch: &str,
 ) -> Result<i64, String> {
     let repo = repo.ok_or("no repository connected")?;
-    let title = title.trim();
+    let head = (!branch.trim().is_empty())
+        .then(|| worktree::parse_branch_ref(branch, &repo.owner, &repo.name))
+        .transpose()?;
+    let title = match (title.trim(), &head) {
+        ("", Some(head)) => head.branch.as_str(),
+        (title, _) => title,
+    };
     if title.is_empty() {
         return Err("a task needs a title".into());
     }
-    let id = state.store.create_task(repo.id, title, notes.trim())?;
+    let snapshot = head
+        .as_ref()
+        .map(|h| serde_json::to_value(h).unwrap_or_default());
+    let id = state
+        .store
+        .create_task(repo.id, title, notes.trim(), snapshot.as_ref())?;
     if let Err(e) = prepare(state, id) {
         state.store.delete_item(id)?;
         return Err(e);
+    }
+    // The branch may have a PR already.
+    if head.is_some()
+        && let Err(e) = crate::lifecycle::link_branch_pr(state, &repo, &state.store.item(id)?)
+    {
+        tracing::warn!("task {id}: its branch's PR: {e}");
     }
     Ok(id)
 }
@@ -1042,7 +1078,14 @@ mod tests {
     #[test]
     fn a_task_lists_what_its_agent_opened_and_lends_it_its_agent() {
         let app = TestApp::new();
-        let task = create_task(&app.state, Some(app.repo.clone()), "Investigate", "peers").unwrap();
+        let task = create_task(
+            &app.state,
+            Some(app.repo.clone()),
+            "Investigate",
+            "peers",
+            "",
+        )
+        .unwrap();
         let t = app.state.store.item(task).unwrap();
         assert_eq!(
             (t.number, t.branch.as_deref()),
@@ -1094,11 +1137,11 @@ mod tests {
     fn a_task_whose_worktree_cannot_be_made_is_not_left_behind() {
         let app = TestApp::new();
         std::fs::create_dir_all(app.path("proj_task1")).unwrap();
-        let err = create_task(&app.state, Some(app.repo.clone()), "Blocked", "").unwrap_err();
+        let err = create_task(&app.state, Some(app.repo.clone()), "Blocked", "", "").unwrap_err();
         assert!(err.contains("already exists"), "{err}");
         assert!(app.items().iter().all(|i| !i.is_task()));
         assert!(
-            create_task(&app.state, Some(app.repo.clone()), "  ", "").is_err(),
+            create_task(&app.state, Some(app.repo.clone()), "  ", "", "").is_err(),
             "no title"
         );
     }
@@ -1106,7 +1149,7 @@ mod tests {
     #[test]
     fn a_task_reviews_its_worktree_against_the_default_branch() {
         let app = TestApp::new();
-        let task = create_task(&app.state, Some(app.repo.clone()), "Try", "").unwrap();
+        let task = create_task(&app.state, Some(app.repo.clone()), "Try", "", "").unwrap();
         let wt = app.path("proj_task1");
         write(&wt.join("a.txt"), "one\ntwo\nthree\nfour\n");
         commit(&wt, "four", "me");
@@ -1126,7 +1169,7 @@ mod tests {
     #[test]
     fn reconcile_forgets_worktrees_removed_outside_ariekei() {
         let app = TestApp::new();
-        let task = create_task(&app.state, Some(app.repo.clone()), "Gone", "").unwrap();
+        let task = create_task(&app.state, Some(app.repo.clone()), "Gone", "", "").unwrap();
         git(
             &app.clone,
             &[
@@ -1145,6 +1188,129 @@ mod tests {
                 .unwrap()
                 .path
                 .ends_with("proj_task1")
+        );
+    }
+
+    /// The task's worktree, its branch's upstream and the URL of that upstream's remote.
+    fn checkout(app: &TestApp, id: i64) -> (PathBuf, String, String, String) {
+        let item = app.state.store.item(id).unwrap();
+        let path = item.worktree_path.clone().unwrap();
+        let branch = item.branch.clone().unwrap();
+        let upstream = crate::git::upstream(&app.clone, &branch).unwrap_or_default();
+        let remote = upstream.split('/').next().unwrap_or_default().to_owned();
+        let url = crate::git::git_str(
+            &app.clone,
+            &["config", "--get", &format!("remote.{remote}.url")],
+        )
+        .unwrap_or_default();
+        (path, branch, upstream, url)
+    }
+
+    #[test]
+    fn a_task_on_a_fork_branch_adds_its_remote_and_pushes_back() {
+        let app = TestApp::new();
+        let fork = app.fork("friend", "feat/evm");
+        let id = create_task(
+            &app.state,
+            Some(app.repo.clone()),
+            "",
+            "",
+            "friend:feat/evm",
+        )
+        .unwrap();
+        let item = app.state.store.item(id).unwrap();
+        assert_eq!(item.title(), "feat/evm", "named after the branch");
+        assert_eq!(task_head(&item).unwrap().owner, "friend");
+        let (path, branch, upstream, url) = checkout(&app, id);
+        assert_eq!(
+            (branch.as_str(), upstream.as_str(), url.as_str()),
+            (
+                "feat/evm",
+                "friend/feat/evm",
+                "git@github.com:friend/proj.git"
+            )
+        );
+        assert_eq!(
+            std::fs::read_to_string(path.join("c.txt")).unwrap(),
+            "friend's work\n"
+        );
+        // A plain push updates the fork's branch.
+        write(&path.join("c.txt"), "more\n");
+        commit(&path, "more", "me");
+        git(&path, &["push", "-q"]);
+        assert_eq!(
+            git(&fork, &["log", "-1", "--format=%s", "feat/evm"]),
+            "more"
+        );
+        // Started again (e.g. after a restart): the same worktree.
+        app.state.store.set_worktree(id, None, None, false).unwrap();
+        let again = prepare(&app.state, id).unwrap();
+        assert!(again.adopted);
+    }
+
+    #[test]
+    fn a_task_on_a_fork_branch_uses_the_remote_the_clone_has_for_it() {
+        let app = TestApp::new();
+        app.fork("friend", "feature-x");
+        git(
+            &app.clone,
+            &["remote", "add", "mine", "git@github.com:friend/proj.git"],
+        );
+        let id = create_task(
+            &app.state,
+            Some(app.repo.clone()),
+            "Finish it",
+            "",
+            "https://github.com/friend/proj/tree/feature-x",
+        )
+        .unwrap();
+        assert_eq!(checkout(&app, id).2, "mine/feature-x");
+        assert!(
+            !git(&app.clone, &["remote"]).lines().any(|r| r == "friend"),
+            "no second remote"
+        );
+    }
+
+    #[test]
+    fn a_missing_fork_branch_leaves_no_task_and_no_remote() {
+        let app = TestApp::new();
+        app.fork("friend", "feature-x");
+        let err =
+            create_task(&app.state, Some(app.repo.clone()), "", "", "friend:nope").unwrap_err();
+        assert!(
+            err.contains("could not fetch nope from friend/proj"),
+            "{err}"
+        );
+        assert!(!git(&app.clone, &["remote"]).lines().any(|r| r == "friend"));
+        assert!(app.items().iter().all(|i| !i.is_task()));
+        let err = create_task(&app.state, Some(app.repo.clone()), "", "", "a b").unwrap_err();
+        assert!(err.contains("is not a branch"), "{err}");
+    }
+
+    #[test]
+    fn a_local_branch_of_that_name_tracking_something_else_is_left_alone() {
+        let app = TestApp::new();
+        app.fork("friend", "feature-x");
+        git(
+            &app.clone,
+            &["branch", "--track", "feature-x", "origin/main"],
+        );
+        let id = create_task(
+            &app.state,
+            Some(app.repo.clone()),
+            "",
+            "",
+            "friend:feature-x",
+        )
+        .unwrap();
+        let (_, branch, upstream, _) = checkout(&app, id);
+        assert_eq!(
+            (branch.as_str(), upstream.as_str()),
+            ("task-1-feature-x", "friend/feature-x")
+        );
+        assert_eq!(
+            crate::git::upstream(&app.clone, "feature-x").as_deref(),
+            Some("origin/main")
         );
     }
 }

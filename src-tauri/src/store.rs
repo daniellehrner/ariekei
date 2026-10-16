@@ -508,8 +508,15 @@ impl Store {
         .map_err(err)
     }
 
-    /// A new task (see the migration for how tasks are stored); returns its id.
-    pub fn create_task(&self, repo_id: i64, title: &str, notes: &str) -> Result<i64, String> {
+    /// A new task (see the migration for how tasks are stored); returns its id. `head` is
+    /// the existing branch it works on, if any (`worktree::BranchRef`).
+    pub fn create_task(
+        &self,
+        repo_id: i64,
+        title: &str,
+        notes: &str,
+        head: Option<&serde_json::Value>,
+    ) -> Result<i64, String> {
         let conn = self.conn.lock().unwrap();
         let number: i64 = conn
             .query_row(
@@ -520,10 +527,11 @@ impl Store {
             .map_err(err)?;
         conn.execute(
             "INSERT INTO work_items (repo_id, number, snapshot, open, role, kind, last_seen)
-             VALUES (?1, ?2, json_object('title', ?3, 'notes', ?4,
+             VALUES (?1, ?2, json_patch(json_object('title', ?3, 'notes', ?4,
                                          'createdAt', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                                        json_object('head', json(?5))),
                      1, 'author', 'task', '')",
-            params![repo_id, number, title, notes],
+            params![repo_id, number, title, notes, head.map(|h| h.to_string())],
         )
         .map_err(err)?;
         Ok(conn.last_insert_rowid())
@@ -742,9 +750,9 @@ mod tests {
     fn tasks_get_negative_numbers_stay_open_and_lose_their_links_when_deleted() {
         let (store, repo) = store_with_repo();
         let t1 = store
-            .create_task(repo.id, "Flaky sync", "look at peers")
+            .create_task(repo.id, "Flaky sync", "look at peers", None)
             .unwrap();
-        let t2 = store.create_task(repo.id, "Slow start", "").unwrap();
+        let t2 = store.create_task(repo.id, "Slow start", "", None).unwrap();
         let task = store.item(t1).unwrap();
         assert_eq!((task.kind.as_str(), task.number), ("task", -1));
         assert_eq!(task.snapshot["title"], "Flaky sync");
@@ -768,7 +776,7 @@ mod tests {
         // The next task does not reuse a live number.
         assert_eq!(
             store
-                .item(store.create_task(repo.id, "x", "").unwrap())
+                .item(store.create_task(repo.id, "x", "", None).unwrap())
                 .unwrap()
                 .number,
             -3
@@ -812,7 +820,7 @@ mod tests {
             (7, "old", None, Some(Path::new("/w")))
         );
         assert!(!item.starred);
-        let task = store.create_task(1, "new", "").unwrap();
+        let task = store.create_task(1, "new", "", None).unwrap();
         store.link_to_task(item.id, task).unwrap();
         assert_eq!(store.item(item.id).unwrap().task_id, Some(task));
     }

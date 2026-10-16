@@ -113,6 +113,8 @@
   // --- New task: work with no PR or issue yet ---
   let taskTitle = $state("");
   let taskNotes = $state("");
+  // An existing branch to work on (e.g. owner:branch on a fork); empty for a new one.
+  let taskBranch = $state("");
   let starting = $state(false);
   let taskError: string | null = $state(null);
 
@@ -123,13 +125,13 @@
 
   async function startTask(e: SubmitEvent) {
     e.preventDefault();
-    if (!taskTitle.trim() || starting) return;
+    if (!(taskTitle.trim() || taskBranch.trim()) || starting) return;
     starting = true;
     taskError = null;
     try {
-      const id = await api.createTask(taskTitle, taskNotes);
+      const id = await api.createTask(taskTitle, taskNotes, taskBranch);
       creating = false;
-      taskTitle = taskNotes = "";
+      taskTitle = taskNotes = taskBranch = "";
       if (folded.includes("tasks")) fold("tasks");
       onadded();
       onselect(id);
@@ -225,12 +227,14 @@
     <form class="new-task" onsubmit={startTask} data-task-form>
       <!-- svelte-ignore a11y_autofocus -->
       <input bind:value={taskTitle} placeholder="Task title, e.g. Peers drop after restart" aria-label="Task title" autofocus disabled={starting} onkeydown={onTaskKey} />
+      <input bind:value={taskBranch} placeholder="Existing branch, e.g. owner:branch (optional)" aria-label="Existing branch"
+        title="Work on this branch instead of a new one, e.g. on a fork: owner:branch, owner/repo:branch, a GitHub branch URL or a branch name. A plain git push updates it." disabled={starting} onkeydown={onTaskKey} data-task-branch />
       <textarea bind:value={taskNotes} rows="3" placeholder="What to look into (optional; the agent gets it as context)" aria-label="What to look into" disabled={starting} onkeydown={onTaskKey}></textarea>
       {#if taskError}<p class="task-error" role="alert">{taskError}</p>{/if}
       <div class="form-actions">
-        {#if starting}<span class="muted">Creating the worktree…</span>{/if}
+        {#if starting}<span class="muted">{taskBranch.trim() ? "Fetching the branch…" : "Creating the worktree…"}</span>{/if}
         <Button size="sm" variant="quiet" type="button" onclick={() => (creating = false)} disabled={starting}>Cancel</Button>
-        <Button size="sm" variant="primary" icon="play" type="submit" disabled={!taskTitle.trim() || starting}>Start task</Button>
+        <Button size="sm" variant="primary" icon="play" type="submit" disabled={!(taskTitle.trim() || taskBranch.trim()) || starting}>Start task</Button>
       </div>
     </form>
   {/if}

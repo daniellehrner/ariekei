@@ -379,17 +379,19 @@ fn set_starred(state: State<'_, AppState>, id: i64, starred: bool) -> Res<()> {
     workitem::set_starred(&state, id, starred)
 }
 
-/// Starts a task (no PR or issue yet) with its worktree; returns its work item id.
+/// Starts a task (no PR or issue yet) with its worktree, on a new branch or the existing
+/// `branch` (e.g. `owner:branch` on a fork); returns its work item id.
 #[tauri::command]
 async fn create_task(
     app: tauri::AppHandle,
     window: tauri::Window,
     title: String,
     notes: String,
+    branch: String,
 ) -> Res<i64> {
     let label = window.label().to_owned();
     blocking(app, move |s| {
-        workitem::create_task(s, windows::repo_of(s, &label)?, &title, &notes)
+        workitem::create_task(s, windows::repo_of(s, &label)?, &title, &notes, &branch)
     })
     .await
 }

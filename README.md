@@ -28,8 +28,10 @@ code navigation or debugging, use your IDE on the same worktree. Tauri 2 (Rust) 
   window at a time; every open repo is kept current, and the windows come back after a
   restart.
 - **Tasks:** start work with no PR or issue yet (Ctrl+N or + in the Inbox, e.g. to investigate a bug). The
-  task gets a branch, worktree and agent; the PRs and issues its agent opens (`gh pr create`,
-  `gh issue create`) are linked and listed under it. Done or Discard ends it.
+  task gets a new branch, or an existing one such as `owner:branch` on a fork (the fork's remote
+  is added if the clone has none, and `git push` goes back there), plus a worktree and agent; the
+  PRs and issues its agent opens (`gh pr create`, `gh issue create`) and a PR opened for its
+  branch are linked and listed under it. Done or Discard ends it.
 - **Lifecycle:** an issue gets a branch and worktree; once a PR is opened for the branch (by you or the agent), the item follows it. Merged
   or closed items are cleaned up automatically, never losing uncommitted or unpushed work.
 
@@ -94,7 +96,7 @@ windows never show up on your desktop or take focus, and its notifications stay 
 - `windows`: two repos, switching, a window per repo, restoring windows after a restart.
 - `lifecycle`: issue → worktree → push → its PR → merge → cleanup.
 - `task`: new task → the agent opens a PR and an issue → linked under the task → asking the
-  agent about code from the review → discard.
+  agent about code from the review → discard → a task on a fork's branch, its PR linked.
 - `agent`: the agent in the terminal (turns that commit, a permission prompt), the review loop,
   idle shutdown (not while a background job runs) and resume after a restart.
 

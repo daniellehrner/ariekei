@@ -278,6 +278,34 @@ impl TestApp {
         git(up, &["checkout", "-q", "main"]);
     }
 
+    /// A fork `<owner>/proj` of the "GitHub" repo with a commit of `owner` on `branch`
+    /// (changing c.txt), reached from the clone like GitHub's (through insteadOf).
+    pub fn fork(&self, owner: &str, branch: &str) -> PathBuf {
+        let fork = self.root.path().join(format!("github-{owner}-proj"));
+        git(
+            self.root.path(),
+            &[
+                "clone",
+                "-q",
+                &self.upstream.to_string_lossy(),
+                &fork.to_string_lossy(),
+            ],
+        );
+        git(&fork, &["checkout", "-q", "-b", branch]);
+        write(&fork.join("c.txt"), &format!("{owner}'s work\n"));
+        commit(&fork, &format!("{owner} on {branch}"), owner);
+        git(&fork, &["checkout", "-q", "--detach"]);
+        git(
+            &self.clone,
+            &[
+                "config",
+                &format!("url.{}.insteadOf", fork.to_string_lossy()),
+                &format!("git@github.com:{owner}/proj.git"),
+            ],
+        );
+        fork
+    }
+
     /// A PR of `me` from branch `branch` (with one commit of `me` changing b.txt), polled into
     /// the Inbox, opened and given a worktree; returns its item id and the worktree.
     pub fn pr_with_worktree(&self, number: i64, branch: &str) -> (i64, PathBuf) {
@@ -372,8 +400,8 @@ mod tests {
         assert_eq!((row.title.as_str(), row.role.as_str()), ("Seven", "author"));
         assert!(app.take_calls().iter().any(|c| c["search"] == true));
 
-        let id =
-            crate::workitem::create_task(&app.state, Some(app.repo.clone()), "Look", "").unwrap();
+        let id = crate::workitem::create_task(&app.state, Some(app.repo.clone()), "Look", "", "")
+            .unwrap();
         app.start_agent(id);
         let key = id.to_string();
         assert_eq!(app.state.terminals.status(&key), Some(AgentStatus::Ready));

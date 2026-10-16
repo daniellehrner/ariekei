@@ -27,10 +27,22 @@ PRs and issues, or be thrown away.
   creates the branch `task-<n>-<words of the title>` from the default branch in
   `../<clone>_task<n>`, set up for `git push` like an issue's, and starts the agent there with
   the title and notes as context. Tasks are numbered per repo: T1, T2, …
+- **On an existing branch:** give New task a branch instead of (or as well as) a title, e.g. a
+  branch on a fork that has no PR yet: `owner:branch` (the fork has the repo's name),
+  `owner/repo:branch`, a GitHub branch URL (`https://github.com/owner/repo/tree/<branch>`), or
+  a plain branch name of the repo itself. Ariekei uses the clone's remote for that repository,
+  or adds one named after the owner as `gh pr checkout` does, fetches the branch and checks it
+  out in `../<clone>_task<n>` tracking it, so a plain `git push` updates it. Without a title the
+  task is named after the branch. If a local branch of that name tracks something else, the
+  worktree gets `task-<n>-…` instead and leaves it alone. A branch that can't be fetched leaves
+  no task and no remote behind. The review compares the branch with the default branch.
 - **The agent opens the PRs and issues**, when you ask it to: `gh pr create` / `gh issue create`
   (or a GitHub tool whose name contains `create_pull_request` / `create_issue`). Ariekei reads
   the URL they print from the hook event (`PostToolUse`) and links the PR or issue to the task.
   Linked items are tracked (polled by number: an issue you opened is not assigned to you).
+  A PR opened for the task's pushed branch some other way (in the browser, or by the fork's
+  owner) is linked on the next poll, found by the branch and the owner of the repository it
+  is pushed to.
 - **The task stays the parent:** it keeps the worktree, branch and agent. Its PRs and issues are
   listed under it in the Inbox (also when closed or merged), not in Mine or Issues, and in the
   task's Overview. A linked PR has no worktree of its own: Review reads its head as for any PR,
@@ -75,14 +87,18 @@ PRs and issues, or be thrown away.
   `git push` → no PR opened → a PR opened for the branch, item becomes #100 → merged → worktree and branch removed, agent gone, item hidden; an adopted
   worktree kept when its PR is merged.
 - Unit tests for tasks: numbering, polls leaving tasks open, links surviving their task
-  (`ON DELETE SET NULL`), the task worktree and context, which tool calls create a PR or issue
+  (`ON DELETE SET NULL`), the task worktree and context, a task on a fork's branch (its remote
+  added or reused, the push going back, a missing branch leaving nothing behind, a local branch
+  of that name kept), the ways to name a branch, the PR for a task's branch linked once,
+  which tool calls create a PR or issue
   (`gh pr create` output, `gh issue create`, an MCP tool, another repo's URL, `gh pr view`),
   and the "all closed" attention.
 - E2E: `e2e/task_scenario.py`: New task → worktree, notes in the context, agent started →
   the agent opens PR #100 and issue #101, both nested under the task and not in Mine → the PR
   points to its task and has no Start working → a closed issue stays under the task →
   Discard lists the uncommitted file, then the worktree, branch and task are gone and #100 is
-  back in Mine.
+  back in Mine → a task on `friend:feature-x` (a fork): the branch checked out tracking the
+  fork's remote, the context naming it, and its PR, opened on GitHub, linked under the task.
 - Live, read-only on besu: assigned issues, issue conversation, default branch.
 
 ## Not covered yet

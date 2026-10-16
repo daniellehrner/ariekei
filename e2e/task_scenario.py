@@ -10,7 +10,9 @@ sending its review threads to the task's agent, asking the agent about code from
 and ? in the terminal staying with the agent, Discard refused while the agent waits for
 permission, a closed issue staying under its task, Discard (shows the work it loses, then
 removes the worktree, branch and task; the PR goes back to My PRs), and a second task (the +
-button) whose merged PR stays under it ("All closed") until Done removes it.
+button) whose merged PR stays under it ("All closed") until Done removes it, and a task on a
+fork's branch (named after it, the fork's remote added, the branch tracking it, its context naming
+it) whose PR, opened on GitHub, is linked to it on a poll.
 
 Run it with `python3 e2e/run.py <test-app> task` (see run.py), which sets the environment.
 """
@@ -52,6 +54,15 @@ git(upstream, "config", "receive.denyCurrentBranch", "ignore")
 subprocess.run(["git", "clone", "-q", "-c", "core.autocrlf=false", upstream, clone], check=True)
 git(clone, "config", f"url.{upstream}.insteadOf", GITHUB)
 git(clone, "remote", "set-url", "origin", GITHUB)
+
+# A fork, friend/proj, with a branch of its own.
+fork = os.path.join(work, "github-friend-proj")
+subprocess.run(["git", "clone", "-q", "-c", "core.autocrlf=false", upstream, fork], check=True)
+git(fork, "checkout", "-q", "-b", "feature-x")
+open(os.path.join(fork, "x.txt"), "w").write("friend's work\n")
+commit(fork, "Feature X")
+git(fork, "checkout", "-q", "--detach")
+git(clone, "config", f"url.{fork}.insteadOf", "git@github.com:friend/proj.git")
 
 data_file = os.path.join(gh_dir, "data.json")
 json.dump({"viewer": "me", "upstream": upstream, "prs": [], "issues": []}, open(data_file, "w"))
@@ -331,5 +342,30 @@ try:
     print("[done] worktree removed:", not os.path.exists(wt2), "| branch deleted:", not branch_left, "| inbox:", sections(s), listed(s))
     check("Done removes the task's worktree and branch", not os.path.exists(wt2) and not branch_left)
     equal("what is left", sections(s), ["My PRs 1", "Open 0"])
+
+    # --- a task on a fork's branch: no title (named after the branch) ---
+    s.click(s.wait("[data-new-task]"))
+    s.type(s.wait("[data-task-branch]"), "friend:feature-x")
+    s.click(s.wait("[data-task-form] button[type=submit]"))
+    s.wait(".item header .title", timeout=120, text="feature-x")
+    wt3 = os.path.join(work, "proj_task1")
+    eventually("the fork task's worktree", lambda: os.path.isdir(wt3), lambda v: v, timeout=60)
+    checkout = (git(wt3, "rev-parse", "--abbrev-ref", "HEAD"), git(wt3, "rev-parse", "--abbrev-ref", "@{u}"),
+                git(clone, "config", "--get", "remote.friend.url"))
+    print("[fork] branch, upstream, remote:", checkout, "| inbox:", sections(s))
+    equal("the fork's branch is checked out, tracking the fork's remote", checkout,
+          ("feature-x", "friend/feature-x", "git@github.com:friend/proj.git"))
+    equal("with the fork's work", open(os.path.join(wt3, "x.txt")).read(), "friend's work\n")
+    eventually("its agent is ready", lambda: agent(s, -1), lambda a: a in ("ready", "finished"), timeout=60)
+    contexts = os.path.join(data_dir, "context")
+    told = "".join(open(os.path.join(contexts, f), encoding="utf-8").read() for f in os.listdir(contexts))
+    contains("the agent's context names the branch", told, "the existing branch `feature-x` of `friend/proj`")
+    # Its PR, opened on GitHub (not by the agent), is linked to the task on a poll.
+    data = json.load(open(data_file))
+    data["prs"].append({"number": 103, "title": "Feature X", "author": "friend", "head_ref": "feature-x",
+                        "head_owner": "friend", "base_ref": "main", "head_sha": git(fork, "rev-parse", "feature-x")})
+    json.dump(data, open(data_file, "w"))
+    eventually("the fork's PR is listed under the task", lambda: listed(s), lambda rows: [103, True] in rows, timeout=30)
+    print("[fork] inbox:", sections(s), listed(s))
 finally:
     s.quit()

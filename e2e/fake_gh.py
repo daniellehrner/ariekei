@@ -6,7 +6,8 @@ GraphQL mutations) to $FAKE_GH_DIR/writes.jsonl, so a test can check what would 
 sent to GitHub. Supports only the calls Ariekei makes.
 
 data.json: {"viewer": "me", "upstream": <path of the "GitHub" git repo, optional>,
-            "prs": [{number, title, author, head_ref, head_sha, base_ref, state, requested (bool),
+            "prs": [{number, title, author, head_ref, head_owner (a fork; default owner), head_sha,
+                     base_ref, state, requested (bool),
                      assigned (bool), reviewed (bool, by the viewer), draft (bool), decision, ci,
                      failing, body_html, comments: [...], threads: [...]}],
             "issues": [{number, title, author, body, assigned (bool), state}]}
@@ -92,13 +93,18 @@ def updated_at(pr):
     return f"2026-10-13T{10 + minutes // 60:02d}:{minutes % 60:02d}:00Z"
 
 
+def head_repository(owner):
+    """The PR's head repository: the base repo, or a fork of it ("head_owner")."""
+    return {"name": "proj", "owner": {"login": owner}, "sshUrl": f"git@github.com:{owner}/proj.git", "url": f"https://github.com/{owner}/proj"}
+
+
 def summary(pr):
     return {
         "number": pr["number"], "title": pr["title"], "url": f"https://github.com/owner/proj/pull/{pr['number']}",
         "state": pr.get("state", "OPEN"), "isDraft": pr.get("draft", False), "updatedAt": updated_at(pr),
         "author": {"login": pr["author"]}, "headRefName": pr["head_ref"], "headRefOid": head_sha(pr),
         "baseRefName": pr["base_ref"], "reviewDecision": pr.get("decision", "REVIEW_REQUIRED"),
-        "headRepository": {"name": "proj", "owner": {"login": "owner"}, "sshUrl": "git@github.com:owner/proj.git", "url": "https://github.com/owner/proj"},
+        "headRepository": head_repository(pr.get("head_owner", "owner")),
         "reviews": nodes([]), "comments": nodes([]),
         "reviewThreads": nodes([{"isResolved": t.get("resolved", False), "comments": nodes([])} for t in pr.get("threads", [])]),
         "commits": checks(pr),
@@ -189,11 +195,12 @@ def lookups(prefix, kind, numbers, known, render):
 def log_call(argv):
     """Appends what this call asked for to $FAKE_GH_DIR/calls.jsonl (tests count what a poll
     fetched): for a GraphQL query, whether it searches, whether it asks for a PR's details
-    (review threads), and the numbers it looks up."""
+    (review threads), whether it searches for a branch's PR (head:), and the numbers it looks up."""
     entry = {"argv": argv[:2]}
     query = next((a[len("query="):] for a in argv if a.startswith("query=")), None)
     if query is not None:
         entry = {"graphql": True, "search": "search(" in query, "details": "reviewThreads" in query,
+                 "head": any(a.startswith("q=") and "head:" in a for a in argv),
                  "numbers": sorted({int(n) for n in re.findall(r"[pi](\d+): (?:pullRequest|issue)\(number:", query)})}
     with open(os.path.join(DIR, "calls.jsonl"), "a") as f:
         f.write(json.dumps(entry) + "\n")

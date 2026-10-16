@@ -234,10 +234,22 @@ fn remove_transcript(path: &Path) -> bool {
     removed
 }
 
-/// Run after every poll: follow the PRs opened for pushed issue branches, and clean up
-/// items that are finished.
+/// Run after every poll: follow the PRs opened for pushed issue branches, link those opened
+/// for tasks' branches, and clean up items that are finished.
 pub fn after_poll(state: &AppState, repo: &Repo) -> Result<(), String> {
     for item in state.store.items(repo.id)? {
+        if item.is_task() && item.worktree_path.is_some() {
+            match link_branch_pr(state, repo, &item) {
+                Ok(Some(number)) => crate::notify::lifecycle(
+                    state,
+                    &item.id.to_string(),
+                    &item.label(),
+                    &format!("PR #{number} for its branch is linked to the task."),
+                ),
+                Ok(None) => {}
+                Err(e) => tracing::warn!("task {}: its branch's PR: {e}", item.short_name()),
+            }
+        }
         if item.kind == "issue" && item.open && item.worktree_path.is_some() {
             match follow_pr(state, repo, &item) {
                 Ok(true) => crate::notify::lifecycle(
@@ -316,18 +328,16 @@ fn follow_pr(state: &AppState, repo: &Repo, item: &WorkItem) -> Result<bool, Str
     let Some(branch) = item.branch.as_deref() else {
         return Ok(false);
     };
-    let remote = git::git_str(&repo.path, &["config", &format!("branch.{branch}.remote")])?;
-    if !git::commit_exists(&repo.path, &format!("refs/remotes/{remote}/{branch}")) {
+    let Some((head_owner, head_ref)) = pushed_head(repo, branch)? else {
         return Ok(false); // not pushed yet
-    }
-    let url = git::git_str(
-        &repo.path,
-        &["config", "--get", &format!("remote.{remote}.url")],
-    )?;
-    let (head_owner, _) =
-        git::github_slug(&url).ok_or_else(|| format!("remote {remote} is not on GitHub"))?;
-    let Some(found) =
-        github::pull_for_head(&repo.owner, &repo.name, &repo.viewer, &head_owner, branch)?
+    };
+    let Some(found) = github::pull_for_head(
+        &repo.owner,
+        &repo.name,
+        &repo.viewer,
+        &head_owner,
+        &head_ref,
+    )?
     else {
         return Ok(false); // no PR yet
     };
@@ -354,6 +364,75 @@ fn follow_pr(state: &AppState, repo: &Repo, item: &WorkItem) -> Result<bool, Str
         &serde_json::to_value(&pr).unwrap_or_default(),
     )?;
     Ok(true)
+}
+
+/// Where the local `branch` is pushed, if it is: the owner of its remote's GitHub repo and
+/// the branch's name there (its upstream, which the remote has).
+fn pushed_head(repo: &Repo, branch: &str) -> Result<Option<(String, String)>, String> {
+    let config = |key: String| git::git_str(&repo.path, &["config", "--get", &key]);
+    let (Ok(remote), Ok(merge)) = (
+        config(format!("branch.{branch}.remote")),
+        config(format!("branch.{branch}.merge")),
+    ) else {
+        return Ok(None);
+    };
+    let head_ref = merge
+        .strip_prefix("refs/heads/")
+        .unwrap_or(&merge)
+        .to_owned();
+    if !git::commit_exists(&repo.path, &format!("refs/remotes/{remote}/{head_ref}")) {
+        return Ok(None);
+    }
+    let url = config(format!("remote.{remote}.url"))?;
+    let (head_owner, _) =
+        git::github_slug(&url).ok_or_else(|| format!("remote {remote} is not on GitHub"))?;
+    Ok(Some((head_owner, head_ref)))
+}
+
+/// Links the open PR for the task's pushed branch to the task, if it is not linked yet:
+/// also one opened outside its agent (in the browser, or by a fork's owner). Returns the
+/// PR it linked. No search while a linked open PR has that head already.
+pub fn link_branch_pr(
+    state: &AppState,
+    repo: &Repo,
+    task: &WorkItem,
+) -> Result<Option<i64>, String> {
+    let Some(branch) = task.branch.as_deref() else {
+        return Ok(None);
+    };
+    let Some((head_owner, head_ref)) = pushed_head(repo, branch)? else {
+        return Ok(None);
+    };
+    let linked: Vec<WorkItem> = state
+        .store
+        .items(repo.id)?
+        .into_iter()
+        .filter(|i| i.task_id == Some(task.id) && i.kind == "pr")
+        .collect();
+    let has_head = |i: &WorkItem| {
+        i.snapshot["headRef"] == head_ref.as_str()
+            && i.snapshot["headOwner"]
+                .as_str()
+                .is_some_and(|o| o.eq_ignore_ascii_case(&head_owner))
+    };
+    if linked.iter().any(|i| i.open && has_head(i)) {
+        return Ok(None);
+    }
+    let Some(found) = github::pull_for_head(
+        &repo.owner,
+        &repo.name,
+        &repo.viewer,
+        &head_owner,
+        &head_ref,
+    )?
+    else {
+        return Ok(None);
+    };
+    if linked.iter().any(|i| i.number == found.number) {
+        return Ok(None);
+    }
+    crate::workitem::link_created(state, task.id, "pr", found.number)?;
+    Ok(Some(found.number))
 }
 
 #[cfg(test)]
@@ -472,7 +551,8 @@ mod tests {
         #[test]
         fn done_on_a_task_deletes_it_and_leaves_its_prs() {
             let app = TestApp::new();
-            let task = create_task(&app.state, Some(app.repo.clone()), "Done soon", "").unwrap();
+            let task =
+                create_task(&app.state, Some(app.repo.clone()), "Done soon", "", "").unwrap();
             app.add_pr(json!({"number": 20, "title": "Fix", "head_ref": "main"}));
             link_created(&app.state, task, "pr", 20).unwrap();
             let wt = app.path("proj_task1");
@@ -507,7 +587,8 @@ mod tests {
         #[test]
         fn discard_waits_for_the_agent_then_deletes_the_work() {
             let app = TestApp::new();
-            let task = create_task(&app.state, Some(app.repo.clone()), "Throwaway", "").unwrap();
+            let task =
+                create_task(&app.state, Some(app.repo.clone()), "Throwaway", "", "").unwrap();
             let wt = app.path("proj_task1");
             write(&wt.join("a.txt"), "changed\n");
             commit(&wt, "local only", "me");
@@ -582,7 +663,7 @@ mod tests {
         #[test]
         fn a_task_says_when_all_it_opened_is_closed() {
             let app = TestApp::new();
-            let task = create_task(&app.state, Some(app.repo.clone()), "Outcomes", "").unwrap();
+            let task = create_task(&app.state, Some(app.repo.clone()), "Outcomes", "", "").unwrap();
             app.add_pr(json!({"number": 20, "title": "One", "head_ref": "main"}));
             app.add_pr(json!({"number": 21, "title": "Two", "head_ref": "main"}));
             link_created(&app.state, task, "pr", 20).unwrap();
@@ -602,6 +683,47 @@ mod tests {
             app.poll().unwrap();
             assert_eq!(closed(&app), 1);
             assert!(app.path("proj_task1").exists(), "the task itself is kept");
+        }
+
+        #[test]
+        fn the_pr_for_a_task_branch_is_linked_once_found() {
+            let app = TestApp::new();
+            app.fork("friend", "feature-x");
+            let task = crate::workitem::create_task(
+                &app.state,
+                Some(app.repo.clone()),
+                "",
+                "",
+                "friend:feature-x",
+            )
+            .unwrap();
+            app.poll().unwrap();
+            assert!(app.items().iter().all(|i| i.task_id.is_none()));
+            // Someone else's branch of the same name, and then the fork's PR.
+            app.add_pr(json!({"number": 101, "title": "Other", "author": "bob", "head_ref": "feature-x", "head_sha": "1"}));
+            app.add_pr(
+                json!({"number": 102, "title": "EVM", "author": "friend", "head_ref": "feature-x",
+                              "head_owner": "friend", "head_sha": "2"}),
+            );
+            app.poll().unwrap();
+            let linked: Vec<i64> = app
+                .items()
+                .iter()
+                .filter(|i| i.task_id == Some(task))
+                .map(|i| i.number)
+                .collect();
+            assert_eq!(linked, [102]);
+            assert!(
+                app.events
+                    .notices()
+                    .iter()
+                    .any(|(_, title, body)| title == "T1 feature-x"
+                        && body == "PR #102 for its branch is linked to the task.")
+            );
+            // Linked: later polls don't search for it again.
+            app.take_calls();
+            app.poll().unwrap();
+            assert!(!app.take_calls().iter().any(|c| c["head"] == true));
         }
 
         #[test]

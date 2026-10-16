@@ -6,8 +6,9 @@
 //! viewer's, assigned, review requested, reviewed), and fetches the details (reviews,
 //! threads, checks: 1 point per PR) only of PRs that changed, have checks still running, or
 //! are new; every tenth poll, and one the user asked for, fetches them all (check runs
-//! restarted on an unchanged PR show up then). When the budget is used up anyway, polling
-//! waits for GitHub's reset instead of failing every minute.
+//! restarted on an unchanged PR show up then). After the poll, a task whose branch is pushed
+//! but has no linked open PR costs one more search (`lifecycle::link_branch_pr`). When the
+//! budget is used up anyway, polling waits for GitHub's reset instead of failing every minute.
 
 use crate::github::{self, PrSummary};
 use crate::store::{PolledPr, Repo};

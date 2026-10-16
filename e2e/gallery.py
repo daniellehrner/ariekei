@@ -17,7 +17,8 @@ D-Bus; to choose the theme, point D-Bus nowhere and set it in a GTK settings fil
 
 Screens: connect, empty (nothing selected yet), overview, menu, comments, collapsed, waiting, terminal, review,
 selection, drafts, submit, code-menu, ask-agent, shortcuts, review-hidden, notice-arriving,
-notices, inbox (every section, one item starred), browse, change-end (n past the last change).
+notices, inbox (every section, one item starred), browse, new-task (on a fork's branch),
+change-end (n past the last change).
 """
 
 import json
@@ -181,6 +182,12 @@ try:
         s.wait("[data-browse-hit='7995']", timeout=20)
         shot(s, "browse-issues")
         s.js("document.querySelector(\"[data-browse-search]\").dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))")
+    if need("new-task"):
+        s.click(s.wait("[data-new-task]"))
+        s.type(s.wait("[data-task-branch]"), "friend:feat/evm-v2-all-opcodes")
+        s.type(s.wait("[data-task-form] textarea"), "Finish the opcodes the branch is missing.")
+        shot(s, "new-task")
+        s.js("document.querySelector('[data-task-form] button[type=button]').click()")
     if need("menu"):
         click(s, ".inbox [data-repo-menu]")
         s.wait(".menu [data-repo-id]")

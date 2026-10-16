@@ -3,6 +3,7 @@
 //! so this describes the PR as it was when the conversation started.
 
 use crate::github::PrDetail;
+use crate::worktree::BranchRef;
 use std::fmt::Write as _;
 
 const MAX_BODY: usize = 6_000;
@@ -126,18 +127,33 @@ pub fn render_issue(
 
 /// Markdown for the agent of a task (no PR or issue yet). `notes`: what the user wants
 /// looked into.
-pub fn render_task(name: &str, title: &str, notes: &str, branch: &str, base: &str) -> String {
+pub fn render_task(
+    name: &str,
+    title: &str,
+    notes: &str,
+    branch: &str,
+    base: &str,
+    head: Option<&BranchRef>,
+) -> String {
     let mut md = String::new();
     let _ = writeln!(md, "# Work item: task {name}: {title}");
     let _ = writeln!(md);
+    let on = match head {
+        Some(h) => format!(
+            "on `{branch}`, the existing branch `{}` of `{}/{}` (a plain `git push` updates \
+             it; the review compares it with `{base}`)",
+            h.branch, h.owner, h.repo
+        ),
+        None => format!("on the new branch `{branch}` (from `{base}`)"),
+    };
     let _ = writeln!(
         md,
         "You are working on this task in a git worktree opened from the Ariekei review \
-         workbench, on the new branch `{branch}` (from `{base}`). The user reviews your changes \
-         there. The task has no pull request or issue yet: it may end as one or more pull \
-         requests, issues, or nothing. Open pull requests with `gh pr create` and issues with \
-         `gh issue create` (only when the user asks); Ariekei links what they print to this \
-         task. Wait for the user's instructions before changing anything."
+         workbench, {on}. The user reviews your changes there. The task has no pull request \
+         or issue yet: it may end as one or more pull requests, issues, or nothing. Open pull \
+         requests with `gh pr create` and issues with `gh issue create` (only when the user \
+         asks); Ariekei links what they print to this task, and a pull request opened for \
+         the branch by anyone. Wait for the user's instructions before changing anything."
     );
     let notes = notes.trim();
     if !notes.is_empty() {
@@ -225,12 +241,29 @@ mod tests {
             "Peers drop.",
             "task-2-flaky-sync",
             "main",
+            None,
         );
         assert!(md.starts_with("# Work item: task T2: Flaky sync"));
         assert!(md.contains("branch `task-2-flaky-sync` (from `main`)"));
         assert!(md.contains("`gh pr create`"));
         assert!(md.contains("## What to look into\n\nPeers drop."));
-        assert!(!render_task("T2", "x", " ", "b", "main").contains("## What"));
+        assert!(!render_task("T2", "x", " ", "b", "main", None).contains("## What"));
+    }
+
+    #[test]
+    fn a_task_on_an_existing_branch_names_it() {
+        let head = BranchRef {
+            owner: "friend".into(),
+            repo: "besu".into(),
+            branch: "feat/evm".into(),
+        };
+        let md = render_task("T3", "feat/evm", "", "feat/evm", "main", Some(&head));
+        assert!(
+            md.contains(
+                "the existing branch `feat/evm` of `friend/besu` (a plain `git push` updates it"
+            ),
+            "{md}"
+        );
     }
 
     #[test]
