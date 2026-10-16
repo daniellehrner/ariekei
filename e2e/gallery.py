@@ -15,7 +15,7 @@ D-Bus; to choose the theme, point D-Bus nowhere and set it in a GTK settings fil
     env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1600x1000x24" tauri-driver --port 4444 &
   E2E_WEBDRIVER=http://127.0.0.1:4444 python3 -I e2e/gallery.py <app> <work> [light|dark] [1440x900] [screen,...]
 
-Screens: connect, empty (nothing selected yet), overview, menu, comments, collapsed, waiting, terminal, review, guide,
+Screens: connect, empty (nothing selected yet), overview, menu, comments, collapsed, waiting, terminal, review,
 selection, drafts, submit, code-menu, ask-agent, shortcuts, guard, review-hidden, notice-arriving,
 notices, inbox (every section, one item starred), browse.
 """
@@ -204,15 +204,10 @@ try:
         s.wait(".inbox.collapsed", timeout=10)
         shot(s, "collapsed")
         s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }))")
-    if need("review", "guide", "selection", "drafts", "submit", "code-menu", "ask-agent", "shortcuts", "guard", "review-hidden"):
+    if need("review", "selection", "drafts", "submit", "code-menu", "ask-agent", "shortcuts", "guard", "review-hidden"):
         tab(s, "Review")
         s.wait("[data-file]", timeout=60)
         shot(s, "review")
-        if need("guide"):
-            click(s, "[data-prepare-guide]")
-            s.wait("[data-file-guide]", timeout=60)
-            click(s, "[data-file-guide] .expand")
-            shot(s, "guide")
         if need("selection", "drafts", "submit"):
             click(s, "[data-file$='SnapSyncState.java']")
             s.wait_js("return document.querySelectorAll('.cm-mergeViewEditor .cm-content')[1]?.cmView?.rootView?.view?.state.doc.lines > 30 "

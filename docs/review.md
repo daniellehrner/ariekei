@@ -23,15 +23,7 @@ How the review view works, and the research it is based on.
   and asks first if files in the scope were not looked at.
 - **Review order, not alphabetical:** Source (grouped by directory) → Tests → Config & build →
   Generated, lock & vendored (folded; includes `linguist-generated`/`linguist-vendored` from
-  `.gitattributes`). Switch to **Tree** (alphabetical) or **Guide** order.
-- **Agent review guide** (*Prepare review guide*): Claude reads the change headless (read-only
-  tools, no saved session) and returns a short focus, the files grouped by concern in risk
-  order with a one-line intent each, the description's and commit messages' claims checked
-  against the diff (✓ implemented, ◐ partial, ✗ missing), and files no claim explains. It is
-  marked outdated when the head moves. Takes seconds and uses your Claude plan. Above the
-  diff, a line shows what the guide says about the file you are looking at (its group's
-  intent and risk, the claims it backs, or that no claim explains it), so the guide is there
-  with the side panel closed too; the chevron expands it and adds the focus for the whole change.
+  `.gitattributes`). Switch to **Tree** (alphabetical) order.
 - **Noise and layout:** ignore whitespace (`w`, whitespace-only files labelled), unified or
   side-by-side (`u`; unified by default when the diff column is under 720 px), syntax
   highlighting for any language, git-exact hunks, unchanged code collapsed; the Inbox, the
@@ -59,18 +51,12 @@ How the review view works, and the research it is based on.
   was 64% less likely to be found when its file came last
   ([Fregnan et al. 2022](https://arxiv.org/pdf/2208.04259)); ~90% of developers do not think
   alphabetical order is best ([ICSE 2026](https://arxiv.org/abs/2609.04207)). Hence the review
-  order and the guide's risk order.
+  order.
 - **Track what you have seen, per file and per version:** the common pattern of Critique,
   Gerrit, Reviewable and GitHub ("viewed" resets when the file changes). Agents commit often,
   so per-file marks avoid re-reading files that did not change.
 - **Diffs must survive rebases:** Gerrit and Reviewable separate base-only changes; GitHub's
   "changes since last review" breaks after a rebase.
-- **A short focus beats checklists:** checklists help little
-  ([Gonçalves et al.](https://link.springer.com/article/10.1007/s10664-022-10123-8)); being told
-  what to look for made reviewers 8× more likely to find a vulnerability
-  ([Braz et al.](https://dl.acm.org/doi/10.1145/3510003.3511560)).
-- **Check the agent's claims:** in 23k agent PRs, the most common description problem was
-  claiming changes that were not made ([2026](https://arxiv.org/abs/2601.04886)).
 - **Stay within a session's capacity:** defect detection falls above ~400 lines and ~500
   lines/hour, and attention fades after 60–90 minutes
   ([SmartBear/Cisco](https://smartbear.com/learn/code-review/best-practices-for-peer-code-review/)).

@@ -1,7 +1,7 @@
 /**
  * Ariekei icon set — 16 px grid, 1.5 px stroke, round caps and joins, stroke="currentColor".
  * Each value is the SVG path data for <path d="…"> in a 0 0 16 16 viewBox.
- * Status dots, attention pips and the guide's ✓ ◐ ✗ marks are drawn by components, not here.
+ * Status dots and attention pips are drawn by components, not here.
  */
 export const icons = {
   "sidebar-collapse": "M4 2.5h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2zM6 2.5v11M10.5 6.5L9 8l1.5 1.5", // Collapse Inbox (Ctrl/Cmd+B) (replaces «)
@@ -33,7 +33,6 @@ export const icons = {
   "star": "M8 2.25l1.75 3.6 3.95.55-2.87 2.77.7 3.93L8 11.23 4.47 13.1l.7-3.93L2.3 6.4l3.95-.55z", // Star / unstar an item (filled in --you when starred)
   "send-to-agent": "M2 8h6.5M6 5.5L8.5 8 6 10.5M9.5 8a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0", // Send to the agent, Send PR feedback to agent
   "submit-github": "M2 8h5.5M5 5.5L7.5 8 5 10.5M12 5l3 3-3 3-3-3z", // Submit to GitHub…, Review on GitHub…
-  "guide": "M2.5 8a5.5 5.5 0 1 0 11 0a5.5 5.5 0 1 0 -11 0M10.5 5.5L9 9 5.5 10.5 7 7z", // Prepare / Regenerate guide, guide line
   "keyboard": "M3 4h10a1.5 1.5 0 0 1 1.5 1.5v5A1.5 1.5 0 0 1 13 12H3a1.5 1.5 0 0 1-1.5-1.5v-5A1.5 1.5 0 0 1 3 4zM4 7h.01M6.5 7h.01M9 7h.01M11.5 7h.01M5 9.5h6", // Shortcut overlay (?)
   "whitespace": "M7 13V3h5M10 3v10M7 3a2.5 2.5 0 0 0 0 5", // Whitespace toggle (w)
   "unified": "M3.5 3h9A1.5 1.5 0 0 1 14 4.5v7a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7A1.5 1.5 0 0 1 3.5 3zM5 6.5h6M5 9.5h6", // Unified toggle (u)

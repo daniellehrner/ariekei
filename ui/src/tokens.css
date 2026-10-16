@@ -21,7 +21,7 @@
 
   /* Radii */
   --r-xs: 3px;  /* checkboxes, kbd */
-  --r-sm: 4px;  /* risk badges, inline code */
+  --r-sm: 4px;  /* inline code */
   --r-md: 6px;  /* buttons, inputs, rows */
   --r-lg: 8px;  /* banners, menus, cards */
   --r-xl: 12px; /* dialogs, overlay */
@@ -163,10 +163,6 @@
   --att-review: var(--you);         /* square */
   --att-working: var(--agent);      /* hollow circle */
 
-  /* Risk */
-  --risk-high-bg: var(--bad-bg);   --risk-high-fg: var(--bad);
-  --risk-med-bg: var(--warn-bg);   --risk-med-fg: var(--warn);
-  --risk-low-bg: var(--surface-0); --risk-low-fg: var(--text-muted);
 }
 
 @media (prefers-color-scheme: dark) {

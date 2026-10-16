@@ -1,13 +1,7 @@
 #!/usr/bin/env -S python3 -I
 """A stand-in for `claude`, for E2E tests (point ARIEKEI_CLAUDE at this file).
 
-With -p it writes a review guide: reads the guide prompt on stdin and answers in
-`--output-format json` form: the changed files (from the diff) in one high-risk group, the PR
-title as an implemented claim backed by the first file, a claim nothing implements, and the
-last file as unexplained.
-
-Without -p it is a minimal terminal agent that reports through the hooks of `--settings` like
-Claude Code does (UserPromptSubmit, PermissionRequest, PostToolUse, Stop, SessionEnd):
+A minimal terminal agent that reports through the hooks of `--settings` like Claude Code does (UserPromptSubmit, PermissionRequest, PostToolUse, Stop, SessionEnd):
 - a `❯` prompt with "? for shortcuts", and `/code-review` offered while a `/` command is typed;
 - "Append a line with the word W to F, then commit with the message 'M'" asks permission to
   run git (Enter allows), then appends, commits and finishes the turn;
@@ -38,22 +32,6 @@ import tempfile  # noqa: E402
 import urllib.request  # noqa: E402
 
 PROMPT = "\x1b[38;5;173m❯\x1b[0m "
-
-
-def guide():
-    prompt = sys.stdin.read()
-    files = list(dict.fromkeys(re.findall(r"^diff --git a/(\S+) b/", prompt, re.M)))
-    title = re.search(r"^# Title\n(.*)$", prompt, re.M)
-    result = {
-        "focus": "Check the parser change first: it alters how lines are split.",
-        "groups": [{"title": "Parser", "intent": "Splits lines differently.", "risk": "high", "files": files}],
-        "claims": [
-            {"claim": title.group(1) if title else "the change", "status": "implemented", "files": files[:1]},
-            {"claim": "Adds metrics", "status": "missing", "files": []},
-        ],
-        "unexplained": files[-1:] if len(files) > 1 else [],
-    }
-    print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "structured_output": result}))
 
 
 class Keys:
@@ -254,7 +232,4 @@ def logged(f, argv):
         raise
 
 
-if "-p" in sys.argv[1:]:
-    guide()
-else:
-    logged(interactive, sys.argv[1:])
+logged(interactive, sys.argv[1:])

@@ -4,7 +4,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type { AgentStatus } from "./agent.svelte";
 import type { Hunk } from "./gitDiff";
 import type { LineComment } from "./reviewComments";
-import type { Guide, ReviewFile } from "./review";
+import type { ReviewFile } from "./review";
 
 export interface Repo {
   id: number;
@@ -199,8 +199,6 @@ export const api = {
   reviewFile: (id: number, from: string, to: string | null, path: string, ignoreWs: boolean) =>
     invoke<FileDiff>("review_file", { id, from, to, path, ignoreWs }),
   markFileReviewed: (id: number, path: string, reviewed: boolean) => invoke<void>("mark_file_reviewed", { id, path, reviewed }),
-  reviewGuide: (id: number) => invoke<{ guide: Guide; stale: boolean } | null>("review_guide", { id }),
-  prepareGuide: (id: number) => invoke<{ guide: Guide; stale: boolean }>("prepare_guide", { id }),
   searchItems: (kind: "pr" | "issue", text: string) => invoke<SearchHit[]>("search_items", { kind, text }),
   trackItem: (kind: "pr" | "issue", number: number) => invoke<number>("track_item", { kind, number }),
   untrack: (id: number) => invoke<void>("untrack", { id }),

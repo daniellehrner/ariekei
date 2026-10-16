@@ -97,6 +97,10 @@ ALTER TABLE work_items ADD COLUMN task_id INTEGER REFERENCES work_items(id) ON D
 -- The user starred it: it heads the Inbox (and stays tracked).
 ALTER TABLE work_items ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;
 "#,
+    r#"
+-- The agent review guide is gone.
+DROP TABLE review_guides;
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -569,42 +573,6 @@ impl Store {
         rows.collect::<Result<_, _>>().map_err(err)
     }
 
-    pub fn set_guide(
-        &self,
-        id: i64,
-        base: &str,
-        head: &str,
-        guide: &serde_json::Value,
-    ) -> Result<(), String> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO review_guides (item_id, base, head, guide) VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT (item_id) DO UPDATE SET base = ?2, head = ?3, guide = ?4, created_at = CURRENT_TIMESTAMP",
-            params![id, base, head, guide.to_string()],
-        )
-        .map(|_| ())
-        .map_err(err)
-    }
-
-    /// The item's guide with the base and head it describes.
-    pub fn guide(&self, id: i64) -> Result<Option<(String, String, serde_json::Value)>, String> {
-        let conn = self.conn.lock().unwrap();
-        conn.query_row(
-            "SELECT base, head, guide FROM review_guides WHERE item_id = ?1",
-            [id],
-            |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(err)
-        .map(|row| row.map(|(b, h, g)| (b, h, serde_json::from_str(&g).unwrap_or_default())))
-    }
-
     /// Records the commits of the PR at `head` that the viewer made.
     pub fn set_own_commits(&self, id: i64, head: &str, commits: &[String]) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
@@ -639,8 +607,6 @@ impl Store {
         conn.execute("DELETE FROM reviewed_files WHERE item_id = ?1", [id])
             .map_err(err)?;
         conn.execute("DELETE FROM own_commits WHERE item_id = ?1", [id])
-            .map_err(err)?;
-        conn.execute("DELETE FROM review_guides WHERE item_id = ?1", [id])
             .map_err(err)?;
         conn.execute(
             "UPDATE work_items SET worktree_path = NULL, branch = NULL, worktree_created = 0, session_id = NULL,
@@ -820,7 +786,7 @@ mod tests {
     }
 
     #[test]
-    fn reviewed_files_and_guides_are_kept_per_item_and_cleared_on_cleanup() {
+    fn reviewed_files_are_kept_per_item_and_cleared_on_cleanup() {
         let (store, repo) = store_with_repo();
         store.sync_prs(repo.id, &[polled(3, json!({}))]).unwrap();
         let id = store.items(repo.id).unwrap()[0].id;
@@ -832,10 +798,6 @@ mod tests {
             store.reviewed_files(id).unwrap(),
             [("a.rs".to_owned(), "blob3".to_owned())].into()
         );
-        store
-            .set_guide(id, "base", "head", &json!({"focus": "x"}))
-            .unwrap();
-        assert_eq!(store.guide(id).unwrap().unwrap().2["focus"], "x");
         store.set_own_commits(id, "h1", &["c1".into()]).unwrap();
         store
             .set_own_commits(id, "h2", &["c1".into(), "c2".into()])
@@ -845,7 +807,7 @@ mod tests {
             Some(("h2".into(), ["c1".to_owned(), "c2".to_owned()].into()))
         );
         store.mark_cleaned(id).unwrap();
-        assert!(store.reviewed_files(id).unwrap().is_empty() && store.guide(id).unwrap().is_none());
+        assert!(store.reviewed_files(id).unwrap().is_empty());
         assert!(store.own_commits(id).unwrap().is_none());
     }
 

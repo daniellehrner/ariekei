@@ -5,7 +5,6 @@ mod e2e;
 mod events;
 mod git;
 mod github;
-mod guide;
 mod hooks;
 mod inbox;
 mod lifecycle;
@@ -523,17 +522,6 @@ async fn mark_file_reviewed(
     .await
 }
 
-#[tauri::command]
-async fn review_guide(app: tauri::AppHandle, id: i64) -> Res<Option<workitem::GuideView>> {
-    blocking(app, move |s| workitem::review_guide(s, id)).await
-}
-
-/// Asks Claude for a review guide (takes a while: runs headless on the diff).
-#[tauri::command]
-async fn prepare_guide(app: tauri::AppHandle, id: i64) -> Res<workitem::GuideView> {
-    blocking(app, move |s| workitem::prepare_guide(s, id)).await
-}
-
 /// Saves a file edited in the review view.
 #[tauri::command]
 async fn save_file(app: tauri::AppHandle, id: i64, path: String, content: String) -> Res<()> {
@@ -645,8 +633,6 @@ pub fn run() {
             review_files,
             review_file,
             mark_file_reviewed,
-            review_guide,
-            prepare_guide,
             save_file,
             search_items,
             track_item,

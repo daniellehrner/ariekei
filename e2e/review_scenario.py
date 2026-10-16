@@ -7,7 +7,7 @@ to Open, starring and removing, opening another author's PR, Overview (sanitized
 Comments (resolve, reply, new comment), reviewing without a worktree ("All changes vs
 main" from refs/pull/N/head), draft comments, Submit to GitHub (line comment inside the
 PR diff, the other one folded into the body), and "All changes" after Mark reviewed.
-No agent is started. The review guide comes from e2e/fake_claude.py (ARIEKEI_CLAUDE).
+No agent is started.
 
 Run it with `python3 e2e/run.py <test-app> review` (see run.py), which sets the environment.
 """
@@ -436,37 +436,6 @@ try:
     reviewed_after = eventually("after the push, only the unchanged file stays reviewed", lambda: s.js("return [...document.querySelectorAll('[data-reviewed]')].filter(c => c.getAttribute('aria-checked') === 'true').map(c => c.dataset.reviewed)"), lambda v: v == ["b.txt"])
     print("[marks] reviewed before the push:", reviewed_before, "| after:", reviewed_after)
     equal("a push unmarks the changed file only", (sorted(reviewed_before), reviewed_after), (["a.txt", "b.txt"], ["b.txt"]))
-
-    t0 = time.monotonic()
-    s.click(s.wait("[data-prepare-guide]"))
-    s.wait("[data-guide] .focus", timeout=600)
-    print(f"[guide] ready after {time.monotonic() - t0:.0f}s; focus:", s.js("return document.querySelector('.guide .focus')?.textContent"))
-    print("[guide] groups:", s.js("return [...document.querySelectorAll('.side .group')].map(g => g.querySelector('.group-title').textContent.trim().replace(/\\s+/g, ' '))"))
-    print("[guide] claims:", s.js("return [...document.querySelectorAll('.claims li')].map(l => l.textContent.trim())"))
-    check("the guide has a focus", s.js("return document.querySelector('.guide .focus')?.textContent"))
-    equal("guide claims", s.js("return document.querySelectorAll('.claims li').length"), 2)
-    s.screenshot(os.path.join(shots, "r6-guide.png"))
-
-    # The guide line above the diff: the shown file's group and claims, also with the side
-    # panel hidden; expanded, it adds the focus for the whole change.
-    def guide_line():
-        return " ".join(s.js("return document.querySelector('[data-file-guide] .expand')?.innerText ?? ''").split())
-    first = s.js("return document.querySelector('.side .files [data-file]').dataset.file")
-    s.js("document.querySelector(`.side [data-file='${arguments[0]}']`).click()", first)
-    s.wait_js("return document.querySelector('[data-file-guide]')")
-    print(f"[guide line] {first}:", guide_line())
-    contains("the guide line names the file's group", guide_line(), "Parser")
-    s.js("document.querySelector(\"[data-toggle='side']\").click()")
-    s.wait_js("return !document.querySelector('.side')")
-    s.js("document.querySelector('.toolbar button[aria-label^=\"Next file\"]').click()")
-    time.sleep(0.5)
-    print("[guide line] side hidden, next file", s.js("return document.querySelector('.toolbar .current-file').textContent.trim()").split()[0] + ":", guide_line())
-    s.js("document.querySelector('[data-file-guide] .expand').click()")
-    print("[guide line] expanded:", s.js("return document.querySelector('[data-file-guide] .focus-all')?.textContent"))
-    contains("expanded, it shows the focus", s.js("return document.querySelector('[data-file-guide] .focus-all')?.textContent"), "Focus for the whole change")
-    s.js("document.querySelector('[data-file-guide] .expand').click()")
-    s.js("document.querySelector(\"[data-toggle='side']\").click()")
-    s.wait(".side")
 
     # --- own PR, rebased since the review (PR #42) ---
     select_row(s, 42)

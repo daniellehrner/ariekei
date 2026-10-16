@@ -20,9 +20,8 @@ code navigation or debugging, use your IDE on the same worktree. Tauri 2 (Rust) 
   worktree, with the PR or issue as context. Status comes from Claude Code hooks; conversations
   resume after switching items or restarting.
 - **Review:** all changes vs the base branch, changes since your last review (rebase-aware),
-  or single commits; per-file reviewed marks, a review order instead of alphabetical, an agent
-  review guide (risk-ordered groups, claims checked against the diff), whitespace and unified
-  toggles, keyboard navigation; works without a worktree for other people's PRs. Comments go
+  or single commits; per-file reviewed marks, a review order instead of alphabetical,
+  whitespace and unified toggles, keyboard navigation; works without a worktree for other people's PRs. Comments go
   to GitHub as a review or to the agent; right-click code to ask the agent about it (file,
   lines and code go along). See [docs/review.md](docs/review.md).
 - **Repos and windows:** the repo name in the Inbox header switches the window to another
@@ -93,7 +92,7 @@ windows never show up on your desktop or take focus, and its notifications stay 
 `E2E_HEADED=1` shows the windows on your display instead.
 
 - `review`: Inbox sections, browsing and adding, starring and removing, Overview, Comments, review without a worktree, review order and marks,
-  the review guide, submitting a review, rebase-aware "since your review".
+  submitting a review, rebase-aware "since your review".
 - `windows`: two repos, switching, a window per repo, restoring windows after a restart.
 - `lifecycle`: issue → worktree → push → draft PR → merge → cleanup.
 - `task`: new task → the agent opens a PR and an issue → linked under the task → asking the
@@ -103,8 +102,7 @@ windows never show up on your desktop or take focus, and its notifications stay 
 
 Nothing leaves the machine: GitHub is `e2e/fake_gh.py`, a stand-in for `gh` that serves fixture
 PRs and issues and records every write instead of sending it, and the agent is
-`e2e/fake_claude.py`, which writes a canned review guide for `claude -p` and otherwise is a
-small terminal agent that commits when asked and reports its status through the hooks like
+`e2e/fake_claude.py`, a small terminal agent that commits when asked and reports its status through the hooks like
 Claude Code. `e2e/gallery.py` is not a test: it takes screenshots of every screen through
 tauri-driver (Linux), in light or dark and at any window size, for comparing the UI with the
 design. Test-only environment variables:

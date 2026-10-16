@@ -27,7 +27,7 @@ told apart in grey-scale and with colour blindness:
   token. Components never hard-code a colour; CodeMirror (`lib/codemirrorTheme.ts`) and xterm
   (`lib/xtermTheme.ts`) read the same tokens.
 - `ui/src/controls/`: the shared controls (`Button`, `IconButton`, `Checkbox`, `Toggle`,
-  `Segmented`, `Pill`, `Banner`, `InlineConfirm`, `Kbd`, `Risk`, `ClaimMark`, `StarToggle`), the icon set
+  `Segmented`, `Pill`, `Banner`, `InlineConfirm`, `Kbd`, `StarToggle`), the icon set
   (`icons.ts`, 16 px grid, 1.5 px stroke; `Icon`), the agent `StatusDot`, the Inbox
   `AttentionPip` and the `Logo`.
 - The app icon (`src-tauri/icons/`) is the same mark: a circle (the agent) and a square (you)
