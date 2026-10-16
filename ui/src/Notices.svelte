@@ -13,6 +13,7 @@
   import IconButton from "./controls/IconButton.svelte";
   import { agents } from "./lib/agent.svelte";
   import { api } from "./lib/api";
+  import { openOn } from "./lib/layout.svelte";
   import { FADE_MS, fades, stillCurrent, withNotice, type Notice, type NoticeKind } from "./lib/notices";
 
   const PIP: Record<NoticeKind, Attention> = {
@@ -30,9 +31,15 @@
     notices = notices.filter((n) => n.id !== id);
   }
 
+  // Notices from the agent (waiting, finished, stopped with an error) open its Terminal: what
+  // it said or asks is there, whatever else the item wants (e.g. changes to review).
+  const FROM_AGENT: NoticeKind[] = ["needs-you", "finished", "error"];
+
   function open(n: Notice) {
     dismiss(n.id);
-    if (n.item != null) api.openItem(n.item);
+    if (n.item == null) return;
+    if (FROM_AGENT.includes(n.kind)) Object.assign(openOn, { item: n.item, tab: "terminal" });
+    api.openItem(n.item);
   }
 
   const current = (n: Notice) => stillCurrent(n, selected, (item) => agents[String(item)]?.status);

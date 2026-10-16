@@ -24,7 +24,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from check import check, contains, equal, eventually  # noqa: E402
-from ui import open_inbox, side_by_side, wait_rows  # noqa: E402
+from ui import open_inbox, select_row, side_by_side, wait_rows  # noqa: E402
 from wd import Session  # noqa: E402
 
 app, work = sys.argv[1:3]
@@ -268,6 +268,20 @@ try:
     keys(s, "never mind")
     keys(s, ENTER)
     eventually("the agent's turn ends", lambda: agent(s, -1), lambda a: a == "finished", timeout=30)
+
+    # A notice that the agent finished opens the task on its Terminal, even though it was left
+    # on the Review tab (as the backend sends one while another item is shown, notify.rs).
+    s.click(s.wait(".item [data-tab='review']"))
+    select_row(s, 100)
+    s.wait(".item header .title", timeout=30, text="#100")
+    s.js("""const task = (await window.__TAURI_INTERNALS__.invoke('inbox')).find((r) => r.number === -1).id;
+      await window.__TAURI_INTERNALS__.invoke('plugin:event|emit',
+        { event: 'notice', payload: { item: task, kind: 'finished', title: 'T1 Peers drop', body: 'The agent finished.' } });""")
+    s.click(s.wait("[data-notice='finished'] .body", timeout=10))
+    s.wait(".item header .title", timeout=30, text="T1")
+    eventually("a notice from the agent opens its Terminal", lambda: s.js("return document.querySelector('.item [aria-selected=true][data-tab]')?.dataset.tab"),
+               lambda v: v == "terminal", timeout=10)
+    print("[notice] the agent finished: opened T1 on", s.js("return document.querySelector('.item [aria-selected=true][data-tab]')?.dataset.tab"))
 
     # A closed issue stays listed under its task.
     set_issue_state(101, "CLOSED")

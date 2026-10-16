@@ -62,7 +62,8 @@ notification). It sits in the bottom right corner, so it has to be seen without 
 - It fades in with a short slide from the edge (`--dur-slow`, `--ease`) and pulses once
   (`--dur-pulse`); a permission request pulses three times. Nothing keeps moving after that,
   and with reduced motion nothing moves.
-- Clicking it opens the item. A permission request stays until the agent moves on; the rest go
+- Clicking it opens the item: on its Terminal when the notice is from the agent (finished,
+  waiting for permission, stopped with an error), else on the tab that resolves it. A permission request stays until the agent moves on; the rest go
   after ten seconds.
 
 ## The code menu

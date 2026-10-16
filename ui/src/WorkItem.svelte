@@ -129,7 +129,9 @@
       // started while the task was being created can still lack it).
       if (!saved && isTask) ui.tab = "terminal";
       if (landing) ui.tab = landing;
-      if (openOn.item === current && openOn.tab) ui.tab = openOn.tab;
+      // Asked for (a notice from the agent, asking it about code); a Terminal only where the
+      // agent runs.
+      if (openOn.item === current && openOn.tab && (openOn.tab !== "terminal" || row.worktree)) ui.tab = openOn.tab;
       openOn.item = openOn.tab = null;
       if (hasReview && (row.worktree || row.kind === "pr")) loadProgress(current);
     });
