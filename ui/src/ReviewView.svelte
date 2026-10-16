@@ -23,12 +23,13 @@
 </script>
 
 <script lang="ts">
-  import { MergeView, goToNextChunk, goToPreviousChunk, unifiedMergeView } from "@codemirror/merge";
+  import { MergeView, getChunks, unifiedMergeView } from "@codemirror/merge";
   import { syntaxHighlighting } from "@codemirror/language";
-  import { EditorState, type Extension } from "@codemirror/state";
+  import { EditorSelection, EditorState, type Extension } from "@codemirror/state";
   import { EditorView } from "@codemirror/view";
   import { basicSetup } from "codemirror";
   import { onDestroy, tick } from "svelte";
+  import { fade } from "svelte/transition";
   import AskAgent from "./AskAgent.svelte";
   import CodeMenu from "./CodeMenu.svelte";
   import Button from "./controls/Button.svelte";
@@ -48,7 +49,7 @@
   import { shortcuts } from "./lib/layout.svelte";
   import { languageFor } from "./lib/languages";
   import { layout } from "./lib/layout.svelte";
-  import { flatten, nextUnreviewed, progress, rangeOf, scopeOf, sections, type ReviewFile } from "./lib/review";
+  import { flatten, neighbourFile, nextChange, nextUnreviewed, progress, rangeOf, scopeOf, sections, type ReviewFile } from "./lib/review";
   import { askMessage, classify, feedbackMessage, refLines, reviewBody, type CodeRef, type LineComment, type Ranges } from "./lib/reviewComments";
 
   let {
@@ -75,6 +76,13 @@
   let review = $state<ReviewState | null>(null);
   let files: ReviewFile[] = $state([]);
   let error: string | null = $state(null);
+  // n / p go from change to change, and on into the next (previous) file at the last (first)
+  // change of one: entering it at its first (1) or last (-1) change. With no change further
+  // on in the scope, `edge` says so at that end of the diff for a moment.
+  let landing: 1 | -1 | 0 = 0;
+  let edge = $state<1 | -1 | null>(null);
+  let edgeTimer: ReturnType<typeof setTimeout> | undefined;
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
   let notice: string | null = $state(null);
   let noticeUrl: string | null = $state(null);
   // Sending to the agent failed: the error offers its terminal.
@@ -158,21 +166,26 @@
   // The editor whose document is the new version (selection, change navigation).
   const newSide = () => merge?.b ?? unified;
 
+  // Each show() is numbered: one overtaken by a later one (the file changed again while it
+  // loaded) leaves the editors to it, and its n / p landing too.
+  let showing = 0;
   async function show(path: string) {
     if (!range || !host) return;
     const [from, to] = range;
     const ignoreWs = !!view.ignoreWs;
+    const n = ++showing;
     const [d, lang] = await Promise.all([api.reviewFile(id, from, to, path, ignoreWs), languageFor(path)]);
+    if (n !== showing || !host) return;
     destroyEditors();
     selection = null;
     editedPath = null;
     onlyWhitespace = ignoreWs && !d.binary && d.hunks.length === 0 && !!files.find((f) => f.path === path)?.whitespaceOnly;
     if (d.binary) {
       host.textContent = "Binary file: not shown.";
-      return;
+      return land();
     }
     host.textContent = "";
-    if (onlyWhitespace) return;
+    if (onlyWhitespace) return land();
     const common: Extension[] = [basicSetup, ...lang, ariekeiTheme, syntaxHighlighting(ariekeiHighlight)];
     const onUpdate = EditorView.updateListener.of((u) => {
       if (u.docChanged) {
@@ -210,6 +223,52 @@
         diffConfig,
       });
     }
+    land();
+  }
+
+  // The changes of the new side, as document ranges in order.
+  function changesOf(v: EditorView): { from: number; to: number }[] {
+    const info = getChunks(v.state);
+    if (!info) return [];
+    const a = info.side === "a";
+    return info.chunks.map((c) => (a ? { from: c.fromA, to: c.toA } : { from: c.fromB, to: c.toB }));
+  }
+
+  function goToChange(v: EditorView, c: { from: number; to: number }) {
+    v.dispatch({ selection: { anchor: c.from }, userEvent: "select.byChunk", effects: EditorView.scrollIntoView(EditorSelection.range(c.to, c.from)) });
+  }
+
+  // n (dir 1) / p (dir -1). Files of folded sections (generated ones, unless opened) are passed
+  // over, as they are in the list.
+  function stepChange(dir: 1 | -1) {
+    const v = newSide();
+    if (v) {
+      const changes = changesOf(v);
+      const i = nextChange(changes, v.state.selection.main.head, dir);
+      if (i !== null) return goToChange(v, changes[i]);
+    }
+    const shown = list.filter(isOpen).flatMap((sec) => sec.files.map((f) => f.path));
+    const paths = view.file && !shown.includes(view.file) ? ordered.map((f) => f.path) : shown;
+    const next = neighbourFile(paths, view.file, dir);
+    if (!next) {
+      clearTimeout(edgeTimer);
+      edge = dir;
+      edgeTimer = setTimeout(() => (edge = null), 1800);
+      return;
+    }
+    landing = dir;
+    view.file = next;
+  }
+
+  // A file entered with n / p: on to its first (last) change, or past it when it shows none.
+  function land() {
+    const dir = landing;
+    landing = 0;
+    if (!dir) return;
+    const v = newSide();
+    const changes = v ? changesOf(v) : [];
+    if (v && changes.length) goToChange(v, changes[dir > 0 ? 0 : changes.length - 1]);
+    else stepChange(dir);
   }
 
   $effect(() => {
@@ -281,8 +340,8 @@
       a: () => askAboutSelection(),
       "]": () => stepFile(1),
       "[": () => stepFile(-1),
-      n: () => { const v = newSide(); if (v) goToNextChunk(v); },
-      p: () => { const v = newSide(); if (v) goToPreviousChunk(v); },
+      n: () => stepChange(1),
+      p: () => stepChange(-1),
       r: () => reviewedAndNext(),
       u: () => (view.unified = !isUnified),
       w: () => (view.ignoreWs = !view.ignoreWs),
@@ -683,7 +742,16 @@
       </div>
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <div class="diff" bind:this={host} tabindex="0" role="region" oncontextmenu={onContextMenu}
-        aria-label="Diff of {view.file ?? 'no file'}. Shortcuts: r reviewed and next, ] and [ files, n and p changes, u unified, w whitespace, a ask the agent about the selection, ? help. Right-click code to ask the agent about it."></div>
+        aria-label="Diff of {view.file ?? 'no file'}. Shortcuts: r reviewed and next, ] and [ files, n and p changes (on into the next or previous file), u unified, w whitespace, a ask the agent about the selection, ? help. Right-click code to ask the agent about it."></div>
+      {#if edge}
+        <!-- At that end of the diff itself (the toolbar above it, the drafts bar below). -->
+        <div class="edge" style:top={edge < 0 ? `${(host?.offsetTop ?? 0) + 12}px` : undefined}
+          style:bottom={edge > 0 ? `${(main?.clientHeight ?? 0) - (host ? host.offsetTop + host.offsetHeight : 0) + 16}px` : undefined} role="status"
+          transition:fade={{ duration: still ? 0 : 180 }} data-edge={edge > 0 ? "end" : "start"}>
+          <Icon name={edge > 0 ? "chevron-down" : "chevron-up"} size={14} />
+          {edge > 0 ? "That was the last change in this scope" : "That was the first change in this scope"}
+        </div>
+      {/if}
       {#if codeMenu}
         {@const m = codeMenu}
         <CodeMenu x={m.x} y={m.y} lines={m.code.fromLine === m.code.toLine ? `line ${m.code.fromLine}` : `lines ${refLines(m.code)}`}
@@ -890,6 +958,14 @@
   .divider { flex: none; width: 1px; height: 16px; background: var(--border); }
   @media (max-width: 1200px) { .tlabel { display: none; } }
 
+  /* n / p found no change further on: a raised note at that end of the diff. */
+  .edge {
+    position: absolute; left: 50%; z-index: 5; transform: translateX(-50%);
+    display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-6); white-space: nowrap;
+    border-radius: var(--r-lg); background: var(--surface-raised); box-shadow: var(--shadow-pop);
+    font-size: var(--fs-12); color: var(--text);
+  }
+  .edge :global(svg) { color: var(--text-muted); }
   .diff { flex: 1; overflow: auto; min-height: 0; background: var(--surface-editor); }
   .diff:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
   .diff :global(.cm-editor) { font-size: var(--fs-code); }

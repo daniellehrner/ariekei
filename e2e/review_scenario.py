@@ -390,6 +390,40 @@ try:
     equal("whitespace-only files", s.js("return [...document.querySelectorAll('.side .file')].filter(l => l.querySelector('.ws')).map(l => l.querySelector('[data-file]').dataset.file)"), ["w.txt"])
     press_on(s, "[data-tab=review]", "w")
     eventually("'w' shows whitespace again", lambda: s.js("return document.querySelectorAll('.side .file .ws').length"), lambda v: v == 0)
+    # n / p go from change to change and on into the next / previous file; at the ends of the
+    # scope a note says there is no change further on.
+    def key(k):
+        s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: arguments[0], bubbles: true }))", k)
+
+    def press_until(k, done, limit=30):
+        for _ in range(limit):
+            key(k)
+            time.sleep(0.25)
+            if done():
+                return True
+        return False
+
+    shown = s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)")
+    s.click(s.wait("[data-file='%s']" % shown[0]))
+    eventually("the first file shows", active, lambda v: v == shown[0])
+    check("n goes on into the next file", press_until("n", lambda: active() != shown[0]))
+    equal("n entered the next file", active(), shown[1])
+    # Where the cursor is: the new side's text (which file), its line, on a marked change.
+    at = lambda: s.js(NEW_SIDE + """return view && [view.state.doc.line(1).text, view.state.doc.lineAt(view.state.selection.main.head).number,
+        document.querySelectorAll('.cm-mergeViewEditor .ak-current-change').length > 0];""")
+    eventually("n enters it at its first change", at, lambda v: v and v[0] == "new file" and v[1] == 1 and v[2], timeout=10)
+    key("p")
+    eventually("p goes back into the previous file", active, lambda v: v == shown[0])
+    landed = eventually("at its last change", at, lambda v: v and v[0] == "line1" and v[1] == 10 and v[2], timeout=10)
+    print(f"[n/p] {shown[0]} -> n -> {shown[1]} line 1 -> p -> {shown[0]} line {landed[1]}")
+    check("p at the first change says so", press_until("p", lambda: bool(s.find("[data-edge='start']"))))
+    equal("and stays in the first file", active(), shown[0])
+    s.click(s.wait("[data-file='%s']" % shown[-1]))
+    eventually("the last file shows", active, lambda v: v == shown[-1])
+    check("n at the last change says so", press_until("n", lambda: bool(s.find("[data-edge='end']"))))
+    print("[n/p] at the end:", s.js("return document.querySelector('[data-edge]').textContent.trim()"))
+    eventually("the note goes away", lambda: bool(s.find("[data-edge]")), lambda v: not v, timeout=10)
+
     s.click(s.wait("[data-file='a.txt']"))
     press_on(s, "[data-tab=review]", "u")
     eventually("the unified diff shows", lambda: s.js("return document.querySelectorAll('.diff .cm-editor').length"), lambda v: v == 1)

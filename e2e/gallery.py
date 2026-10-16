@@ -17,7 +17,7 @@ D-Bus; to choose the theme, point D-Bus nowhere and set it in a GTK settings fil
 
 Screens: connect, empty (nothing selected yet), overview, menu, comments, collapsed, waiting, terminal, review,
 selection, drafts, submit, code-menu, ask-agent, shortcuts, guard, review-hidden, notice-arriving,
-notices, inbox (every section, one item starred), browse.
+notices, inbox (every section, one item starred), browse, change-end (n past the last change).
 """
 
 import json
@@ -204,10 +204,20 @@ try:
         s.wait(".inbox.collapsed", timeout=10)
         shot(s, "collapsed")
         s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }))")
-    if need("review", "selection", "drafts", "submit", "code-menu", "ask-agent", "shortcuts", "guard", "review-hidden"):
+    if need("review", "change-end", "selection", "drafts", "submit", "code-menu", "ask-agent", "shortcuts", "guard", "review-hidden"):
         tab(s, "Review")
         s.wait("[data-file]", timeout=60)
         shot(s, "review")
+        if need("change-end"):
+            # n past the last change of the last file: the note at the end of the diff.
+            s.js("[...document.querySelectorAll('.side .files [data-file]')].at(-1).click()")
+            for _ in range(20):
+                key(s, "n")
+                time.sleep(0.3)
+                if s.find("[data-edge]"):
+                    break
+            time.sleep(0.3)
+            shot(s, "change-end")
         if need("selection", "drafts", "submit"):
             click(s, "[data-file$='SnapSyncState.java']")
             s.wait_js("return document.querySelectorAll('.cm-mergeViewEditor .cm-content')[1]?.cmView?.rootView?.view?.state.doc.lines > 30 "

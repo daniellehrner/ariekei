@@ -84,5 +84,7 @@ by the agent's circle and the lines it is about; its one filled button is **Send
   "Answer in Terminal".
 - Below a 720 px diff column the diff is unified, unless chosen otherwise with `u`; below a
   1200 px window the Inbox collapses while the review side panel is open (Ctrl+B opens it again).
+- `n` / `p` past the last (first) change of the scope show a raised note at that end of the
+  diff for a moment ("That was the last change in this scope"); it fades, nothing else moves.
 - Keyboard: Ctrl/Cmd+B toggles the Inbox, Ctrl/Cmd+Shift+N opens a new window; the review keys
   are listed under `?`. Every control is reachable with Tab and shows a focus ring.

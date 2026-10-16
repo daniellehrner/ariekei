@@ -29,7 +29,10 @@ How the review view works, and the research it is based on.
   highlighting for any language, git-exact hunks, unchanged code collapsed; the Inbox, the
   commit list and the side panel collapse (below a 1200 px window the Inbox steps aside by
   itself while the side panel is open).
-- **Keys:** `n`/`p` next/previous change (the change you are on is marked in the gutter),
+- **Keys:** `n`/`p` next/previous change (the change you are on is marked in the gutter;
+  past a file's last change `n` goes on to the next file's first one, `p` back to the previous
+  file's last one, skipping folded sections; at the ends of the scope a note says there is no
+  change further on),
   `]`/`[` next/previous file, `r`, `u`, `w`, `a` to ask the agent about the selection, `?` for
   the list, `Esc` to drop a selection. They do nothing while you type or when the terminal has
   focus.

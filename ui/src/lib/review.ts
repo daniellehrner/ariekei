@@ -59,6 +59,26 @@ export function nextUnreviewed(ordered: ReviewFile[], current: string | null): s
   return null;
 }
 
+// The change `n` (dir 1) or `p` (dir -1) moves to from the cursor at `head`: its index in
+// `changes` (document order), or null when there is none after (before) it in this file. A
+// cursor inside a change moves past it.
+export function nextChange(changes: { from: number; to: number }[], head: number, dir: 1 | -1): number | null {
+  if (dir > 0) {
+    const i = changes.findIndex((c) => c.from > head);
+    return i < 0 ? null : i;
+  }
+  for (let i = changes.length - 1; i >= 0; i--) if (changes[i].to < head) return i;
+  return null;
+}
+
+// The file after (dir 1) or before (dir -1) `current` in `paths`, without wrapping around:
+// null at the end (start).
+export function neighbourFile(paths: string[], current: string | null, dir: 1 | -1): string | null {
+  const i = paths.indexOf(current ?? "");
+  const next = i < 0 ? (dir > 0 ? 0 : paths.length - 1) : i + dir;
+  return paths[next] ?? null;
+}
+
 // The scope shown: the one chosen if it still exists, else "review" (since the user's
 // review) when there is one, else "all" (vs the base branch). A commit sha is a scope too.
 export function scopeOf(review: ReviewState | null, wanted: string): string {
