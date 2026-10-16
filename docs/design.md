@@ -27,11 +27,26 @@ told apart in grey-scale and with colour blindness:
   token. Components never hard-code a colour; CodeMirror (`lib/codemirrorTheme.ts`) and xterm
   (`lib/xtermTheme.ts`) read the same tokens.
 - `ui/src/controls/`: the shared controls (`Button`, `IconButton`, `Checkbox`, `Toggle`,
-  `Segmented`, `Pill`, `Banner`, `InlineConfirm`, `Kbd`, `Risk`, `ClaimMark`), the icon set
+  `Segmented`, `Pill`, `Banner`, `InlineConfirm`, `Kbd`, `Risk`, `ClaimMark`, `StarToggle`), the icon set
   (`icons.ts`, 16 px grid, 1.5 px stroke; `Icon`), the agent `StatusDot`, the Inbox
   `AttentionPip` and the `Logo`.
 - The app icon (`src-tauri/icons/`) is the same mark: a circle (the agent) and a square (you)
   overlapping where the work is decided.
+
+## The Inbox
+
+- **Sections**, in this order: Starred, Tasks, Assigned, Approved (the user's PRs ready to
+  merge), Review requested, My PRs, Reviewed, Open. An item is listed once, in the first
+  section that fits (`lib/inboxSections.ts`, from the backend's `role`); a task's PRs and issues
+  stay under the task. Empty sections are left out, except Open, which carries **Browse…**.
+- **The star** is the user's own mark: a set star is filled in `--you` and always shown; an
+  unset one is a grey outline, shown on hover or focus (`StarToggle`), like **Remove** on items
+  the user added. The item header has the same star after its title.
+- **Browse** (Ctrl+K, the field at the top of the Inbox, Browse… in Open) is a raised overlay
+  (`--surface-raised`, `--shadow-pop`, over `--scrim`), wider than the Inbox: Pull requests |
+  Issues, a search field, and per hit **Add to Open**, or the `in Inbox` pill (a tinted fill:
+  local state) with **Open** and, for items the user added, **Remove**. It stays open after
+  adding.
 
 ## Notices
 

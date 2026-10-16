@@ -30,6 +30,7 @@ export const icons = {
   "play": "M5 3.5l7 4.5-7 4.5z", // Start working (filled)
   "done": "M2.5 8a5.5 5.5 0 1 0 11 0a5.5 5.5 0 1 0 -11 0M5.5 8l2 2 3-3.5", // Done
   "reviewed": "M4.5 2.5h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2zM5.5 8l2 2 3-4", // Mark reviewed, Reviewed next (r), progress
+  "star": "M8 2.25l1.75 3.6 3.95.55-2.87 2.77.7 3.93L8 11.23 4.47 13.1l.7-3.93L2.3 6.4l3.95-.55z", // Star / unstar an item (filled in --you when starred)
   "send-to-agent": "M2 8h6.5M6 5.5L8.5 8 6 10.5M9.5 8a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0", // Send to the agent, Send PR feedback to agent
   "submit-github": "M2 8h5.5M5 5.5L7.5 8 5 10.5M12 5l3 3-3 3-3-3z", // Submit to GitHub…, Review on GitHub…
   "guide": "M2.5 8a5.5 5.5 0 1 0 11 0a5.5 5.5 0 1 0 -11 0M10.5 5.5L9 9 5.5 10.5 7 7z", // Prepare / Regenerate guide, guide line

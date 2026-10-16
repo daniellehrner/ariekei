@@ -3,6 +3,7 @@
 export const APP_SHORTCUTS: [string[], string][] = [
   [["Ctrl+N"], "New task"],
   [["Ctrl+B"], "Show / hide the Inbox"],
+  [["Ctrl+K"], "Browse open PRs and issues"],
   [["Ctrl+Shift+N"], "New window"],
   [["?"], "These shortcuts"],
   [["Esc"], "Close this"],

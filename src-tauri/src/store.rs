@@ -41,8 +41,9 @@ CREATE TABLE work_items (
 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 "#,
     r#"
--- Why the item is in the Inbox: 'author' (the viewer's PR), 'requested' (review requested
--- from the viewer) or 'other'. Recomputed on every poll.
+-- Why the item is in the Inbox: 'assignee' (assigned to the viewer), 'author' (the viewer's
+-- PR), 'requested' (review requested from the viewer), 'reviewed' (the viewer reviewed it) or
+-- 'other'. Recomputed on every poll.
 ALTER TABLE work_items ADD COLUMN role TEXT NOT NULL DEFAULT 'author';
 -- The user opened it, so it stays listed (and polled) even when no query finds it.
 ALTER TABLE work_items ADD COLUMN tracked INTEGER NOT NULL DEFAULT 0;
@@ -92,6 +93,10 @@ CREATE TABLE own_commits (
 -- {title, notes, createdAt}. The PRs and issues its agent opens link to it here.
 ALTER TABLE work_items ADD COLUMN task_id INTEGER REFERENCES work_items(id) ON DELETE SET NULL;
 "#,
+    r#"
+-- The user starred it: it heads the Inbox (and stays tracked).
+ALTER TABLE work_items ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -130,6 +135,7 @@ pub struct WorkItem {
     pub cleanup_blockers: Option<Vec<String>>,
     /// For a PR or issue a task's agent opened: the task.
     pub task_id: Option<i64>,
+    pub starred: bool,
 }
 
 impl WorkItem {
@@ -186,7 +192,7 @@ fn err(e: rusqlite::Error) -> String {
 
 const ITEM_COLUMNS: &str = "id, repo_id, number, snapshot, open, worktree_path, branch, session_id, \
      session_started, transcript_path, reviewed_sha, last_seen, ui_state, role, tracked, kind, \
-     issue_number, worktree_created, hidden, cleanup_blockers, task_id";
+     issue_number, worktree_created, hidden, cleanup_blockers, task_id, starred";
 
 fn item_from_row(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
     let json = |s: Option<String>| s.and_then(|s| serde_json::from_str(&s).ok());
@@ -214,6 +220,7 @@ fn item_from_row(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
             .get::<_, Option<String>>(19)?
             .and_then(|s| serde_json::from_str(&s).ok()),
         task_id: r.get(20)?,
+        starred: r.get(21)?,
     })
 }
 
@@ -394,6 +401,22 @@ impl Store {
 
     pub fn set_tracked(&self, id: i64) -> Result<(), String> {
         self.update(id, "tracked = ?2", true)
+    }
+
+    /// Stars or unstars an item. A starred item is tracked, so it stays listed when no query
+    /// finds it any more.
+    pub fn set_starred(&self, id: i64, starred: bool) -> Result<(), String> {
+        if starred {
+            self.update(id, "starred = 1, tracked = ?2", true)
+        } else {
+            self.update(id, "starred = ?2", false)
+        }
+    }
+
+    /// Takes an item the user added out of the Inbox: it is no longer polled by number, and
+    /// comes back only when a query finds it (e.g. a new review request).
+    pub fn untrack(&self, id: i64) -> Result<(), String> {
+        self.update(id, "tracked = ?2, starred = 0, open = 0", false)
     }
 
     /// Numbers of the tracked items of `kind` ("pr" or "issue") that are still listed:
@@ -916,6 +939,7 @@ mod tests {
             ),
             (7, "old", None, Some(Path::new("/w")))
         );
+        assert!(!item.starred);
         let task = store.create_task(1, "new", "").unwrap();
         store.link_to_task(item.id, task).unwrap();
         assert_eq!(store.item(item.id).unwrap().task_id, Some(task));

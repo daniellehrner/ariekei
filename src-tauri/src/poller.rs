@@ -2,11 +2,12 @@
 //! every minute (or right away when asked) and stores the result.
 //!
 //! GitHub's GraphQL budget (5000 points an hour) is shared with `gh` and the agents, so a
-//! poll first asks which PRs exist and when each last changed (1 point per query), and
-//! fetches the details (reviews, threads, checks: 1 point per PR) only of PRs that changed,
-//! have checks still running, or are new; every tenth poll, and one the user asked for,
-//! fetches them all (check runs restarted on an unchanged PR show up then). When the budget
-//! is used up anyway, polling waits for GitHub's reset instead of failing every minute.
+//! poll first asks which PRs exist and when each last changed (1 point per query: the
+//! viewer's, assigned, review requested, reviewed), and fetches the details (reviews,
+//! threads, checks: 1 point per PR) only of PRs that changed, have checks still running, or
+//! are new; every tenth poll, and one the user asked for, fetches them all (check runs
+//! restarted on an unchanged PR show up then). When the budget is used up anyway, polling
+//! waits for GitHub's reset instead of failing every minute.
 
 use crate::github::{self, PrSummary};
 use crate::store::{PolledPr, Repo};
@@ -174,15 +175,27 @@ fn rfc3339_secs(t: &str) -> Option<u64> {
     u64::try_from(days * 86_400 + hh * 3600 + mm * 60 + ss).ok()
 }
 
-/// One poll of `repo`: the viewer's PRs, PRs requesting their review, and the PRs they
-/// track (by number, so merged/closed ones get their final state). `full`: fetch the
+/// One poll of `repo`: the viewer's PRs, PRs assigned to them, requesting their review or
+/// reviewed by them, and the PRs they track (by number, so merged/closed ones get their final
+/// state). `full`: fetch the
 /// details of every PR, not only of those that changed.
 pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), String> {
     let (o, n, me) = (&repo.owner, &repo.name, &repo.viewer);
     let before = state.store.items(repo.id)?;
     let mine = github::search_pr_stamps(o, n, &format!("author:{me}"))?;
+    let assigned = github::search_pr_stamps(o, n, &format!("assignee:{me}"))?;
     let requested = github::search_pr_stamps(o, n, &format!("review-requested:{me}"))?;
-    let known: Vec<i64> = mine.iter().chain(&requested).map(|p| p.number).collect();
+    let reviewed = github::search_pr_stamps(o, n, &format!("reviewed-by:{me}"))?;
+    let numbers = |found: &[github::PrStamp]| found.iter().map(|p| p.number).collect::<Vec<_>>();
+    let found = Found {
+        assigned: numbers(&assigned),
+        requested: numbers(&requested),
+        reviewed: numbers(&reviewed),
+    };
+    let known: Vec<i64> = [&mine, &assigned, &requested, &reviewed]
+        .into_iter()
+        .flat_map(|f| numbers(f))
+        .collect();
     let tracked: Vec<i64> = state
         .store
         .tracked_numbers(repo.id, "pr")?
@@ -192,7 +205,10 @@ pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), Stri
     let others = github::pr_stamps(o, n, &tracked)?;
 
     let mut stamps: Vec<github::PrStamp> = vec![];
-    for stamp in mine.into_iter().chain(requested).chain(others) {
+    for stamp in [mine, assigned, requested, reviewed, others]
+        .into_iter()
+        .flatten()
+    {
         if !stamps.iter().any(|s| s.number == stamp.number) {
             stamps.push(stamp);
         }
@@ -217,7 +233,7 @@ pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), Stri
             .cloned()
             .or_else(|| stored(stamp.number));
         if let Some(pr) = pr {
-            let role = role_of(&pr, me, &known);
+            let role = role_of(&pr, me, &found);
             prs.push((pr, role));
         }
     }
@@ -299,13 +315,26 @@ pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), Stri
     Ok(())
 }
 
-/// Why a PR is in the Inbox. `requested` holds the numbers found by the author and
-/// review-requested queries; a PR in there that the viewer did not write was requested.
-pub fn role_of(pr: &PrSummary, viewer: &str, requested: &[i64]) -> &'static str {
-    if pr.author.eq_ignore_ascii_case(viewer) {
+/// The PRs a poll's searches found, by number (besides the viewer's own).
+#[derive(Debug, Default)]
+pub struct Found {
+    pub assigned: Vec<i64>,
+    pub requested: Vec<i64>,
+    pub reviewed: Vec<i64>,
+}
+
+/// Why a PR is in the Inbox, the strongest reason first: assigned to the viewer, written by
+/// them, review requested from them (again, after a review), reviewed by them, or none (they
+/// added it).
+pub fn role_of(pr: &PrSummary, viewer: &str, found: &Found) -> &'static str {
+    if found.assigned.contains(&pr.number) {
+        "assignee"
+    } else if pr.author.eq_ignore_ascii_case(viewer) {
         "author"
-    } else if requested.contains(&pr.number) {
+    } else if found.requested.contains(&pr.number) {
         "requested"
+    } else if found.reviewed.contains(&pr.number) {
+        "reviewed"
     } else {
         "other"
     }

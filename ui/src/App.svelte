@@ -1,6 +1,7 @@
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
+  import Browse from "./Browse.svelte";
   import Connect from "./Connect.svelte";
   import Inbox from "./Inbox.svelte";
   import Notices from "./Notices.svelte";
@@ -11,7 +12,7 @@
   import { listenToAgents } from "./lib/agent.svelte";
   import { api, type Repo, type Row } from "./lib/api";
   import { isTyping } from "./lib/keys";
-  import { layout, shortcuts } from "./lib/layout.svelte";
+  import { browser, layout, shortcuts } from "./lib/layout.svelte";
   import { setHome } from "./lib/paths";
 
   let repo: Repo | null | undefined = $state(undefined);
@@ -53,9 +54,9 @@
     creatingTask = true;
   }
 
-  // Ctrl+B (Cmd+B) toggles the Inbox, Ctrl+N starts a new task and Ctrl+Shift+N opens a new
-  // window, except in the agent terminal, where the keys belong to Claude Code. ? shows the
-  // shortcuts (also the review's), except while typing.
+  // Ctrl+B (Cmd+B) toggles the Inbox, Ctrl+N starts a new task, Ctrl+K browses the repo's open
+  // PRs and issues and Ctrl+Shift+N opens a new window, except in the agent terminal, where the
+  // keys belong to Claude Code. ? shows the shortcuts (also the review's), except while typing.
   function onKeydown(e: KeyboardEvent) {
     if (!e.ctrlKey && !e.metaKey && !e.altKey && !isTyping(e.target)) {
       if (e.key === "?") {
@@ -75,6 +76,11 @@
     } else if (!e.shiftKey && key === "n" && repo && !connecting) {
       e.preventDefault();
       newTask();
+    } else if (!e.shiftKey && key === "k" && repo && !connecting) {
+      e.preventDefault();
+      // A new search each time; the kind (PRs or issues) stays.
+      if (!browser.open) browser.text = "";
+      browser.open = !browser.open;
     } else if (e.shiftKey && key === "n") {
       e.preventDefault();
       api.openWindow(null);
@@ -107,6 +113,7 @@
     document.title = `${r.owner}/${r.name} — Ariekei`;
     rows = [];
     loaded = false;
+    browser.open = false;
     selected = null;
     pollError = null;
     selected = await api.selectedItem();
@@ -162,8 +169,8 @@
       <div class="empty">
         {#if loaded && !rows.length}
           <strong>Your Inbox is empty</strong>
-          <span>Your open pull requests, review requests and assigned issues in {repo.owner}/{repo.name} appear here.
-            To review any other pull request, search for it. To start work that has no PR or issue yet, press <Kbd key="Ctrl+N" /> (New task).</span>
+          <span>What is assigned to you, your open pull requests, review requests and PRs you reviewed in {repo.owner}/{repo.name} appear here.
+            To add any other open PR or issue, press <Kbd key="Ctrl+K" /> (Browse). To start work that has no PR or issue yet, press <Kbd key="Ctrl+N" /> (New task).</span>
         {:else if loaded}
           <strong>{waiting ? `${waiting} item${waiting === 1 ? " wants" : "s want"} your attention` : "You're all caught up"}</strong>
           <span>Pick an item in the Inbox{waiting ? ", starting at the top" : ""}. <Kbd key="Ctrl+B" /> shows or hides the Inbox,
@@ -174,6 +181,9 @@
       </div>
     {/if}
   </div>
+  {#if browser.open}
+    <Browse onselect={select} onchanged={reload} />
+  {/if}
   {/key}
 {/if}
 <Notices {selected} />

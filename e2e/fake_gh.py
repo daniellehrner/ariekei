@@ -7,7 +7,8 @@ sent to GitHub. Supports only the calls Ariekei makes.
 
 data.json: {"viewer": "me", "upstream": <path of the "GitHub" git repo, optional>,
             "prs": [{number, title, author, head_ref, head_sha, base_ref, state, requested (bool),
-                     draft (bool), decision, ci, failing, body_html, comments: [...], threads: [...]}],
+                     assigned (bool), reviewed (bool, by the viewer), draft (bool), decision, ci,
+                     failing, body_html, comments: [...], threads: [...]}],
             "issues": [{number, title, author, body, assigned (bool), state}]}
 Creating a PR or an issue (POST .../pulls, .../issues) adds it to data.json, so later polls
 see it; a test can set a PR's "state" to MERGED in data.json. A PR or issue with "repo": "<name>" belongs to
@@ -150,19 +151,30 @@ def graphql(fields):
         return {"data": {"repository": {"defaultBranchRef": {"name": "main"}}}}
     if "search(" in query:
         q = fields["q"]
+        is_open = lambda i: i.get("state", "OPEN") == "OPEN"
+        words = [w for w in q.split() if not re.match(r"^(repo|is|sort):", w)]
+        matches = lambda i: all(w.lower() in (i["title"] + " " + i["author"] + " " + str(i["number"])).lower() for w in words)
         if "is:issue" in q:
-            found = [i for i in all_issues if i.get("assigned") and i.get("state", "OPEN") == "OPEN"]
+            if "assignee:" in q:
+                found = [i for i in all_issues if i.get("assigned") and is_open(i)]
+            else:
+                found = [i for i in all_issues if is_open(i) and matches(i)]
             return {"data": {"search": {"nodes": [issue_summary(i) for i in found]}}}
         head = re.search(r"head:(\S+)", q)
         if head:
-            found = [p for p in prs if p["head_ref"] == head.group(1) and p.get("state", "OPEN") == "OPEN"]
+            found = [p for p in prs if p["head_ref"] == head.group(1) and is_open(p)]
+        elif f"-author:{ME}" in q:
+            found = [p for p in prs if p["author"] != ME and is_open(p)]
         elif f"author:{ME}" in q:
-            found = [p for p in prs if p["author"] == ME and p.get("state", "OPEN") == "OPEN"]
+            found = [p for p in prs if p["author"] == ME and is_open(p)]
+        elif f"assignee:{ME}" in q:
+            found = [p for p in prs if p.get("assigned") and is_open(p)]
         elif f"review-requested:{ME}" in q:
-            found = [p for p in prs if p.get("requested") and p.get("state", "OPEN") == "OPEN"]
+            found = [p for p in prs if p.get("requested") and is_open(p)]
+        elif f"reviewed-by:{ME}" in q:
+            found = [p for p in prs if p.get("reviewed") and is_open(p)]
         else:
-            words = [w for w in q.split() if not re.match(r"^(repo|is|sort):", w)]
-            found = [p for p in prs if all(w.lower() in (p["title"] + " " + p["author"] + " " + str(p["number"])).lower() for w in words)]
+            found = [p for p in prs if is_open(p) and matches(p)]
         return {"data": {"search": {"nodes": [summary(p) for p in found]}}}
     by_number = {p["number"]: p for p in prs}
     issues = {i["number"]: i for i in all_issues}

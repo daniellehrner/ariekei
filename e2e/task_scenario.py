@@ -9,7 +9,7 @@ sending its review threads to the task's agent, asking the agent about code from
 (right-click a line or an old-side selection; refused while it waits for permission), Ctrl+B
 and ? in the terminal staying with the agent, Discard refused while the agent waits for
 permission, a closed issue staying under its task, Discard (shows the work it loses, then
-removes the worktree, branch and task; the PR goes back to Mine), and a second task (the +
+removes the worktree, branch and task; the PR goes back to My PRs), and a second task (the +
 button) whose merged PR stays under it ("All closed") until Done removes it.
 
 Run it with `python3 e2e/run.py <test-app> task` (see run.py), which sets the environment.
@@ -149,8 +149,8 @@ s = Session(app)
 try:
     s.type(s.wait(".connect form input"), clone)
     s.click(s.wait(".connect form button"))
-    s.wait(".inbox [data-section='mine']", timeout=60)
-    equal("Inbox sections before", sections(s), ["Mine 0", "Opened 0"])
+    s.wait(".inbox [data-section='open']", timeout=60)
+    equal("Inbox sections before", sections(s), ["Open 0"])
 
     # --- New task ---
     # Ctrl+N, as a user would (+ in the Inbox header does the same).
@@ -173,7 +173,7 @@ try:
                lambda md: md and "Look at how the peer table is reset." in md and "`gh pr create`" in md)
     eventually("the task's agent is ready", lambda: agent(s, -1), lambda a: a in ("ready", "finished"), timeout=60)
     print("[task] inbox:", sections(s), listed(s))
-    equal("the task is listed under Tasks", sections(s), ["Tasks 1", "Mine 0", "Opened 0"])
+    equal("the task is listed under Tasks", sections(s), ["Tasks 1", "Open 0"])
 
     # --- the agent opens a PR and an issue: both are linked to the task ---
     open(os.path.join(wt, "a.txt"), "a").write("reset peers once\n")
@@ -183,7 +183,7 @@ try:
     ask(s, "Open an issue titled 'Peer table grows without bound'")
     eventually("the issue appears under the task", lambda: listed(s), lambda rows: [101, True] in rows, timeout=30)
     print("[linked] inbox:", sections(s), listed(s))
-    equal("linked items are not in their own sections", sections(s), ["Tasks 1", "Mine 0", "Opened 0"])
+    equal("linked items are not in their own sections", sections(s), ["Tasks 1", "Open 0"])
     s.js("[...document.querySelectorAll('.item [role=tab]')].find(t => t.textContent.trim() === 'Overview').click()")
     links = eventually("the task's Overview lists them", lambda: s.js("return [...document.querySelectorAll('[data-links] [data-link]')].map(b => b.dataset.link)"),
                        lambda v: v and sorted(v) == ["100", "101"])
@@ -284,7 +284,7 @@ try:
     branch_left = subprocess.run(["git", "-C", clone, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"]).returncode == 0
     print("[discard] worktree removed:", not os.path.exists(wt), "| branch deleted:", not branch_left, "| inbox:", sections(s), listed(s))
     check("Discard removes the worktree and the branch", not os.path.exists(wt) and not branch_left)
-    eventually("the PR is back in Mine", lambda: sections(s), lambda v: "Mine 1" in v and "Tasks 1" not in v)
+    eventually("the PR is back in My PRs", lambda: sections(s), lambda v: "My PRs 1" in v and "Tasks 1" not in v)
 
     # --- a second task (the + button), whose PR is merged, then Done ---
     s.click(s.wait("[data-new-task]"))
@@ -313,6 +313,6 @@ try:
     branch_left = subprocess.run(["git", "-C", clone, "show-ref", "--verify", "--quiet", f"refs/heads/{branch2}"]).returncode == 0
     print("[done] worktree removed:", not os.path.exists(wt2), "| branch deleted:", not branch_left, "| inbox:", sections(s), listed(s))
     check("Done removes the task's worktree and branch", not os.path.exists(wt2) and not branch_left)
-    equal("what is left", sections(s), ["Mine 1", "Opened 0"])
+    equal("what is left", sections(s), ["My PRs 1", "Open 0"])
 finally:
     s.quit()

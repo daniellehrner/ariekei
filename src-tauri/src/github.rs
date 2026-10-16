@@ -474,6 +474,16 @@ pub fn assigned_issues(owner: &str, name: &str, viewer: &str) -> Result<Vec<Issu
     Ok(parse_issues(&v["data"]["search"]["nodes"], viewer))
 }
 
+/// Open issues in `owner/name` matching GitHub search `terms`, most recently updated first,
+/// without their comments (for browsing).
+pub fn search_issues(owner: &str, name: &str, terms: &str) -> Result<Vec<IssueSummary>, String> {
+    let query = "query($q: String!) { search(query: $q, type: ISSUE, first: 50) { nodes { ... on Issue { \
+        number title url state updatedAt author { login } labels(first: 5) { nodes { name } } } } } }";
+    let q = format!("repo:{owner}/{name} is:issue is:open {terms} sort:updated-desc");
+    let v = graphql(query, &[("q", &q)], &[])?;
+    Ok(parse_issues(&v["data"]["search"]["nodes"], ""))
+}
+
 /// Issues by number (any state), e.g. ones with a worktree that are no longer assigned.
 pub fn issues_by_number(
     owner: &str,
@@ -1331,13 +1341,6 @@ mod live {
         (o.to_owned(), n.to_owned())
     }
 
-    /// Any open issue of the repo, to exercise the issue queries.
-    fn search_issue_numbers(owner: &str, name: &str) -> Option<i64> {
-        let q = format!("repo:{owner}/{name} is:issue is:open");
-        let v = graphql("query($q: String!) { search(query: $q, type: ISSUE, first: 1) { nodes { ... on Issue { number } } } }", &[("q", &q)], &[]).ok()?;
-        v["data"]["search"]["nodes"][0]["number"].as_i64()
-    }
-
     #[test]
     #[ignore]
     fn live_open_prs_and_detail() {
@@ -1348,7 +1351,9 @@ mod live {
         println!("default branch: {}", default_branch(&owner, &name).unwrap());
         let issues = assigned_issues(&owner, &name, &me).unwrap();
         println!("{} issues assigned to me", issues.len());
-        let any_issue = search_issue_numbers(&owner, &name);
+        let open_issues = search_issues(&owner, &name, "").unwrap();
+        println!("{} open issues (browsing, newest first)", open_issues.len());
+        let any_issue = open_issues.first().map(|i| i.number);
         if let Some(n) = any_issue {
             let (c, _) = issue_conversation(&owner, &name, n).unwrap();
             let by_number = issues_by_number(&owner, &name, &me, &[n]).unwrap();
@@ -1361,6 +1366,13 @@ mod live {
             );
         }
         println!("{} PRs request my review", requested.len());
+        let assigned = search_pr_stamps(&owner, &name, &format!("assignee:{me}")).unwrap();
+        let reviewed = search_pr_stamps(&owner, &name, &format!("reviewed-by:{me}")).unwrap();
+        println!(
+            "{} PRs assigned to me, {} reviewed by me",
+            assigned.len(),
+            reviewed.len()
+        );
         let others = search_prs(&owner, &name, &me, &format!("-author:{me}")).unwrap();
         println!(
             "{} open PRs by others, e.g. {:?}",

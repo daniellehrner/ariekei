@@ -1,14 +1,15 @@
 <script lang="ts">
   import { icons, type IconName } from "./icons";
 
-  let { name, size = 16, label }: { name: IconName; size?: number; label?: string } = $props();
+  // `filled`: the shape is filled too (a starred star); "play" always is.
+  let { name, size = 16, label, filled = false }: { name: IconName; size?: number; label?: string; filled?: boolean } = $props();
 </script>
 
 <svg
   width={size}
   height={size}
   viewBox="0 0 16 16"
-  fill={name === "play" ? "currentColor" : "none"}
+  fill={filled || name === "play" ? "currentColor" : "none"}
   stroke="currentColor"
   stroke-width={name === "pending" ? 2.2 : 1.5}
   stroke-linecap="round"

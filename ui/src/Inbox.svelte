@@ -4,10 +4,12 @@
   import Icon from "./controls/Icon.svelte";
   import IconButton from "./controls/IconButton.svelte";
   import Button from "./controls/Button.svelte";
-  import Pill from "./controls/Pill.svelte";
+  import StarToggle from "./controls/StarToggle.svelte";
   import StatusDot from "./controls/StatusDot.svelte";
   import { ATTENTION_LABEL, attentionKind } from "./lib/attention";
-  import { api, shortName, type Repo, type Row, type SearchHit } from "./lib/api";
+  import { api, shortName, type Repo, type Row } from "./lib/api";
+  import { SECTIONS, bySection } from "./lib/inboxSections";
+  import { browser } from "./lib/layout.svelte";
 
   let {
     repo,
@@ -34,7 +36,7 @@
     ontoggle: () => void;
     onselect: (id: number) => void;
     onrefresh: () => void;
-    /// A PR or task was added to the Inbox (from search, or New task).
+    /// The Inbox changed here: a task was added, an item starred or removed.
     onadded: () => void;
     /// This window now shows another repo.
     onswitch: (repo: Repo) => void;
@@ -44,15 +46,8 @@
     creating?: boolean;
   } = $props();
 
-  // A task's PRs and issues are listed under it, not in their own sections.
-  const own = (r: Row) => r.taskId == null;
-  const SECTIONS: { key: string; title: string; empty: string; has: (r: Row) => boolean }[] = [
-    { key: "tasks", title: "Tasks", empty: "", has: (r) => r.kind === "task" },
-    { key: "mine", title: "Mine", empty: "You have no open pull requests here.", has: (r) => own(r) && r.kind === "pr" && r.role === "author" },
-    { key: "requested", title: "Review requested", empty: "Nothing here.", has: (r) => own(r) && r.kind === "pr" && r.role === "requested" },
-    { key: "issues", title: "Issues", empty: "Nothing here.", has: (r) => own(r) && r.kind === "issue" },
-    { key: "opened", title: "Opened", empty: "PRs you open from search appear here.", has: (r) => own(r) && r.kind === "pr" && r.role === "other" },
-  ];
+  // Each item is in one section, the first that fits (lib/inboxSections.ts).
+  const sections = $derived(bySection(rows));
   const DECISION: Record<string, [string, string]> = {
     APPROVED: ["approved", "ok"],
     CHANGES_REQUESTED: ["changes req.", "warn"],
@@ -76,45 +71,39 @@
       .sort((a, b) => URGENCY[a.kind] - URGENCY[b.kind]),
   );
 
-  // --- search over all open PRs of the repo ---
-  let query = $state("");
-  let hits: SearchHit[] = $state([]);
-  let searching = $state(false);
-  let searchError: string | null = $state(null);
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  // --- browsing the repo's open PRs and issues (Browse.svelte), starring, removing ---
 
-  $effect(() => {
-    const text = query.trim();
-    clearTimeout(timer);
-    if (!text) {
-      hits = [];
-      searchError = null;
-      return;
-    }
-    timer = setTimeout(async () => {
-      searching = true;
-      try {
-        const found = await api.searchPrs(text);
-        if (query.trim() === text) {
-          hits = found;
-          searchError = null;
-        }
-      } catch (e) {
-        searchError = String(e);
-      } finally {
-        searching = false;
-      }
-    }, 350);
-  });
+  function browse(text = "") {
+    browser.text = text;
+    browser.open = true;
+  }
 
-  async function pick(hit: SearchHit) {
+  // Typing in the Browse field opens the browser with what was typed.
+  function onBrowseInput(e: Event) {
+    const field = e.currentTarget as HTMLInputElement;
+    browse(field.value);
+    field.value = "";
+  }
+
+  let actionError: string | null = $state(null);
+
+  async function star(row: Row) {
     try {
-      const id = hit.itemId ?? (await api.trackPr(hit.number));
-      query = "";
+      await api.setStarred(row.id, !row.starred);
+      actionError = null;
       onadded();
-      onselect(id);
     } catch (e) {
-      searchError = String(e);
+      actionError = String(e);
+    }
+  }
+
+  async function remove(row: Row) {
+    try {
+      await api.untrack(row.id);
+      actionError = null;
+      onadded();
+    } catch (e) {
+      actionError = String(e);
     }
   }
 
@@ -152,16 +141,12 @@
     if (e.key === "Escape" && !starting) creating = false;
   }
 
-  function onSearchKey(e: KeyboardEvent) {
-    if (e.key === "Escape") query = "";
-    if (e.key === "Enter" && hits[0]) pick(hits[0]);
-  }
 </script>
 
 {#snippet item(row: Row, section: string, nested: boolean)}
   {@const kind = attentionKind(row.attention)}
   {@const decision = row.reviewDecision ? DECISION[row.reviewDecision] : null}
-  <li class:closed={!row.open} class:nested>
+  <li class:closed={!row.open} class:nested class:starred={row.starred}>
     <button class="row" class:active={row.id === selected} aria-current={row.id === selected} onclick={() => onselect(row.id)}
       title={row.title} data-number={row.number} data-task={row.kind === "task" ? -row.number : undefined}>
       <span class="dot"><StatusDot status={row.agent} /></span>
@@ -175,7 +160,7 @@
           {/if}
         </span>
         <span class="line2">
-          {#if section !== "mine" && section !== "tasks"}<span>{row.author}</span>{/if}
+          {#if section !== "mine" && section !== "approved" && section !== "tasks"}<span>{row.author}</span>{/if}
           {#if row.kind === "task" && !rows.some((r) => r.taskId === row.id)}<span class="faint">no PR or issue yet</span>{/if}
           {#if row.issueNumber}<span>from #{row.issueNumber}</span>{/if}
           {#if row.ci}
@@ -195,6 +180,14 @@
         </span>
       </span>
     </button>
+    {#if !nested}
+      <span class="acts">
+        {#if row.removable}
+          <IconButton icon="x" label="Remove {shortName(row)} from the Inbox" size={22} onclick={() => remove(row)} data-remove={row.number} />
+        {/if}
+        <StarToggle starred={row.starred} name={shortName(row)} onclick={() => star(row)} data-star={row.number} />
+      </span>
+    {/if}
   </li>
 {/snippet}
 
@@ -220,12 +213,8 @@
   <div class="search">
     <label>
       <Icon name="search" size={14} />
-      <input
-        bind:value={query}
-        onkeydown={onSearchKey}
-        placeholder="Search PRs — words, #123, author:name"
-        aria-label="Search open pull requests"
-      />
+      <input oninput={onBrowseInput} onclick={() => browse()} onkeydown={(e) => e.key === "Enter" && browse()}
+        placeholder="Browse open PRs and issues… (Ctrl+K)" aria-label="Browse open pull requests and issues" data-browse-field />
     </label>
   </div>
   {#if creating}
@@ -241,6 +230,7 @@
       </div>
     </form>
   {/if}
+  {#if actionError}<p class="action-error" role="alert">{actionError}</p>{/if}
   {#if error}
     <div class="poll-error" role="status" title={error}>
       <Icon name="warning" size={14} />
@@ -248,27 +238,7 @@
     </div>
   {/if}
 
-  {#if query.trim()}
-    <ul class="hits" aria-label="Search results">
-      {#if searchError}<li class="empty error">{searchError}</li>{/if}
-      {#each hits as hit (hit.number)}
-        <li>
-          <button class="row" onclick={() => pick(hit)} data-hit={hit.number}>
-            <span class="lines">
-              <span class="line1"><span class="num">#{hit.number}</span><span class="title">{hit.title}</span></span>
-              <span class="line2">
-                <span>{hit.author}</span>
-                {#if hit.isDraft}<Pill size="sm">draft</Pill>{/if}
-                {#if hit.itemId}<Pill size="sm" tone="you">in inbox</Pill>{/if}
-              </span>
-            </span>
-          </button>
-        </li>
-      {:else}
-        <li class="empty">{searching ? "Searching…" : `No open pull request matches “${query.trim()}”.`}</li>
-      {/each}
-    </ul>
-  {:else if !loaded}
+  {#if !loaded}
     <div class="skeleton" aria-label="Loading the Inbox">
       {#each [70, 58, 64] as w}
         <div class="sk-row"><span class="sk-dot"></span><span class="sk-bar" style:width="{w}%"></span></div>
@@ -278,15 +248,20 @@
   {:else}
     <nav class="sections" aria-label="Work items">
       {#each SECTIONS as section (section.key)}
-        {@const list = rows.filter(section.has)}
+        {@const list = sections[section.key]}
         {@const open = !folded.includes(section.key)}
-        {#if list.length || section.key === "mine" || section.key === "opened"}
+        {#if list.length || section.key === "open"}
           <section data-section={section.key}>
-            <button class="section-head" onclick={() => fold(section.key)} aria-expanded={open}>
-              <span class="chev" class:folded={!open}><Icon name="chevron-down" size={14} /></span>
-              <span class="label">{section.title}</span>
-              <span class="count">{list.length}</span>
-            </button>
+            <div class="section-row">
+              <button class="section-head" onclick={() => fold(section.key)} aria-expanded={open}>
+                <span class="chev" class:folded={!open}><Icon name="chevron-down" size={14} /></span>
+                <span class="label">{section.title}</span>
+                <span class="count">{list.length}</span>
+              </button>
+              {#if section.key === "open"}
+                <button class="section-action" onclick={() => browse()} data-browse-open-section>Browse…</button>
+              {/if}
+            </div>
             {#if open}
               <ul>
                 {#each list as row (row.id)}
@@ -297,7 +272,7 @@
                     {/each}
                   {/if}
                 {:else}
-                  <li class="empty">{section.empty}</li>
+                  <li class="empty">Add open PRs and issues with Browse.</li>
                 {/each}
               </ul>
             {/if}
@@ -345,10 +320,11 @@
   .poll-error strong { font-weight: var(--fw-semibold); }
   .muted { color: var(--text-muted); }
 
-  .sections, .hits, .skeleton { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: var(--sp-6); }
+  .sections, .skeleton { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: var(--sp-6); }
   section { display: flex; flex-direction: column; }
+  .section-row { display: flex; align-items: center; }
   .section-head {
-    display: flex; align-items: center; gap: var(--sp-2); height: 28px; padding: 0 var(--sp-6) 0 var(--sp-4);
+    flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--sp-2); height: 28px; padding: 0 var(--sp-6) 0 var(--sp-4);
     border: 0; border-radius: 0; background: transparent; color: var(--text-muted); text-align: left;
     font-size: var(--fs-11); font-weight: var(--fw-semibold); letter-spacing: 0.04em; text-transform: uppercase;
   }
@@ -357,8 +333,23 @@
   .chev { display: flex; transition: transform var(--dur-fast) var(--ease); }
   .chev.folded { transform: rotate(-90deg); }
   .count { font-family: var(--font-mono); font-weight: var(--fw-medium); letter-spacing: 0; }
+  .section-action {
+    flex: none; height: 22px; margin-right: var(--sp-4); padding: 0 var(--sp-3); border: 0; border-radius: var(--r-sm);
+    background: transparent; color: var(--text-muted); font: inherit; font-size: var(--fs-11); font-weight: var(--fw-medium);
+  }
+  .section-action:hover { background: var(--surface-hover); color: var(--text); }
   ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
+  li { position: relative; }
   li.closed { opacity: 0.6; }
+  /* Star and remove sit over the end of the title line: shown while the row is hovered or
+     focused, the star also while it is set (the title leaves it room then). */
+  .acts {
+    position: absolute; top: 3px; right: var(--sp-5); display: none; gap: 1px; border-radius: var(--r-md);
+  }
+  li:hover .acts, li:focus-within .acts, li.starred .acts { display: flex; }
+  li:hover .acts, li:focus-within .acts { background: var(--surface-hover); }
+  li:not(:hover):not(:focus-within) .acts :global([data-remove]) { display: none; }
+  li.starred .line1 { padding-right: 22px; }
   li.nested .row { padding-left: 26px; }
   .kind { flex: none; display: inline-flex; align-self: center; color: var(--text-faint); }
   .new-task {
@@ -403,9 +394,8 @@
   .attention.activity { color: var(--gh-strong); }
   .attention.review, .attention.all-closed { color: var(--you-strong); }
   .attention.working { color: var(--text-muted); }
-  .hits .line2 { gap: var(--sp-3); }
   .empty { padding: var(--sp-2) var(--sp-6) var(--sp-5) var(--sp-9); font-size: var(--fs-12); line-height: 16px; color: var(--text-faint); }
-  .empty.error { color: var(--bad); }
+  .action-error { margin: 0 var(--sp-4) var(--sp-4); font-size: var(--fs-12); color: var(--bad); }
 
   .skeleton { padding: var(--sp-6) var(--sp-7); display: flex; flex-direction: column; gap: var(--sp-3); }
   .sk-row { display: flex; gap: var(--sp-4); align-items: center; }

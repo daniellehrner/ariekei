@@ -11,3 +11,7 @@ export const openOn = $state<{ item: number | null; tab: Tab | null }>({ item: n
 
 // Whether the keyboard shortcuts overlay is open (? anywhere, or the review's keyboard button).
 export const shortcuts = $state({ open: false });
+
+// The browser of the repo's open PRs and issues (Ctrl+K, the Inbox's Browse field): open, and
+// what it shows first.
+export const browser = $state<{ open: boolean; kind: "pr" | "issue"; text: string }>({ open: false, kind: "pr", text: "" });

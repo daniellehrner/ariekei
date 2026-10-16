@@ -13,6 +13,7 @@
   import InlineConfirm from "./controls/InlineConfirm.svelte";
   import StatusDot, { AGENT_LABEL } from "./controls/StatusDot.svelte";
   import Spinner from "./controls/Spinner.svelte";
+  import StarToggle from "./controls/StarToggle.svelte";
   import { agents } from "./lib/agent.svelte";
   import { api, shortName, type Conversation, type Row } from "./lib/api";
   import { landingTab, type Tab } from "./lib/attention";
@@ -270,6 +271,10 @@
     <div class="title-row">
       <span class="kind"><Icon name={KIND_ICON[row.kind]} label={KIND_LABEL[row.kind]} /></span>
       <h1 class="title"><span class="num">{shortName(row)}</span>{row.title}</h1>
+      <!-- A task's PRs and issues are listed under it: the task is what gets starred. -->
+      {#if row.taskId == null}
+        <StarToggle starred={row.starred} name={shortName(row)} size={26} onclick={() => api.setStarred(row.id, !row.starred).then(onchanged)} data-item-star />
+      {/if}
       <div class="actions">
         {#if preparing}
           <span class="preparing" role="status"><Spinner />Preparing the worktree…</span>
@@ -426,11 +431,12 @@
   .title-row { display: flex; align-items: center; gap: var(--sp-5); min-width: 0; min-height: var(--h-control); }
   .kind { display: flex; color: var(--text-muted); }
   .title {
-    flex: 1; min-width: 0; margin: 0; font-size: var(--fs-15); line-height: var(--lh-15); font-weight: var(--fw-semibold);
+    flex: 0 1 auto; min-width: 0; margin: 0; font-size: var(--fs-15); line-height: var(--lh-15); font-weight: var(--fw-semibold);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .num { font-family: var(--font-mono); font-weight: var(--fw-medium); color: var(--text-muted); margin-right: var(--sp-3); }
-  .actions { flex: none; display: flex; align-items: center; gap: var(--sp-3); }
+  /* The star follows the title; the actions keep to the right. */
+  .actions { flex: none; margin-left: auto; display: flex; align-items: center; gap: var(--sp-3); }
   .preparing { display: inline-flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-12); color: var(--text-muted); }
   .meta {
     display: flex; align-items: center; gap: var(--sp-6); min-width: 0; padding-left: 26px;

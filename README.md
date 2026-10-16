@@ -7,9 +7,12 @@ code navigation or debugging, use your IDE on the same worktree. Tauri 2 (Rust) 
 
 ## What it does
 
-- **Inbox:** your open PRs, PRs requesting your review, your assigned issues, and any PR you
-  opened from search, ordered by attention (agent needs you, CI failing, new comments, changes
-  to review, …). Notifications for the same events: in the window while Ariekei is in front
+- **Inbox:** sections **Starred**, **Tasks**, **Assigned** (PRs and issues), **Approved** (your
+  PRs ready to merge), **Review requested**, **My PRs**, **Reviewed** (PRs you reviewed) and
+  **Open** (what you added); each item is in the first section that fits, and within a section
+  ordered by attention (agent needs you, CI failing, new comments, changes to review, …). Star
+  any item to keep it at the top. **Browse** (Ctrl+K) lists the repo's open PRs and issues with
+  GitHub's search syntax and adds them to Open; what you added can be removed again. Notifications for the same events: in the window while Ariekei is in front
   (click one to open its item), OS notifications otherwise.
 - **Work item:** Overview (description, checks, reviewers), Comments (review threads and
   conversation; reply, resolve, comment), Review, and Terminal.
@@ -89,7 +92,7 @@ On Linux the app runs on a private Xvfb display and D-Bus session (it needs `Xvf
 windows never show up on your desktop or take focus, and its notifications stay out of yours.
 `E2E_HEADED=1` shows the windows on your display instead.
 
-- `review`: search, Overview, Comments, review without a worktree, review order and marks,
+- `review`: Inbox sections, browsing and adding, starring and removing, Overview, Comments, review without a worktree, review order and marks,
   the review guide, submitting a review, rebase-aware "since your review".
 - `windows`: two repos, switching, a window per repo, restoring windows after a restart.
 - `lifecycle`: issue → worktree → push → draft PR → merge → cleanup.

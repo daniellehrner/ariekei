@@ -36,7 +36,8 @@ export interface Row {
   cleanupBlockers: string[] | null;
   title: string;
   author: string;
-  role: "author" | "requested" | "assignee" | "other";
+  /** Why it is in the Inbox, the strongest reason (see `poller::role_of`). */
+  role: "assignee" | "author" | "requested" | "reviewed" | "other";
   url: string;
   isDraft: boolean;
   open: boolean;
@@ -58,6 +59,10 @@ export interface Row {
   notes: string | null;
   /** A task whose PRs and issues are all closed or merged (it has some). */
   outcomesClosed: boolean;
+  /** The user starred it: it heads the Inbox. */
+  starred: boolean;
+  /** The user added it and can take it out again. */
+  removable: boolean;
 }
 
 /** `T1` for a task, `#12` for a PR or issue. */
@@ -98,12 +103,17 @@ export interface ReviewState {
 export type Cleanup = { outcome: "cleaned"; removed: string[] } | { outcome: "blocked"; blockers: string[] };
 
 export interface SearchHit {
+  kind: "pr" | "issue";
   number: number;
   title: string;
   author: string;
   isDraft: boolean;
+  labels: string[];
   updatedAt: string;
+  /** The work item, if it is in the Inbox. */
   itemId: number | null;
+  /** The user added it and can take it out again. */
+  removable: boolean;
 }
 
 export interface GhComment {
@@ -191,8 +201,10 @@ export const api = {
   markFileReviewed: (id: number, path: string, reviewed: boolean) => invoke<void>("mark_file_reviewed", { id, path, reviewed }),
   reviewGuide: (id: number) => invoke<{ guide: Guide; stale: boolean } | null>("review_guide", { id }),
   prepareGuide: (id: number) => invoke<{ guide: Guide; stale: boolean }>("prepare_guide", { id }),
-  searchPrs: (text: string) => invoke<SearchHit[]>("search_prs", { text }),
-  trackPr: (number: number) => invoke<number>("track_pr", { number }),
+  searchItems: (kind: "pr" | "issue", text: string) => invoke<SearchHit[]>("search_items", { kind, text }),
+  trackItem: (kind: "pr" | "issue", number: number) => invoke<number>("track_item", { kind, number }),
+  untrack: (id: number) => invoke<void>("untrack", { id }),
+  setStarred: (id: number, starred: boolean) => invoke<void>("set_starred", { id, starred }),
   createTask: (title: string, notes: string) => invoke<number>("create_task", { title, notes }),
   conversation: (id: number) => invoke<Conversation>("pr_conversation", { id }),
   fetchPr: (id: number) => invoke<string>("fetch_pr", { id }),

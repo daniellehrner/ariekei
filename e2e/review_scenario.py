@@ -1,8 +1,9 @@
 """E2E: reviewing PRs (your own and other people's) against a fake GitHub.
 
 GitHub is replaced by e2e/fake_gh.py (ARIEKEI_GH), which serves the fixture's PRs and
-records every write instead of sending it. Covers: Inbox sections (Mine / Review
-requested), search and opening another author's PR, Overview (sanitized description),
+records every write instead of sending it. Covers: Inbox sections (Assigned, Approved,
+Review requested, My PRs, Reviewed, Open), browsing open PRs and issues (Ctrl+K) to add them
+to Open, starring and removing, opening another author's PR, Overview (sanitized description),
 Comments (resolve, reply, new comment), reviewing without a worktree ("All changes vs
 main" from refs/pull/N/head), draft comments, Submit to GitHub (line comment inside the
 PR diff, the other one folded into the body), and "All changes" after Mark reviewed.
@@ -89,6 +90,12 @@ json.dump({"viewer": "me", "prs": [
      "threads": [{"id": "T1", "path": "a.txt", "line": 10, "comment_id": 101, "author": "bob", "html": "<p>Why this change?</p>",
                   "diff_hunk": "@@ -9,2 +9,2 @@\n line9\n-line10\n+line10 changed"}]},
     {"number": 44, "title": "Add z", "author": "dave", "head_ref": "feature/z", "head_sha": sha44, "base_ref": "main", "requested": True},
+    # One PR for each of the other sections; their branches are not needed.
+    {"number": 45, "title": "Handle w", "author": "erin", "head_ref": "feature/w", "head_sha": sha44, "base_ref": "main", "assigned": True},
+    {"number": 46, "title": "My approved change", "author": "me", "head_ref": "feature/v", "head_sha": sha42, "base_ref": "main", "decision": "APPROVED"},
+    {"number": 47, "title": "Tidy u", "author": "frank", "head_ref": "feature/u", "head_sha": sha44, "base_ref": "main", "reviewed": True},
+], "issues": [
+    {"number": 8, "title": "Flaky test", "author": "carol"},
 ]}, open(os.path.join(gh_dir, "data.json"), "w"))
 writes_file = os.path.join(gh_dir, "writes.jsonl")
 
@@ -100,6 +107,23 @@ def writes():
 
 
 # --- helpers ------------------------------------------------------------------------
+def sections(s):
+    return s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))")
+
+
+def section_rows(s, key):
+    """The numbers of the rows in Inbox section `key`, in order."""
+    return s.js("return [...document.querySelectorAll(`.inbox [data-section='${arguments[0]}'] .row`)].map(r => +r.dataset.number)", key)
+
+
+def hits(s):
+    return s.js("return [...document.querySelectorAll('[data-browse-hit]')].map(h => +h.dataset.browseHit)")
+
+
+def ctrl(s, key):
+    s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: arguments[0], ctrlKey: true, bubbles: true }))", key)
+
+
 def tab(s, name):
     s.js("[...document.querySelectorAll('[role=tab]')].find(t => t.textContent.trim().startsWith(arguments[0]))?.click()", name)
 
@@ -150,16 +174,28 @@ try:
     s.type(s.wait(".connect form input"), clone)
     s.click(s.wait(".connect form button"))
     s.wait(".inbox .row[data-number='44']", timeout=60)
-    sections = s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))")
-    print("[inbox] sections:", sections)
-    equal("Inbox sections", sections, ["Mine 1", "Review requested 1", "Opened 0"])
+    print("[inbox] sections:", sections(s))
+    equal("Inbox sections", sections(s), ["Assigned 1", "Approved 1", "Review requested 1", "My PRs 1", "Reviewed 1", "Open 0"])
+    equal("each PR is in its section", {k: section_rows(s, k) for k in ["assigned", "approved", "requested", "mine", "reviewed"]},
+          {"assigned": [45], "approved": [46], "requested": [44], "mine": [42], "reviewed": [47]})
 
-    # Find another author's PR and open it.
-    s.type(s.wait(".search input"), "parser")
-    s.wait(".hits [data-hit='43']", timeout=20)
-    print("[search] hits:", s.js("return [...document.querySelectorAll('.hits .row')].map(r => r.innerText.replace(/\\n+/g, ' | '))"))
-    check("search finds #43", s.find(".hits [data-hit='43']"))
-    s.click(s.wait(".hits [data-hit='43']"))
+    # Browse (Ctrl+K): add an open issue, then find another author's PR, add it and open it.
+    ctrl(s, "k")
+    s.wait("[data-browse]", timeout=10)
+    dom_click(s, "[data-browse-kind] [data-value='issue']")
+    s.wait("[data-browse-hit='8']", timeout=20)
+    s.click(s.wait("[data-browse-hit='8'] [data-browse-add]"))
+    s.wait("[data-browse-hit='8'] [data-browse-open]", timeout=20)
+    eventually("an added issue is listed under Open", lambda: section_rows(s, "open"), lambda v: v == [8], timeout=10)
+    dom_click(s, "[data-browse-kind] [data-value='pr']")
+    s.type(s.wait("[data-browse-search]"), "parser")
+    eventually("the search finds #43", lambda: hits(s), lambda v: v == [43], timeout=20)
+    print("[browse] hits:", s.js("return [...document.querySelectorAll('[data-browse-hit]')].map(r => r.innerText.replace(/\\n+/g, ' | '))"))
+    s.screenshot(os.path.join(shots, "r0-browse.png"))
+    # Enter adds the hit; Enter again opens it (and closes the browser).
+    press_on(s, "[data-browse-search]", "Enter")
+    s.wait("[data-browse-hit='43'] [data-browse-open]", timeout=20)
+    press_on(s, "[data-browse-search]", "Enter")
     s.wait(".item header .title", timeout=30, text="Add y to the parser")
     s.wait(".overview .meta", timeout=30)
     print("[overview]", s.js("return document.querySelector('.item header .title').textContent.trim()"), "|",
@@ -168,9 +204,31 @@ try:
           "| scripts in it:", s.js("return document.querySelectorAll('.overview .body script, .overview .body [onerror]').length"),
           "| __pwned:", s.js("return window.__pwned ?? null"))
     s.screenshot(os.path.join(shots, "r1-overview.png"))
-    print("[inbox] after opening:", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"))
+    check("opening an item closes the browser", not s.find("[data-browse]"))
+    print("[inbox] after opening:", sections(s))
     check("the description is sanitized", s.js("return document.querySelectorAll('.overview .body script, .overview .body [onerror]').length") == 0 and s.js("return window.__pwned ?? null") is None)
-    contains("a PR opened from search goes to Opened", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"), "Opened 1")
+    eventually("added items are listed under Open", lambda: sorted(section_rows(s, "open")), lambda v: v == [8, 43], timeout=10)
+
+    # Starring the open item (in its header) moves it to the top; unstarring it in the Inbox
+    # moves it back.
+    dom_click(s, "[data-item-star]")
+    eventually("a starred item heads the Inbox", lambda: section_rows(s, "starred"), lambda v: v == [43], timeout=10)
+    equal("Starred is the first section", sections(s)[0], "Starred 1")
+    check("its star is set in the Inbox and the header",
+          s.js("return document.querySelector(\".inbox [data-star='43']\").getAttribute('aria-pressed') === 'true' && document.querySelector('[data-item-star]').getAttribute('aria-pressed') === 'true'"))
+    s.screenshot(os.path.join(shots, "r0-starred.png"))
+    dom_click(s, ".inbox [data-star='43']")
+    eventually("unstarred, it is back under Open", lambda: sorted(section_rows(s, "open")), lambda v: v == [8, 43], timeout=10)
+    check("no Starred section is left", not s.find(".inbox [data-section='starred']"))
+    # An added item can be taken out again; one the user did not add cannot.
+    check("only added items can be removed", s.find(".inbox [data-remove='8']") and not s.find(".inbox [data-remove='44']"))
+    dom_click(s, ".inbox [data-remove='8']")
+    eventually("a removed item leaves the Inbox", lambda: section_rows(s, "open"), lambda v: v == [43], timeout=10)
+    ctrl(s, "k")
+    dom_click(s, "[data-browse-kind] [data-value='issue']")
+    s.wait("[data-browse-hit='8'] [data-browse-add]", timeout=20)  # it offers to add it again
+    press_on(s, "[data-browse-search]", "Escape")
+    eventually("Esc closes the browser", lambda: bool(s.find("[data-browse]")), lambda v: not v, timeout=10)
 
     # ? shows the shortcuts anywhere, not only in the review: here with the focus on the
     # Overview tab, as clicking it leaves it. Esc closes them.
@@ -182,7 +240,7 @@ try:
     press_on(s, "[data-tab=overview]", "Escape")
     eventually("Esc closes the shortcuts", lambda: bool(s.find("[data-shortcuts]")), lambda v: not v, timeout=10)
     # Not while typing: ? in the search field is just a character.
-    press_on(s, ".search input", "?")
+    press_on(s, "[data-browse-field]", "?")
     time.sleep(0.3)
     check("? in a text field types, it does not open the shortcuts", not s.find("[data-shortcuts]"))
 

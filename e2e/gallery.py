@@ -17,7 +17,7 @@ D-Bus; to choose the theme, point D-Bus nowhere and set it in a GTK settings fil
 
 Screens: connect, empty (nothing selected yet), overview, menu, comments, collapsed, waiting, terminal, review, guide,
 selection, drafts, submit, code-menu, ask-agent, shortcuts, guard, review-hidden, notice-arriving,
-notices.
+notices, inbox (every section, one item starred), browse.
 """
 
 import json
@@ -97,7 +97,13 @@ if not os.path.exists(clone):
         {**pr, "number": 7973, "title": "Move Bonsai trie log pruning to a background task", "author": "carol", "requested": True,
          "decision": "CHANGES_REQUESTED", "threads": [{"id": "T2", "path": "build.gradle", "line": 2, "comment_id": 102, "author": "dmitri", "html": "<p>Why?</p>"}]},
         {**pr, "number": 8015, "title": "Reduce allocations when decoding receipts", "author": "dmitri", "requested": True},
-    ], "issues": [{"number": 7990, "title": "Snap sync never completes after a pivot reorg", "author": "carol", "body": "Seen on Holesky.", "assigned": True}]},
+        {**pr, "number": 8020, "title": "Expose the trie log pruning backlog as a metric", "author": "carol", "assigned": True},
+        {**pr, "number": 8003, "title": "Add the Prague blob schedule to the genesis config", "author": "me", "decision": "APPROVED"},
+        {**pr, "number": 7960, "title": "Back off from peers that send bad headers", "author": "dmitri", "reviewed": True, "decision": "APPROVED"},
+        {**pr, "number": 7941, "title": "Cache the parsed genesis file", "author": "alice"},
+    ], "issues": [{"number": 7990, "title": "Snap sync never completes after a pivot reorg", "author": "carol", "body": "Seen on Holesky.", "assigned": True},
+                  {"number": 7995, "title": "eth_simulateV1 ignores the block overrides' gas limit", "author": "alice"},
+                  {"number": 7982, "title": "Document the snap sync pivot distance option", "author": "carol"}]},
         open(os.path.join(gh_dir, "data.json"), "w"))
 
 
@@ -151,6 +157,20 @@ try:
     tab(s, "Overview")
     s.wait(".overview", timeout=60)
     shot(s, "overview")
+    if need("inbox", "browse"):
+        # Star an item, as from its row, and look at the browser of open PRs and issues.
+        s.js("""const rows = await window.__TAURI_INTERNALS__.invoke('inbox');
+          await window.__TAURI_INTERNALS__.invoke('set_starred', { id: rows.find((r) => r.number === 7973).id, starred: true });""")
+        s.wait(".inbox [data-section='starred']", timeout=20)
+        s.js("document.querySelector(\".inbox .row[data-number='8015']\").dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))")
+        shot(s, "inbox")
+        s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }))")
+        s.wait("[data-browse-hit]", timeout=20)
+        shot(s, "browse")
+        s.js("document.querySelector(\"[data-browse-kind] [data-value='issue']\").click()")
+        s.wait("[data-browse-hit='7995']", timeout=20)
+        shot(s, "browse-issues")
+        s.js("document.querySelector(\"[data-browse-search]\").dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))")
     if need("menu"):
         click(s, ".inbox [data-repo-menu]")
         s.wait(".menu [data-repo-id]")

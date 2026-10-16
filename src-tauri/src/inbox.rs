@@ -14,7 +14,7 @@ pub struct Row {
     pub issue_number: Option<i64>,
     pub title: String,
     pub author: String,
-    /// "author", "requested" or "other" (see `store`).
+    /// "assignee", "author", "requested", "reviewed" or "other" (see `poller::role_of`).
     pub role: String,
     pub url: String,
     pub is_draft: bool,
@@ -42,6 +42,10 @@ pub struct Row {
     pub notes: Option<String>,
     /// A task whose PRs and issues are all closed or merged (it has some).
     pub outcomes_closed: bool,
+    /// The user starred it (it heads the Inbox).
+    pub starred: bool,
+    /// The user added it and can take it out again (see `workitem::removable`).
+    pub removable: bool,
 }
 
 /// Rank of the row's most urgent reason; lower is more urgent.
@@ -131,6 +135,8 @@ mod tests {
             agent_item: None,
             notes: None,
             outcomes_closed: false,
+            starred: false,
+            removable: false,
         }
     }
 

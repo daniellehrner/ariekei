@@ -336,29 +336,47 @@ async fn send_pr_feedback(app: tauri::AppHandle, id: i64) -> Res<()> {
     .await
 }
 
-// --- other people's PRs and the PR conversation ---
+// --- browsing open PRs and issues, the Inbox's own lists, the PR conversation ---
 
+/// Open PRs or issues (`kind`: "pr" or "issue") matching `text`.
 #[tauri::command]
-async fn search_prs(
+async fn search_items(
     app: tauri::AppHandle,
     window: tauri::Window,
+    kind: String,
     text: String,
 ) -> Res<Vec<workitem::SearchHit>> {
     let label = window.label().to_owned();
     blocking(app, move |s| {
-        workitem::search(s, windows::repo_of(s, &label)?, &text)
+        workitem::search(s, windows::repo_of(s, &label)?, &kind, &text)
     })
     .await
 }
 
-/// Adds a PR (e.g. a search result) to the Inbox; returns its work item id.
+/// Adds a PR or issue (e.g. a search result) to the Inbox; returns its work item id.
 #[tauri::command]
-async fn track_pr(app: tauri::AppHandle, window: tauri::Window, number: i64) -> Res<i64> {
+async fn track_item(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    kind: String,
+    number: i64,
+) -> Res<i64> {
     let label = window.label().to_owned();
     blocking(app, move |s| {
-        workitem::track(s, windows::repo_of(s, &label)?, number)
+        workitem::track(s, windows::repo_of(s, &label)?, &kind, number)
     })
     .await
+}
+
+/// Takes a PR or issue the user added out of the Inbox again.
+#[tauri::command]
+fn untrack(state: State<'_, AppState>, id: i64) -> Res<()> {
+    workitem::untrack(&state, id)
+}
+
+#[tauri::command]
+fn set_starred(state: State<'_, AppState>, id: i64, starred: bool) -> Res<()> {
+    workitem::set_starred(&state, id, starred)
 }
 
 /// Starts a task (no PR or issue yet) with its worktree; returns its work item id.
@@ -630,8 +648,10 @@ pub fn run() {
             review_guide,
             prepare_guide,
             save_file,
-            search_prs,
-            track_pr,
+            search_items,
+            track_item,
+            untrack,
+            set_starred,
             create_task,
             pr_conversation,
             fetch_pr,

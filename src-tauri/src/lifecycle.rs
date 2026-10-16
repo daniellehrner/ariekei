@@ -395,6 +395,7 @@ mod tests {
             hidden: false,
             cleanup_blockers: None,
             task_id: None,
+            starred: false,
         }
     }
 

@@ -161,15 +161,19 @@ pub fn refresh_own_commits(state: &AppState, repo: &Repo, item: &WorkItem) -> Re
     state.store.set_own_commits(item.id, &pr.head_sha, &own)
 }
 
+/// Whether the item is in the Inbox (or only under its task). Finished items stay only while
+/// cleanup is blocked (they keep a worktree).
+fn listed(item: &WorkItem) -> bool {
+    !item.hidden && (item.open || item.worktree_path.is_some())
+}
+
 pub fn inbox(state: &AppState, repo: Option<Repo>) -> Result<Vec<Row>, String> {
     let Some(repo) = repo else {
         return Ok(vec![]);
     };
     let default = default_branch(&repo).unwrap_or_else(|_| "main".into());
     let items = state.store.items(repo.id)?;
-    // Finished items stay listed only while cleanup is blocked (they keep a worktree), or
-    // under their task, which shows what came of it.
-    let listed = |item: &WorkItem| !item.hidden && (item.open || item.worktree_path.is_some());
+    // Finished items stay listed under their task, which shows what came of it.
     let tasks: Vec<&WorkItem> = items.iter().filter(|i| i.is_task() && listed(i)).collect();
     let task_of = |item: &WorkItem| {
         item.task_id
@@ -227,6 +231,8 @@ fn row(state: &AppState, repo: &Repo, default_branch: &str, item: WorkItem) -> O
             task_id: None,
             agent_item: None,
             outcomes_closed: false,
+            starred: item.starred,
+            removable: false,
             notes: item.snapshot["notes"].as_str().map(str::to_owned),
         }
     } else if item.kind == "issue" {
@@ -258,6 +264,8 @@ fn row(state: &AppState, repo: &Repo, default_branch: &str, item: WorkItem) -> O
             task_id: None,
             agent_item: None,
             outcomes_closed: false,
+            starred: item.starred,
+            removable: false,
             notes: None,
         }
     } else {
@@ -289,15 +297,27 @@ fn row(state: &AppState, repo: &Repo, default_branch: &str, item: WorkItem) -> O
             task_id: None,
             agent_item: None,
             outcomes_closed: false,
+            starred: item.starred,
+            removable: false,
             notes: None,
         }
     };
     if worktree.is_some() {
         row.agent_item = Some(item.id);
     }
+    row.removable = removable(&item);
     row.worktree = worktree.map(|p| p.to_string_lossy().into_owned());
     row.cleanup_blockers = item.cleanup_blockers;
     Some(row)
+}
+
+/// Whether the user can take the item out of the Inbox: only a PR or issue they added, which
+/// no query finds and nothing local hangs on (a worktree is finished with Done instead).
+fn removable(item: &WorkItem) -> bool {
+    !item.is_task()
+        && item.role == "other"
+        && item.worktree_path.is_none()
+        && item.task_id.is_none()
 }
 
 /// Marks an item done: cleans it up now if nothing would be lost.
@@ -495,17 +515,7 @@ pub fn link_created(state: &AppState, task_id: i64, kind: &str, number: i64) -> 
         return Ok(());
     }
     let polled = if kind == "issue" {
-        let issue = github::issues_by_number(&repo.owner, &repo.name, &repo.viewer, &[number])?
-            .into_iter()
-            .next()
-            .ok_or_else(|| format!("issue #{number} not found"))?;
-        PolledPr {
-            number,
-            kind: "issue",
-            role: "other",
-            open: issue.state == "OPEN",
-            snapshot: serde_json::to_value(&issue).unwrap_or_default(),
-        }
+        polled_issue(&repo, number)?
     } else {
         polled_pr(&repo, number)?
     };
@@ -513,12 +523,27 @@ pub fn link_created(state: &AppState, task_id: i64, kind: &str, number: i64) -> 
     state.store.link_to_task(id, task_id)
 }
 
+fn polled_issue(repo: &Repo, number: i64) -> Result<PolledPr, String> {
+    let issue = github::issues_by_number(&repo.owner, &repo.name, &repo.viewer, &[number])?
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("issue #{number} not found"))?;
+    // The next poll tells whether it is assigned to the viewer.
+    Ok(PolledPr {
+        number,
+        kind: "issue",
+        role: "other",
+        open: issue.state == "OPEN",
+        snapshot: serde_json::to_value(&issue).unwrap_or_default(),
+    })
+}
+
 fn polled_pr(repo: &Repo, number: i64) -> Result<PolledPr, String> {
     let pr = github::prs_by_number(&repo.owner, &repo.name, &repo.viewer, &[number])?
         .into_iter()
         .next()
         .ok_or_else(|| format!("PR #{number} not found"))?;
-    let role = crate::poller::role_of(&pr, &repo.viewer, &[]);
+    let role = crate::poller::role_of(&pr, &repo.viewer, &Default::default());
     Ok(PolledPr {
         number,
         kind: "pr",
@@ -566,42 +591,108 @@ pub fn comments_message(state: &AppState, id: i64) -> Result<String, String> {
     ))
 }
 
-// --- other people's PRs -------------------------------------------------------------
+// --- browsing open PRs and issues ----------------------------------------------------
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchHit {
+    /// "pr" or "issue".
+    pub kind: &'static str,
     pub number: i64,
     pub title: String,
     pub author: String,
     pub is_draft: bool,
+    pub labels: Vec<String>,
     pub updated_at: String,
-    /// The work item, if the PR is already in the Inbox.
+    /// The work item, if it is in the Inbox.
     pub item_id: Option<i64>,
+    /// The user can take it out of the Inbox again (see `removable`).
+    pub removable: bool,
 }
 
-/// Open PRs of `repo` matching `text` (GitHub search syntax: words, `author:x`, …).
-pub fn search(state: &AppState, repo: Option<Repo>, text: &str) -> Result<Vec<SearchHit>, String> {
+/// Open PRs or issues (`kind`) of `repo` matching `text` (GitHub search syntax: words,
+/// `author:x`, …; empty: the most recently updated).
+pub fn search(
+    state: &AppState,
+    repo: Option<Repo>,
+    kind: &str,
+    text: &str,
+) -> Result<Vec<SearchHit>, String> {
     let repo = repo.ok_or("no repository connected")?;
     let items = state.store.items(repo.id)?;
     let terms = text.trim().trim_start_matches('#');
-    Ok(github::search_pr_stamps(&repo.owner, &repo.name, terms)?
-        .into_iter()
-        .map(|p| SearchHit {
-            item_id: items.iter().find(|i| i.number == p.number).map(|i| i.id),
-            number: p.number,
-            title: p.title,
-            author: p.author,
-            is_draft: p.is_draft,
-            updated_at: p.updated_at,
-        })
-        .collect())
+    let hit = |kind: &'static str, number: i64| {
+        let item = items.iter().find(|i| i.number == number && listed(i));
+        SearchHit {
+            kind,
+            number,
+            item_id: item.map(|i| i.id),
+            removable: item.is_some_and(removable),
+            title: String::new(),
+            author: String::new(),
+            is_draft: false,
+            labels: vec![],
+            updated_at: String::new(),
+        }
+    };
+    Ok(if kind == "issue" {
+        github::search_issues(&repo.owner, &repo.name, terms)?
+            .into_iter()
+            .map(|i| SearchHit {
+                title: i.title,
+                author: i.author,
+                labels: i.labels,
+                updated_at: i.updated_at,
+                ..hit("issue", i.number)
+            })
+            .collect()
+    } else {
+        github::search_pr_stamps(&repo.owner, &repo.name, terms)?
+            .into_iter()
+            .map(|p| SearchHit {
+                title: p.title,
+                author: p.author,
+                is_draft: p.is_draft,
+                updated_at: p.updated_at,
+                ..hit("pr", p.number)
+            })
+            .collect()
+    })
 }
 
-/// Adds PR `number` to the Inbox (tracked) and returns its work item id.
-pub fn track(state: &AppState, repo: Option<Repo>, number: i64) -> Result<i64, String> {
+/// Adds PR or issue `number` (`kind`) to the Inbox (tracked) and returns its work item id.
+pub fn track(state: &AppState, repo: Option<Repo>, kind: &str, number: i64) -> Result<i64, String> {
     let repo = repo.ok_or("no repository connected")?;
-    state.store.track(repo.id, &polled_pr(&repo, number)?)
+    let polled = if kind == "issue" {
+        polled_issue(&repo, number)?
+    } else {
+        polled_pr(&repo, number)?
+    };
+    let id = state.store.track(repo.id, &polled)?;
+    state.events.inbox_changed(repo.id);
+    Ok(id)
+}
+
+/// Takes an item the user added out of the Inbox again.
+pub fn untrack(state: &AppState, id: i64) -> Result<(), String> {
+    let item = state.store.item(id)?;
+    if !removable(&item) {
+        return Err(format!(
+            "{} is not one you added, or has a worktree",
+            item.short_name()
+        ));
+    }
+    state.store.untrack(id)?;
+    state.events.inbox_changed(item.repo_id);
+    Ok(())
+}
+
+/// Stars or unstars item `id`: starred items head the Inbox.
+pub fn set_starred(state: &AppState, id: i64, starred: bool) -> Result<(), String> {
+    let item = state.store.item(id)?;
+    state.store.set_starred(id, starred)?;
+    state.events.inbox_changed(item.repo_id);
+    Ok(())
 }
 
 pub fn conversation(state: &AppState, id: i64) -> Result<github::Conversation, String> {
@@ -1102,6 +1193,107 @@ mod tests {
         }
         #[cfg(windows)]
         assert!(!inside_worktree("C:\\Windows\\a.txt"));
+    }
+
+    #[test]
+    fn each_pr_is_listed_for_its_strongest_reason() {
+        let app = TestApp::new();
+        let pr = |number: i64, author: &str, flags: serde_json::Value| {
+            let mut pr =
+                json!({"number": number, "title": "t", "head_ref": "main", "author": author});
+            for (k, v) in flags.as_object().unwrap() {
+                pr[k] = v.clone();
+            }
+            app.add_pr(pr);
+        };
+        pr(1, "me", json!({"assigned": true}));
+        pr(2, "me", json!({}));
+        pr(3, "bob", json!({"requested": true}));
+        pr(4, "bob", json!({"requested": true, "reviewed": true}));
+        pr(5, "bob", json!({"reviewed": true}));
+        pr(6, "bob", json!({}));
+        app.poll().unwrap();
+        let role = |n| app.row(n).map(|r| r.role);
+        assert_eq!(
+            (1..=6).map(role).collect::<Vec<_>>(),
+            [
+                Some("assignee".into()),
+                Some("author".into()),
+                Some("requested".into()),
+                // Asked to review again.
+                Some("requested".into()),
+                Some("reviewed".into()),
+                None
+            ]
+        );
+        // The review is done.
+        app.set("prs", 4, json!({"requested": false}));
+        app.poll().unwrap();
+        assert_eq!(role(4).as_deref(), Some("reviewed"));
+    }
+
+    #[test]
+    fn an_added_item_stays_while_starred_and_can_be_removed_again() {
+        let app = TestApp::new();
+        let repo = || Some(app.repo.clone());
+        app.add_pr(
+            json!({"number": 9, "title": "Someone's fix", "head_ref": "main", "author": "bob"}),
+        );
+        let hits = search(&app.state, repo(), "pr", "fix").unwrap();
+        assert_eq!(
+            hits.iter()
+                .map(|h| (h.number, h.item_id))
+                .collect::<Vec<_>>(),
+            [(9, None)]
+        );
+        let id = track(&app.state, repo(), "pr", 9).unwrap();
+        let row = app.row(9).unwrap();
+        assert!(row.role == "other" && row.removable && !row.starred);
+        let hit = &search(&app.state, repo(), "pr", "fix").unwrap()[0];
+        assert!(hit.item_id == Some(id) && hit.removable);
+
+        set_starred(&app.state, id, true).unwrap();
+        app.poll().unwrap();
+        assert!(app.row(9).unwrap().starred);
+
+        untrack(&app.state, id).unwrap();
+        assert!(app.row(9).is_none());
+        app.poll().unwrap();
+        assert!(app.row(9).is_none(), "not polled any more");
+        assert_eq!(
+            search(&app.state, repo(), "pr", "fix").unwrap()[0].item_id,
+            None
+        );
+
+        // A review request brings it back, and then it is not the user's to remove.
+        app.set("prs", 9, json!({"requested": true}));
+        app.poll().unwrap();
+        let row = app.row(9).unwrap();
+        assert!(row.role == "requested" && !row.removable && !row.starred);
+        assert!(untrack(&app.state, id).is_err());
+    }
+
+    #[test]
+    fn open_issues_can_be_browsed_and_added() {
+        let app = TestApp::new();
+        let repo = || Some(app.repo.clone());
+        app.add_issue(json!({"number": 3, "title": "Crash on start"}));
+        app.add_issue(json!({"number": 4, "title": "Old crash", "state": "CLOSED"}));
+        app.add_issue(json!({"number": 5, "title": "Docs typo"}));
+        let numbers = |text: &str| {
+            search(&app.state, repo(), "issue", text)
+                .unwrap()
+                .iter()
+                .map(|h| (h.kind, h.number, h.item_id.is_some()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(numbers("crash"), [("issue", 3, false)]);
+        assert_eq!(numbers("").len(), 2, "every open issue");
+        track(&app.state, repo(), "issue", 3).unwrap();
+        assert_eq!(numbers("crash"), [("issue", 3, true)]);
+        app.poll().unwrap();
+        let row = app.row(3).unwrap();
+        assert_eq!((row.kind.as_str(), row.role.as_str()), ("issue", "other"));
     }
 
     #[test]
