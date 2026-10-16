@@ -14,6 +14,7 @@ export const SHORTCUTS: [string[], string][] = [
   [["r"], "Reviewed, next unreviewed"],
   [["u"], "Unified / side-by-side"],
   [["w"], "Hide / show whitespace"],
+  [["a"], "Ask the agent about the selection (or right-click code)"],
   [["Esc"], "Drop the selection (comment)"],
 ];
 

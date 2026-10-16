@@ -16,7 +16,8 @@ D-Bus; to choose the theme, point D-Bus nowhere and set it in a GTK settings fil
   E2E_WEBDRIVER=http://127.0.0.1:4444 python3 -I e2e/gallery.py <app> <work> [light|dark] [1440x900] [screen,...]
 
 Screens: connect, empty (nothing selected yet), overview, menu, comments, collapsed, waiting, terminal, review, guide,
-selection, drafts, submit, shortcuts, guard, review-hidden, notice-arriving, notices.
+selection, drafts, submit, code-menu, ask-agent, shortcuts, guard, review-hidden, notice-arriving,
+notices.
 """
 
 import json
@@ -173,7 +174,7 @@ try:
         s.wait(".inbox.collapsed", timeout=10)
         shot(s, "collapsed")
         s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }))")
-    if need("review", "guide", "selection", "drafts", "submit", "shortcuts", "guard", "review-hidden"):
+    if need("review", "guide", "selection", "drafts", "submit", "code-menu", "ask-agent", "shortcuts", "guard", "review-hidden"):
         tab(s, "Review")
         s.wait("[data-file]", timeout=60)
         shot(s, "review")
@@ -196,6 +197,21 @@ try:
             click(s, "[data-open-submit]")
             s.wait("[data-submit]", timeout=30)
             shot(s, "submit")
+        if need("code-menu", "ask-agent"):
+            click(s, "[data-file$='SnapSyncState.java']")
+            s.wait_js("return document.querySelectorAll('.cm-mergeViewEditor .cm-content')[1]?.textContent.includes('field29')", timeout=30)
+            # Right-click in a selection of three lines.
+            s.js("""const el = document.querySelectorAll('.cm-mergeViewEditor .cm-content')[1];
+              const view = el && (el.cmView?.rootView?.view ?? el.cmTile?.root?.view ?? el.cmView?.view);
+              const doc = view.state.doc; view.dispatch({ selection: { anchor: doc.line(34).from, head: doc.line(36).to } });
+              const c = view.coordsAtPos(doc.line(35).from + 4), x = c.left, y = (c.top + c.bottom) / 2;
+              document.elementFromPoint(x, y).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y }));""")
+            s.wait("[data-code-menu]", timeout=10)
+            shot(s, "code-menu")
+            click(s, "[data-code-menu] [data-ask-agent]")
+            s.type(s.wait("[data-ask] textarea"), "Why is the pivot block reset here and not in the constructor?")
+            shot(s, "ask-agent")
+            s.js("document.querySelector('[data-ask] textarea').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))")
         if need("shortcuts"):
             key(s, "?")
             shot(s, "shortcuts")

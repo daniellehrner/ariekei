@@ -43,9 +43,19 @@ notification). It sits in the bottom right corner, so it has to be seen without 
   activity, the info tone for lifecycle news. The colour is a tinted fill and a border, nothing
   more (no glow, no accent bar).
 - It fades in with a short slide from the edge (`--dur-slow`, `--ease`) and pulses once
-  (`--dur-pulse`); a permission request pulses three times. Nothing keeps moving after that, and with reduced motion nothing moves.
+  (`--dur-pulse`); a permission request pulses three times. Nothing keeps moving after that,
+  and with reduced motion nothing moves.
 - Clicking it opens the item. A permission request stays until the agent moves on; the rest go
   after ten seconds.
+
+## The code menu
+
+Right-clicking code in the review opens a menu (`CodeMenu.svelte`) instead of the browser's:
+**Ask agent…** carries the agent's circle in copper, **Comment on lines** (new side only) and
+**Copy** stay grey. Ask agent opens a prompt box (`AskAgent.svelte`) at the same point, headed
+by the agent's circle and the lines it is about; its one filled button is **Send to agent**
+(an action that leaves Ariekei for the agent). Both are raised surfaces (`--surface-raised`,
+`--shadow-pop`) kept inside the window (`lib/popover.ts`).
 
 ## Behaviour that comes with the design
 

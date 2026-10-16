@@ -30,7 +30,9 @@
   import { EditorState, type Extension } from "@codemirror/state";
   import { EditorView } from "@codemirror/view";
   import { basicSetup } from "codemirror";
-  import { onDestroy } from "svelte";
+  import { onDestroy, tick } from "svelte";
+  import AskAgent from "./AskAgent.svelte";
+  import CodeMenu from "./CodeMenu.svelte";
   import Button from "./controls/Button.svelte";
   import Checkbox from "./controls/Checkbox.svelte";
   import ClaimMark from "./controls/ClaimMark.svelte";
@@ -52,19 +54,25 @@
   import { languageFor } from "./lib/languages";
   import { layout } from "./lib/layout.svelte";
   import { fileGuide, flatten, nextUnreviewed, progress, rangeOf, scopeOf, sections, type Guide, type ReviewFile } from "./lib/review";
-  import { classify, feedbackMessage, reviewBody, type LineComment, type Ranges } from "./lib/reviewComments";
+  import { askMessage, classify, feedbackMessage, refLines, reviewBody, type CodeRef, type LineComment, type Ranges } from "./lib/reviewComments";
 
   let {
     id,
     view = $bindable(),
     onchanged,
     canSendToAgent,
+    agentStatus,
+    onterminal,
     onprogress,
   }: {
     id: number;
     view: ReviewViewState;
     onchanged: () => void;
     canSendToAgent: boolean;
+    /// The status of the agent that gets what is sent (lib/agent.svelte.ts).
+    agentStatus?: string;
+    /// Shows the agent's terminal (where its answer appears).
+    onterminal?: () => void;
     /// Files of the scope marked reviewed (for the Review tab's label).
     onprogress?: (p: { reviewed: number; total: number }) => void;
   } = $props();
@@ -74,6 +82,9 @@
   let error: string | null = $state(null);
   let notice: string | null = $state(null);
   let noticeUrl: string | null = $state(null);
+  // The note (or error) is about something sent to the agent: it offers its terminal.
+  let noticeTerminal = $state(false);
+  let errorTerminal = $state(false);
   let confirmMark = $state<string | null>(null);
   let host: HTMLElement | undefined = $state();
   let main: HTMLElement | undefined = $state();
@@ -82,6 +93,10 @@
   let unified: EditorView | null = null;
   let selection: { fromLine: number; toLine: number; code: string } | null = $state(null);
   let draft = $state("");
+  // Right-click on code: its menu, then the prompt box for the agent.
+  // `below`: the bottom of the lines, where the prompt box goes so they stay in view.
+  let codeMenu: { x: number; y: number; below: number; code: CodeRef } | null = $state(null);
+  let asking: { x: number; y: number; code: CodeRef } | null = $state(null);
   let editedPath: string | null = $state(null);
   let editedFile: string | null = null;
   // The file shown has only whitespace changes, and they are hidden.
@@ -287,6 +302,7 @@
       return;
     }
     const actions: Record<string, () => void> = {
+      a: () => askAboutSelection(),
       "]": () => stepFile(1),
       "[": () => stepFile(-1),
       n: () => { const v = newSide(); if (v) goToNextChunk(v); },
@@ -356,6 +372,99 @@
   function say(message: string, url: string | null = null) {
     notice = message;
     noticeUrl = url;
+    noticeTerminal = false;
+  }
+
+  // The editor an element is in, and its side of the diff.
+  function editorAt(target: Node): { editor: EditorView; side: "new" | "old" } | null {
+    if (merge?.a.dom.contains(target)) return { editor: merge.a, side: "old" };
+    const v = newSide();
+    return v?.dom.contains(target) ? { editor: v, side: "new" } : null;
+  }
+
+  // The lines from..to (document offsets) of one side, as the agent is told about them.
+  function codeRef(editor: EditorView, side: "new" | "old", from: number, to: number): CodeRef | null {
+    if (!view.file || !range) return null;
+    const doc = editor.state.doc;
+    // A selection that ends at the start of a line does not include that line.
+    const end = to > from && doc.lineAt(to).from === to ? to - 1 : to;
+    const first = doc.lineAt(from);
+    return {
+      path: view.file,
+      fromLine: first.number,
+      toLine: doc.lineAt(end).number,
+      code: from === to ? first.text : doc.sliceString(from, to),
+      side,
+      rev: side === "old" ? range[0] : shownRev,
+      unsaved: side === "new" && editedPath === view.file,
+    };
+  }
+
+  // Right-click (or the ContextMenu key) on code: the selection when the click is in it,
+  // else the clicked line, which gets selected so it shows what the menu is about.
+  function onContextMenu(e: MouseEvent) {
+    const target = e.target as HTMLElement;
+    // Deleted lines in the unified diff are not part of a document: the browser's menu.
+    if (target.closest?.(".cm-deletedChunk")) return;
+    const at = editorAt(target);
+    if (!at) return;
+    const { editor, side } = at;
+    const sel = editor.state.selection.main;
+    let [from, to] = [sel.from, sel.to];
+    let point = { x: e.clientX, y: e.clientY };
+    const fromKeyboard = e.clientX === 0 && e.clientY === 0;
+    const pos = fromKeyboard ? sel.head : editor.posAtCoords(point);
+    if (pos === null) return;
+    if (sel.empty || pos < sel.from || pos > sel.to) {
+      const line = editor.state.doc.lineAt(pos);
+      [from, to] = [line.from, line.to];
+      editor.dispatch({ selection: { anchor: from, head: to } });
+    }
+    if (fromKeyboard) {
+      const c = editor.coordsAtPos(pos);
+      if (c) point = { x: c.left, y: c.bottom };
+    }
+    const code = codeRef(editor, side, from, to);
+    if (!code) return;
+    e.preventDefault();
+    asking = null;
+    codeMenu = { ...point, below: Math.max(point.y, editor.coordsAtPos(to)?.bottom ?? 0), code };
+  }
+
+  // `a`: ask about the selection on the new side.
+  function askAboutSelection() {
+    const v = newSide();
+    const sel = v?.state.selection.main;
+    if (!v || !sel || sel.empty || !canSendToAgent) return;
+    const code = codeRef(v, "new", sel.from, sel.to);
+    const c = v.coordsAtPos(sel.head);
+    if (code && c) asking = { x: c.left, y: c.bottom, code };
+  }
+
+  async function commentOn() {
+    await tick();
+    document.getElementById(`composer-${id}`)?.focus();
+  }
+
+  async function copyCode(code: CodeRef) {
+    try {
+      await navigator.clipboard.writeText(code.code);
+    } catch (e) {
+      error = `Could not copy: ${e}`;
+    }
+  }
+
+  async function ask(code: CodeRef, prompt: string) {
+    error = null;
+    try {
+      await api.agentSend(id, askMessage(code, prompt));
+      asking = null;
+      say(`Sent ${code.path}:${refLines(code)} and your prompt to the agent.`);
+      noticeTerminal = true;
+    } catch (e) {
+      error = `Could not send to the agent: ${e}`;
+      errorTerminal = true;
+    }
   }
 
   async function sendToAgent() {
@@ -493,12 +602,14 @@
 
   {#if error}
     <div class="note bad" role="alert"><Icon name="error" size={14} /><span class="grow">{error}</span>
-      <IconButton icon="x" label="Dismiss" size={22} onclick={() => (error = null)} /></div>
+      {#if errorTerminal && onterminal}<Button size="sm" variant="quiet" icon="terminal" onclick={onterminal}>Open Terminal</Button>{/if}
+      <IconButton icon="x" label="Dismiss" size={22} onclick={() => { error = null; errorTerminal = false; }} /></div>
   {/if}
   {#if notice}
     <div class="note" class:gh={!!noticeUrl} role="status" data-notice>
       <Icon name={noticeUrl ? "submit-github" : "info"} size={14} /><span class="grow">{notice}</span>
       {#if noticeUrl}<a href={noticeUrl}>Open</a>{/if}
+      {#if noticeTerminal && onterminal}<Button size="sm" variant="quiet" icon="terminal" onclick={onterminal} data-open-terminal>Open Terminal</Button>{/if}
       <IconButton icon="x" label="Dismiss" size={22} onclick={() => (notice = null)} />
     </div>
   {/if}
@@ -679,8 +790,19 @@
         </div>
       {/if}
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <div class="diff" bind:this={host} tabindex="0" role="region"
-        aria-label="Diff of {view.file ?? 'no file'}. Shortcuts: r reviewed and next, ] and [ files, n and p changes, u unified, w whitespace, ? help"></div>
+      <div class="diff" bind:this={host} tabindex="0" role="region" oncontextmenu={onContextMenu}
+        aria-label="Diff of {view.file ?? 'no file'}. Shortcuts: r reviewed and next, ] and [ files, n and p changes, u unified, w whitespace, a ask the agent about the selection, ? help. Right-click code to ask the agent about it."></div>
+      {#if codeMenu}
+        {@const m = codeMenu}
+        <CodeMenu x={m.x} y={m.y} lines={m.code.fromLine === m.code.toLine ? `line ${m.code.fromLine}` : `lines ${refLines(m.code)}`}
+          noAgent={canSendToAgent ? null : "No agent works on this item: start working on it first"}
+          oncomment={m.code.side === "new" ? commentOn : undefined}
+          onask={() => (asking = { x: m.x, y: m.below, code: m.code })} oncopy={() => copyCode(m.code)} onclose={() => (codeMenu = null)} />
+      {/if}
+      {#if asking}
+        {@const a = asking}
+        <AskAgent x={a.x} y={a.y} code={a.code} status={agentStatus} onsend={(prompt) => ask(a.code, prompt)} onclose={() => (asking = null)} />
+      {/if}
       {#if onlyWhitespace}
         <div class="ws-only">
           <strong>Only whitespace changed in this file</strong>

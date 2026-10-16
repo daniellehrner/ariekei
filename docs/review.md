@@ -38,8 +38,17 @@ How the review view works, and the research it is based on.
   commit list and the side panel collapse (below a 1200 px window the Inbox steps aside by
   itself while the side panel is open).
 - **Keys:** `n`/`p` next/previous change (the change you are on is marked in the gutter),
-  `]`/`[` next/previous file, `r`, `u`, `w`, `?` for the list, `Esc` to drop a selection. They
-  do nothing while you type or when the terminal has focus.
+  `]`/`[` next/previous file, `r`, `u`, `w`, `a` to ask the agent about the selection, `?` for
+  the list, `Esc` to drop a selection. They do nothing while you type or when the terminal has
+  focus.
+- **Ask the agent about code:** right-click a line, or a selection of lines on either side of
+  the diff, and choose **Ask agent…** (the ContextMenu key or `a` works too). Your prompt goes to
+  the item's agent (a PR worked on by a task goes to the task's) with the file, the lines, which
+  version they are from (old or new side, the commit, or the working tree with unsaved edits)
+  and the code itself (up to 80 lines). You stay in the review; the note it leaves opens the
+  Terminal, where the answer appears. While the agent waits for permission nothing can be
+  sent, since the text would answer its prompt; while it works, Claude Code reads it after the
+  turn. The prompt is sent as you wrote it: ask a question or ask for a change.
 - **Comments** go to GitHub as a review (line comments where GitHub accepts them) or to the
   agent.
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { classify, feedbackMessage, reviewBody, type DraftComment } from "./reviewComments.ts";
+import { askMessage, classify, feedbackMessage, MAX_ASK_LINES, reviewBody, type CodeRef, type DraftComment } from "./reviewComments.ts";
 
 const draft = (over: Partial<DraftComment>): DraftComment => ({
   path: "A.java", fromLine: 10, toLine: 10, code: "x", text: "fix", rev: "head", ...over,
@@ -40,4 +40,33 @@ test("feedback for the agent quotes each comment's code and location", () => {
   assert.ok(msg.includes("\n\n2. B.java:7\n"), msg);
   assert.equal(msg.split("\n").filter((l) => l === "   > x").length, 6, "at most 6 quoted lines");
   assert.ok(msg.endsWith("\n   ok\n\nPlease address each point."), msg);
+});
+
+const ref = (over: Partial<CodeRef>): CodeRef => ({
+  path: "src/Peer.java", fromLine: 12, toLine: 12, code: "reset();\n", side: "new", rev: "1a2b3c4d".padEnd(40, "0"), ...over,
+});
+
+test("the agent is told where the code is, the code and the prompt", () => {
+  assert.equal(askMessage(ref({}), "  Why here?\n"),
+    "About src/Peer.java line 12 (new version, commit 1a2b3c4d):\n\n```java\nreset();\n```\n\nWhy here?");
+  const range = askMessage(ref({ fromLine: 3, toLine: 5, code: "a\nb\nc", rev: null }), "What does this do?\nAnd this?");
+  assert.ok(range.startsWith("About src/Peer.java lines 3–5 (working tree, uncommitted):\n\n```java\na\nb\nc\n```\n\n"), range);
+  assert.ok(range.endsWith("\n\nWhat does this do?\nAnd this?"), range);
+});
+
+test("the version is the side's: old, new, unsaved edits", () => {
+  const where = (r: CodeRef) => askMessage(r, "?").split("\n")[0];
+  assert.equal(where(ref({ side: "old", rev: "ba5e1234".padEnd(40, "9") })), "About src/Peer.java line 12 (old version, before the change, commit ba5e1234):");
+  assert.equal(where(ref({ side: "old", rev: `${"c0ffee12".padEnd(40, "3")}^` })), "About src/Peer.java line 12 (old version, before the change, commit c0ffee12^):");
+  assert.equal(where(ref({ side: "old", rev: null })), "About src/Peer.java line 12 (old version, before the change):");
+  assert.equal(where(ref({ unsaved: true })), "About src/Peer.java line 12 (working tree, with unsaved edits):");
+});
+
+test("long code is cut, and a fence outlasts backticks in the code", () => {
+  const code = Array.from({ length: MAX_ASK_LINES + 5 }, (_, i) => `l${i + 1}`).join("\n");
+  const long = askMessage(ref({ fromLine: 1, toLine: MAX_ASK_LINES + 5, code }), "?");
+  assert.ok(long.includes(`\nl${MAX_ASK_LINES}\n\`\`\`\n… 5 more lines, see the file\n\n?`), long);
+  assert.ok(!long.includes(`l${MAX_ASK_LINES + 1}`), long);
+  const md = askMessage(ref({ path: "README", code: "use ```rust blocks``` and `x`" }), "?");
+  assert.ok(md.includes("\n\n````\nuse ```rust blocks``` and `x`\n````\n\n?"), md);
 });

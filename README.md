@@ -20,7 +20,8 @@ code navigation or debugging, use your IDE on the same worktree. Tauri 2 (Rust) 
   or single commits; per-file reviewed marks, a review order instead of alphabetical, an agent
   review guide (risk-ordered groups, claims checked against the diff), whitespace and unified
   toggles, keyboard navigation; works without a worktree for other people's PRs. Comments go
-  to GitHub as a review or to the agent. See [docs/review.md](docs/review.md).
+  to GitHub as a review or to the agent; right-click code to ask the agent about it (file,
+  lines and code go along). See [docs/review.md](docs/review.md).
 - **Repos and windows:** the repo name in the Inbox header switches the window to another
   connected repo, opens one in a new window, or connects another. Each repo is shown in one
   window at a time; every open repo is kept current, and the windows come back after a
@@ -92,7 +93,8 @@ windows never show up on your desktop or take focus, and its notifications stay 
   the review guide, submitting a review, rebase-aware "since your review".
 - `windows`: two repos, switching, a window per repo, restoring windows after a restart.
 - `lifecycle`: issue → worktree → push → draft PR → merge → cleanup.
-- `task`: new task → the agent opens a PR and an issue → linked under the task → discard.
+- `task`: new task → the agent opens a PR and an issue → linked under the task → asking the
+  agent about code from the review → discard.
 - `m1`: the agent in the terminal (turns that commit, a permission prompt), the review loop,
   idle shutdown and resume after a restart.
 

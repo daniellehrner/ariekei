@@ -5,11 +5,12 @@ GitHub is e2e/fake_gh.py (ARIEKEI_GH) and the agent e2e/fake_claude.py (ARIEKEI_
 worktree on task-<n>-<slug> from main, the notes in the agent's context, the agent starts), the agent
 opening a PR and an issue (`gh pr create` / `gh issue create`) which are linked to the task
 and listed under it rather than in their sections, a linked PR pointing back to the task and
-sending its review threads to the task's agent, Ctrl+B and ? in the terminal staying with the
-agent, Discard refused while the agent waits for permission, a closed issue staying under its
-task, Discard (shows the work it loses, then removes the worktree, branch and task; the PR
-goes back to Mine), and a second task (the + button) whose merged PR stays under it ("All
-closed") until Done removes it.
+sending its review threads to the task's agent, asking the agent about code from the review
+(right-click a line or an old-side selection; refused while it waits for permission), Ctrl+B
+and ? in the terminal staying with the agent, Discard refused while the agent waits for
+permission, a closed issue staying under its task, Discard (shows the work it loses, then
+removes the worktree, branch and task; the PR goes back to Mine), and a second task (the +
+button) whose merged PR stays under it ("All closed") until Done removes it.
 
 Run it with `python3 e2e/run.py <test-app> task` (see run.py), which sets the environment.
 """
@@ -22,7 +23,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from check import check, contains, equal, eventually  # noqa: E402
-from ui import open_inbox, wait_rows  # noqa: E402
+from ui import open_inbox, side_by_side, wait_rows  # noqa: E402
 from wd import Session  # noqa: E402
 
 app, work = sys.argv[1:3]
@@ -71,6 +72,34 @@ def transcripts():
 
 def tab(s, name):
     s.js("[...document.querySelectorAll('.item [role=tab]')].find(t => t.textContent.trim() === arguments[0]).click()", name)
+
+
+def editor(side):
+    """JS for the CodeMirror view of one side of the side-by-side diff."""
+    i = 0 if side == "old" else 1
+    return (f"(() => {{ const el = document.querySelectorAll('.cm-mergeViewEditor .cm-content')[{i}];"
+            " return el && (el.cmView?.rootView?.view ?? el.cmTile?.root?.view ?? el.cmView?.view); })()")
+
+
+def right_click(s, side, line, selected=None):
+    """Right-clicks line `line` of a side of the diff, after selecting lines `selected` (a, b)."""
+    s.js(f"""const view = {editor(side)}, doc = view.state.doc, sel = arguments[1];
+      if (sel) view.dispatch({{ selection: {{ anchor: doc.line(sel[0]).from, head: doc.line(sel[1]).to }} }});
+      const c = view.coordsAtPos(doc.line(arguments[0]).from), x = c.left + 2, y = (c.top + c.bottom) / 2;
+      document.elementFromPoint(x, y).dispatchEvent(new MouseEvent('contextmenu', {{ bubbles: true, cancelable: true, clientX: x, clientY: y }}));""",
+         line, selected)
+
+
+def ask_about(s, side, line, prompt, selected=None, enter=False):
+    """Right-click → Ask agent… → the prompt, sent with Send (or Enter)."""
+    right_click(s, side, line, selected)
+    s.click(s.wait("[data-code-menu] [data-ask-agent]", timeout=10))
+
+    s.type(s.wait("[data-ask] textarea", timeout=10), prompt)
+    if enter:
+        s.js("document.querySelector('[data-ask] textarea').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))")
+    else:
+        s.click(s.wait("[data-ask-send]"))
 
 
 def set_issue_state(number, state):
@@ -179,6 +208,28 @@ try:
     s.click(s.wait(".item [data-from-task]"))
     s.wait(".item header .title", timeout=10, text="Peers drop after restart")
 
+    # --- Ask agent from the review: right-click a line, or a selection on the old side ---
+    s.click(s.wait(".item [data-tab='review']"))
+    side_by_side(s)
+    s.wait_js(f"return !!{editor('new')}?.state.doc.toString().includes('reset peers once')", timeout=30)
+    ask_about(s, "new", 2, "Why only once here?")
+    note = s.text(s.wait(".review [data-notice]", timeout=30, text="and your prompt"))
+    told = eventually("the agent gets the code and the prompt", transcripts, lambda t: "Why only once here?" in t, timeout=30)
+    asked = [line for line in told.splitlines() if "Why only once here?" in line][-1]
+    print("[ask] note:", note.strip(), "| the agent was told:", asked[:200])
+    contains("the note says what was sent", note, "Sent a.txt:2 and your prompt to the agent.")
+    check("the agent is told the file, line, version and code",
+          "About a.txt line 2 (" in asked and "reset peers once" in asked and asked.rstrip().endswith("Why only once here?"), asked)
+    check("the note offers the terminal", bool(s.find(".review [data-open-terminal]")))
+    eventually("the agent's turn ends", lambda: agent(s, -1), lambda a: a == "finished", timeout=30)
+    ask_about(s, "old", 1, "Where did this line come from?", selected=(1, 1), enter=True)
+    told = eventually("the agent gets the old side's code", transcripts, lambda t: "Where did this line come from?" in t, timeout=30)
+    asked = [line for line in told.splitlines() if "Where did this line come from?" in line][-1]
+    print("[ask] old side:", asked[:200])
+    check("the old side is named as the version before the change",
+          "About a.txt line 1 (old version, before the change, commit " in asked and "```txt one ```" in asked, asked)
+    eventually("the agent's turn ends", lambda: agent(s, -1), lambda a: a == "finished", timeout=30)
+
     # In the agent's terminal, the app's shortcuts are Claude Code's keys (Ctrl+B is its
     # "background" key): neither the Inbox nor the shortcuts overlay react.
     tab(s, "Terminal")
@@ -199,6 +250,17 @@ try:
     print("[discard] while the agent waits:", refused.strip()[:120], "| worktree kept:", os.path.isdir(wt))
     check("Discard waits for the agent's turn", "middle of a turn" in refused and os.path.isdir(wt), refused)
     s.js("document.querySelector('.item [data-error] button')?.click()")
+    # Nor can it be asked about code: the paste would answer its permission prompt.
+    s.click(s.wait(".item [data-tab='review']"))
+    s.wait_js(f"return !!{editor('new')}", timeout=30)
+    right_click(s, "new", 2)
+    s.click(s.wait("[data-code-menu] [data-ask-agent]", timeout=10))
+    blocked = s.text(s.wait("[data-ask-blocked]", timeout=10))
+    print("[ask] while the agent waits:", blocked.strip())
+    check("Send waits for the permission answer", s.js("return document.querySelector('[data-ask-send]').disabled"), blocked)
+    s.js("document.querySelector('[data-ask] textarea').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))")
+    s.wait_js("return !document.querySelector('[data-ask]')", timeout=10)
+    tab(s, "Terminal")
     keys(s, "never mind")
     keys(s, ENTER)
     eventually("the agent's turn ends", lambda: agent(s, -1), lambda a: a == "finished", timeout=30)

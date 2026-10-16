@@ -170,6 +170,12 @@
     }
   }
 
+  // The terminal of the agent that gets what is sent: this item's, or its task's.
+  function showAgent() {
+    if (viaTask && row.agentItem != null) onselect(row.agentItem);
+    else if (ui) ui.tab = "terminal";
+  }
+
   async function sendPrFeedback() {
     try {
       await api.sendPrFeedback(id);
@@ -397,6 +403,8 @@
         {:else if tab === "review"}
           {#if row.worktree || fetched}
             <ReviewView {id} bind:view={ui.review} onchanged={changed} canSendToAgent={row.agentItem != null}
+              agentStatus={row.agentItem == null ? undefined : (agents[String(row.agentItem)]?.status ?? (row.agentItem === row.id ? row.agent ?? undefined : undefined))}
+              onterminal={showAgent}
               onprogress={(p) => (reviewProgress = p.total ? p : null)} />
           {:else}
             <p class="hint"><Icon name="lock" size={14} />Read-only · Fetching the PR head…</p>
