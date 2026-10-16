@@ -1,6 +1,7 @@
-# Milestone 2 — the work item lifecycle
+# Issues, tasks and cleanup
 
-From an issue (or a task) to a merged PR, and back to a clean clone.
+From an issue (or a task) to a merged PR, and back to a clean clone. Working on a PR and
+reviewing it: [pull-requests.md](pull-requests.md).
 
 ## Issues
 

@@ -1,16 +1,18 @@
-"""E2E for Milestone 1 on a local fixture (no real GitHub repo is touched).
+"""E2E for the agent in the terminal and the review loop, on a local fixture (no real GitHub
+repo is touched).
 
 The fixture is a clone whose `origin` looks like git@github.com:owner/proj.git (mapped to
 a local "GitHub" repo with insteadOf), plus two work items inserted into Ariekei's
 database as if the poller had found them. Covers: Inbox, Start working (worktree on the
 PR branch), the agent in the terminal (slash-command autocomplete, a committing turn),
 Review since the PR base, a second agent commit reviewed on its own (its commit scope),
-Inbox attention, idle shutdown, and resume after an app restart.
+Inbox attention, idle shutdown (not while a background job runs), and resume after an app
+restart.
 
 The agent is e2e/fake_claude.py (ARIEKEI_CLAUDE): a small terminal agent that commits when
 asked and reports through the hooks like Claude Code. With ARIEKEI_CLAUDE unset the user's
 real `claude` runs instead (two short turns; answer its trust dialog). Run it with
-`python3 e2e/run.py <test-app> m1`, which sets the environment (ARIEKEI_NO_POLL=1,
+`python3 e2e/run.py <test-app> agent`, which sets the environment (ARIEKEI_NO_POLL=1,
 ARIEKEI_IDLE_SECS=5, fake gh).
 """
 
@@ -210,13 +212,13 @@ try:
     equal("turn 1 commits", (st, git(worktree, "log", "-1", "--format=%s")), ("finished", "add two"))
     print("[inbox] #42 attention:", row_info(s, 42)["attention"])
     equal("after the turn: nothing in the Inbox wants attention", row_info(s, 42)["attention"], None)
-    s.screenshot(os.path.join(shots, "m1-terminal.png"))
+    s.screenshot(os.path.join(shots, "agent-terminal.png"))
 
     tab(s, "Review")
     s.wait(".files [data-file]", timeout=30)
     print("[review]", review_marker(s), "| files:", s.js("return [...document.querySelectorAll('.files [data-file]')].map(b => b.dataset.file)"))
     equal("files vs main", s.js("return [...document.querySelectorAll('.files [data-file]')].map(b => b.dataset.file)"), ["a.txt", "b.txt"])
-    s.screenshot(os.path.join(shots, "m1-review-base.png"))
+    s.screenshot(os.path.join(shots, "agent-review-base.png"))
     tab(s, "Terminal")
     st = prompt(s, 42, "Append a line with the word three to a.txt, then commit with the message 'add three'. Do nothing else.")
     print("[turn 2]", st, "| last commit:", git(worktree, "log", "-1", "--format=%s"))
@@ -230,7 +232,7 @@ try:
     print("[review] a.txt in", newest["sha"][:8], newest["subject"], ": hunks", diff["hunks"], "| new side ends with:", diff["new"].splitlines()[-2:])
     equal("the newest commit has only turn 2's line", diff["new"].splitlines()[-1], "three")
     equal("in one hunk", len(diff["hunks"]), 1)
-    s.screenshot(os.path.join(shots, "m1-review-commit.png"))
+    s.screenshot(os.path.join(shots, "agent-review-commit.png"))
 
     # Leave #42 (its terminal detaches); with ARIEKEI_IDLE_SECS=5 the idle agent closes, but
     # not while a background job it started still runs (closing would end the job).
@@ -267,6 +269,6 @@ try:
     wait_screen(s, str(item_id), "add three", timeout=30)
     tab(s, "Review")
     print("[restart] conversation resumed;", review_marker(s))
-    s.screenshot(os.path.join(shots, "m1-restart.png"))
+    s.screenshot(os.path.join(shots, "agent-restart.png"))
 finally:
     s.quit()

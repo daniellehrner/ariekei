@@ -36,7 +36,7 @@ Quitting the app leaves no adapter processes behind (the ACP crate kills the pro
    Idle-session shutdown (already planned) is essential; consider a cap on live agents.
 3. **Diff source of truth must be git.** `@codemirror/merge` defaults to `scanLimit: 500` and falls
    back to a crude diff on large files (whole file marked changed). Spike uses an exact diff with a
-   1 s timeout; M1 should feed git's hunks via `diffConfig.override` (keeping the package diff for
+   1 s timeout; the app should feed git's hunks via `diffConfig.override` (keeping the package diff for
    intra-chunk highlighting), so the review view matches commit drill-down exactly.
 4. **Session transcripts outlive worktrees.** They are stored under
    `~/.claude/projects/<encoded-cwd>/`. Cleanup must call ACP `session/delete` (advertised).
@@ -52,7 +52,7 @@ Quitting the app leaves no adapter processes behind (the ACP crate kills the pro
    platforms; see the README.)
    Quirk: WebKitWebDriver's element text omits ellipsized spans — select by attributes.
 8. **npm 10 resolver crash** (`edgesOut` null) with vitest 5's optional peers; vitest dropped for
-   the spike. Revisit (npm 11 or pnpm) when adding UI tests in M1.
+   the spike. Revisit (npm 11 or pnpm) when adding UI tests.
 
 ## Agent integration v2: embedded Claude Code TUI
 
@@ -108,7 +108,7 @@ Findings:
 - `src-tauri/src/hooks.rs` — hooks settings file, localhost hook endpoint, event → status mapping.
 - `src-tauri/src/claude.rs` — locates the `claude` binary; unit tests.
 - `src-tauri/src/git.rs` — changed files vs a base (incl. untracked) and file versions; unit tests.
-- `src-tauri/src/sessions.rs` — spike-only JSON map worktree → session (id, started, transcript); SQLite in M1.
+- `src-tauri/src/sessions.rs` — spike-only JSON map worktree → session (id, started, transcript); SQLite in the app.
 - `e2e/` — stdlib-only WebDriver client and the terminal scenario (run via `tauri-driver` + Xvfb).
 - `ui/` — worktree list with hook-driven agent status, terminal panel (xterm.js, WebGL with DOM
   fallback), review view (file list + CodeMirror merge view, base ref).

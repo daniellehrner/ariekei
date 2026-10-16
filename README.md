@@ -36,8 +36,8 @@ code navigation or debugging, use your IDE on the same worktree. Tauri 2 (Rust) 
 Language-agnostic: the review diff comes from git, any file type is syntax-highlighted, and the
 agent works in any language. Code navigation and debugging are left to your IDE.
 
-Details: [docs/m1.md](docs/m1.md) (Inbox, PRs, review) and [docs/m2.md](docs/m2.md) (issues,
-tasks, cleanup). The UI's design rules: [docs/design.md](docs/design.md). How the agent integration came
+Details: [docs/pull-requests.md](docs/pull-requests.md) (Inbox, PRs, the agent, review) and
+[docs/lifecycle.md](docs/lifecycle.md) (issues, tasks, cleanup). The UI's design rules: [docs/design.md](docs/design.md). How the agent integration came
 about: [docs/spike-results.md](docs/spike-results.md).
 
 ## Roadmap
@@ -95,7 +95,7 @@ windows never show up on your desktop or take focus, and its notifications stay 
 - `lifecycle`: issue → worktree → push → its PR → merge → cleanup.
 - `task`: new task → the agent opens a PR and an issue → linked under the task → asking the
   agent about code from the review → discard.
-- `m1`: the agent in the terminal (turns that commit, a permission prompt), the review loop,
+- `agent`: the agent in the terminal (turns that commit, a permission prompt), the review loop,
   idle shutdown (not while a background job runs) and resume after a restart.
 
 Nothing leaves the machine: GitHub is `e2e/fake_gh.py`, a stand-in for `gh` that serves fixture

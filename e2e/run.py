@@ -3,7 +3,7 @@
   cd src-tauri && cargo build --release --features e2e   (after `npm run build`)
   python3 e2e/run.py src-tauri/target/release/ariekei [scenario ...]
 
-Scenarios: review, windows, lifecycle, task, m1 (default: all). GitHub is e2e/fake_gh.py and the
+Scenarios: review, windows, lifecycle, task, agent (default: all). GitHub is e2e/fake_gh.py and the
 agent e2e/fake_claude.py, so nothing leaves the machine. On Linux the app runs on a private
 Xvfb display and D-Bus session (Xvfb and dbus-daemon), so its windows and notifications never
 reach your desktop; E2E_HEADED=1 shows them on your display instead. Work directories go to
@@ -32,7 +32,7 @@ SCENARIOS = {
     "windows": {"ARIEKEI_POLL_SECS": "3"},
     "lifecycle": {"ARIEKEI_POLL_SECS": "3"},
     "task": {"ARIEKEI_POLL_SECS": "3"},
-    "m1": {"ARIEKEI_NO_POLL": "1", "ARIEKEI_IDLE_SECS": "5"},
+    "agent": {"ARIEKEI_NO_POLL": "1", "ARIEKEI_IDLE_SECS": "5"},
 }
 
 
@@ -110,7 +110,7 @@ def run(app, names, display):
         if display:
             env.pop("WAYLAND_DISPLAY", None)
         args = [sys.executable, "-I", os.path.join(HERE, f"{name}_scenario.py"), app, work]
-        if name == "m1":
+        if name == "agent":
             args.append(data)
         print(f"\n=== {name}", flush=True)
         t0 = time.monotonic()
