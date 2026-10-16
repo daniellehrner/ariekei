@@ -47,6 +47,8 @@ told apart in grey-scale and with colour blindness:
   Issues, a search field, and per hit **Add to Open**, or the `in Inbox` pill (a tinted fill:
   local state) with **Open** and, for items the user added, **Remove**. It stays open after
   adding.
+- **Refresh** turns its arrow (like the busy `Spinner`) until the poll it asked for has
+  answered, with new data or an error; with reduced motion it only dims.
 
 ## Notices
 

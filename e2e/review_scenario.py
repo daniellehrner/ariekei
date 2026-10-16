@@ -179,6 +179,12 @@ try:
     equal("each PR is in its section", {k: section_rows(s, k) for k in ["assigned", "approved", "requested", "mine", "reviewed"]},
           {"assigned": [45], "approved": [46], "requested": [44], "mine": [42], "reviewed": [47]})
 
+    # Refresh spins until the poll it asked for is done.
+    busy = s.js("document.querySelector('[data-refresh]').click(); await new Promise((r) => setTimeout(r, 0));"
+                "return document.querySelector('[data-refresh]').hasAttribute('data-refreshing')")
+    check("the refresh button spins while it refreshes", busy)
+    eventually("and stops when the poll is done", lambda: bool(s.find("[data-refreshing]")), lambda v: not v, timeout=20)
+
     # Browse (Ctrl+K): add an open issue, then find another author's PR, add it and open it.
     ctrl(s, "k")
     s.wait("[data-browse]", timeout=10)

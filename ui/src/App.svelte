@@ -45,6 +45,20 @@
     api.setUiSetting("inboxCollapsed", String(inboxCollapsed));
   }
 
+  // A refresh the user asked for is running: it ends with the next poll's result (the
+  // inbox-changed or inbox-error event), or after two minutes at the latest.
+  let refreshing = $state(false);
+  let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  function refresh() {
+    refreshing = true;
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => (refreshing = false), 120_000);
+    api.refresh().catch((e) => {
+      pollError = String(e);
+      refreshing = false;
+    });
+  }
+
   // The Inbox's New task form.
   let creatingTask = $state(false);
 
@@ -116,6 +130,7 @@
     browser.open = false;
     selected = null;
     pollError = null;
+    refreshing = false;
     selected = await api.selectedItem();
     reload();
   }
@@ -134,10 +149,13 @@
       listen<number>("inbox-changed", (e) => {
         if (e.payload !== repo?.id) return;
         pollError = null;
+        refreshing = false;
         reload();
       }),
       listen<{ repo: number; message: string }>("inbox-error", (e) => {
-        if (e.payload.repo === repo?.id) pollError = e.payload.message;
+        if (e.payload.repo !== repo?.id) return;
+        pollError = e.payload.message;
+        refreshing = false;
       }),
       // Agent status feeds the Inbox's ordering.
       listen("agent-event", reload),
@@ -160,7 +178,7 @@
 {:else if repo}
   {#key repo.id}
   <div class="app">
-    <Inbox {repo} {rows} {loaded} {selected} error={pollError} {collapsed} ontoggle={toggleInbox} onselect={select} onrefresh={() => api.refresh()} onadded={reload}
+    <Inbox {repo} {rows} {loaded} {selected} error={pollError} {collapsed} ontoggle={toggleInbox} onselect={select} onrefresh={refresh} {refreshing} onadded={reload}
       onswitch={show} onconnect={() => (connecting = true)} bind:creating={creatingTask} />
     {#if current}
       <WorkItem row={current} {rows} repoId={repo.id} viewer={repo.viewer} onchanged={reload} onselect={select} />

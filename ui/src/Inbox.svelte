@@ -21,6 +21,7 @@
     ontoggle,
     onselect,
     onrefresh,
+    refreshing = false,
     onadded,
     onswitch,
     onconnect,
@@ -36,6 +37,8 @@
     ontoggle: () => void;
     onselect: (id: number) => void;
     onrefresh: () => void;
+    /// A refresh the user asked for is running (the button spins).
+    refreshing?: boolean;
     /// The Inbox changed here: a task was added, an item starred or removed.
     onadded: () => void;
     /// This window now shows another repo.
@@ -207,7 +210,8 @@
   <header>
     <RepoMenu {repo} {onswitch} {onconnect} />
     <IconButton icon="plus" label="New task — work with no PR or issue yet (Ctrl+N)" size={28} onclick={newTask} data-new-task />
-    <IconButton icon="refresh" label="Refresh from GitHub" size={28} onclick={onrefresh} />
+    <IconButton icon="refresh" label={refreshing ? "Refreshing from GitHub…" : "Refresh from GitHub"} size={28} onclick={onrefresh}
+      class={refreshing ? "spinning" : ""} data-refresh data-refreshing={refreshing || undefined} />
     <IconButton icon="sidebar-collapse" label="Collapse Inbox (Ctrl+B)" size={28} onclick={ontoggle} />
   </header>
   <div class="search">
@@ -302,6 +306,13 @@
     border-radius: 0 2px 2px 0; background: var(--you);
   }
 
+  /* The refresh arrow turns while a refresh runs (as the Spinner does; still with reduced
+     motion, where the button only dims). */
+  header :global(.spinning svg) { animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    header :global(.spinning svg) { animation: none; opacity: 0.5; }
+  }
   header { display: flex; align-items: center; gap: var(--sp-1); height: 40px; padding: 0 var(--sp-3) 0 var(--sp-4); flex: none; }
   .search { padding: 0 var(--sp-4) var(--sp-4); flex: none; }
   .search label {
