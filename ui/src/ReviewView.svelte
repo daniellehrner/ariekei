@@ -812,7 +812,9 @@
           <form class="composer" onsubmit={addComment} data-composer>
             <Mark who="you" />
             <label for="composer-{id}">Lines {selection.fromLine}{selection.toLine !== selection.fromLine ? `–${selection.toLine}` : ""}</label>
-            <input id="composer-{id}" bind:value={draft} placeholder="Comment on these lines" />
+            <!-- Enter adds; Esc drops the selection, also while typing here. -->
+            <input id="composer-{id}" bind:value={draft} placeholder="Comment on these lines"
+              onkeydown={(e) => e.key === "Escape" && (e.preventDefault(), clearSelection())} />
             <Button type="submit" size="sm" variant="primary" disabled={!draft.trim()} data-add-comment>Add comment</Button>
             <IconButton icon="x" label="Cancel comment (Esc)" size={22} type="button" onclick={clearSelection} />
           </form>

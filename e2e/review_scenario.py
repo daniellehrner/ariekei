@@ -316,7 +316,13 @@ try:
         return [Number(getComputedStyle(layer).zIndex), over, el10.className];"""),
         lambda v: v[0] > 0 and v[1] and "cm-changedLine" in v[2], timeout=10)
     print("[selection] layer z-index, drawn over line 10, its classes:", shown)
+    # Esc in the composer drops the selection (and the composer with it).
+    select_lines(s, 3, 4)
+    s.wait("[data-composer] input", timeout=10)
+    press_on(s, "[data-composer] input", "Escape")
+    eventually("Esc in the composer drops the selection", lambda: bool(s.find("[data-composer]")), lambda v: not v, timeout=5)
     add_comment(s, 10, 10, "Name this better.")
+    eventually("adding closes the composer", lambda: bool(s.find("[data-composer]")), lambda v: not v, timeout=5)
     add_comment(s, 1, 1, "Unrelated: the header is stale.")
     print("[draft]", s.js("return [...document.querySelectorAll('[data-drafts] li')].map(l => l.innerText.replace(/\\s+/g, ' ').trim())"))
     equal("draft comments", s.js("return document.querySelectorAll('[data-drafts] li').length"), 2)

@@ -65,7 +65,7 @@ Each window shows one repository, and a repository is shown in at most one windo
 
 Light and dark mode follow your system setting. Below a 1200 px wide window, the Inbox steps
 aside by itself once the review's file panel opens, and stays aside until you bring it back
-with **Ctrl+B**.
+with **Ctrl+B** or its button.
 
 With no item selected, the work area says how many items want your attention and lists the
 first five (most urgent first); click one to open it.
@@ -328,8 +328,8 @@ Everything of your review is in the dock under the diff.
 
 1. Select code on the right (new) side of the diff. The dock offers **Comment on these lines**
    (**c**, or **Comment on lines** in the code menu, takes you there).
-2. Type your comment and press **Add comment** (Enter). **Esc** drops the selection. The lines
-   keep a small blue square in the gutter.
+2. Type your comment and press **Add comment** (Enter). **Esc** drops the selection, also while
+   you type. The lines keep a small blue square in the gutter.
 3. Drafts collect in **Draft comments**, per item. Remove one with its trash button.
 4. Send them:
    - **Send to agent** (items with an agent) delivers all drafts to the agent as one message.
@@ -565,8 +565,8 @@ activity, a grey bar for lifecycle news.
   "No, exit". Open the item again and choose to trust the folder.
 - **Done is refused**: read the listed reasons; commit and push or discard the work, then press
   Done again.
-- **Ask agent is refused**: the agent is waiting for your permission. Answer it in the
-  Terminal first.
+- **Send to agent is greyed out** (in the Ask agent box or under the drafts): the agent is
+  waiting for your permission. Answer it in the Terminal first (**Answer in Terminal**).
 
 Not supported yet:
 
