@@ -9,14 +9,17 @@
   import type { HTMLButtonAttributes } from "svelte/elements";
   import Icon from "./Icon.svelte";
   import Kbd from "./Kbd.svelte";
+  import Mark, { type Who } from "./Mark.svelte";
   import Spinner from "./Spinner.svelte";
   import type { IconName } from "./icons";
 
-  type Variant = "primary" | "secondary" | "quiet" | "danger" | "agent" | "gh";
+  // agent-soft: the agent's tint for actions that stay in Ariekei (Answer in Terminal).
+  type Variant = "primary" | "secondary" | "quiet" | "danger" | "agent" | "agent-soft" | "gh";
   let {
     variant = "secondary",
     size = "md",
     icon,
+    mark,
     kbd,
     loading = false,
     pressed,
@@ -28,6 +31,8 @@
     variant?: Variant;
     size?: "sm" | "md" | "lg";
     icon?: IconName;
+    // A voice's mark in the icon slot (Send to agent, Submit to GitHub…).
+    mark?: Who;
     kbd?: string;
     loading?: boolean;
     pressed?: boolean;
@@ -36,7 +41,7 @@
 </script>
 
 <button {...rest} class="btn {variant} {size} {cls}" disabled={disabled || loading} aria-busy={loading || undefined} aria-pressed={pressed}>
-  {#if loading}<Spinner />{:else if icon}<Icon name={icon} />{/if}
+  {#if loading}<Spinner />{:else if mark}<Mark who={mark} onAccent={variant === "agent" || variant === "gh"} />{:else if icon}<Icon name={icon} />{/if}
   {@render children?.()}
   {#if kbd}<Kbd key={kbd} />{/if}
 </button>
@@ -50,13 +55,13 @@
     transition: background-color var(--dur-fast) var(--ease);
   }
   .sm { height: var(--h-control-sm); padding: 0 var(--sp-4); border-radius: var(--r-sm); }
-  .lg { height: var(--h-control-lg); padding: 0 14px; font-size: var(--fs-13); }
+  .lg { height: var(--h-control-lg); padding: 0 var(--sp-6); font-size: var(--fs-13); }
   .btn:disabled { opacity: 0.45; cursor: not-allowed; }
   .btn[aria-busy="true"] { opacity: 1; cursor: progress; }
 
   .primary { background: var(--you); border-color: var(--you); color: var(--text-on-accent); }
   .primary:hover:not(:disabled) { background: var(--you-strong); border-color: var(--you-strong); }
-  .primary:active:not(:disabled), .danger:active:not(:disabled) { box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.25); }
+  .primary:active:not(:disabled), .danger:active:not(:disabled) { box-shadow: var(--shadow-press); }
 
   .secondary { background: var(--surface-raised); border-color: var(--border-strong); color: var(--text); }
   .secondary:hover:not(:disabled) { background: var(--surface-2); }
@@ -73,4 +78,6 @@
   .agent { background: var(--agent); border-color: var(--agent); color: var(--text-on-accent); }
   .gh { background: var(--gh); border-color: var(--gh); color: var(--text-on-accent); }
   .agent:hover:not(:disabled), .gh:hover:not(:disabled) { filter: brightness(0.92); }
+  .agent-soft { background: var(--agent-bg); border-color: var(--agent-line); color: var(--agent-strong); }
+  .agent-soft:hover:not(:disabled) { background: color-mix(in srgb, var(--agent) 14%, var(--agent-bg)); }
 </style>

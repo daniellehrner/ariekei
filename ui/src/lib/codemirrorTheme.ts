@@ -31,16 +31,21 @@ export const ariekeiTheme = EditorView.theme({
   "&.cm-merge-a .cm-changedText, .cm-deletedChunk .cm-deletedText":
     { background: "var(--diff-del-word)", borderRadius: "2px" },
   "&.cm-merge-b .cm-changedText": { background: "var(--diff-add-word)", borderRadius: "2px" },
-  "&.cm-merge-a .cm-changeGutter": { backgroundColor: "var(--diff-del-gutter)" },
-  "&.cm-merge-b .cm-changeGutter": { backgroundColor: "var(--diff-add-gutter)" },
+  // Only the changed lines' markers are coloured, not the whole change-gutter column.
+  ".cm-changeGutter": { backgroundColor: "transparent" },
+  "&.cm-merge-a .cm-changedLineGutter, .cm-deletedLineGutter": { backgroundColor: "var(--diff-del-gutter)" },
+  "&.cm-merge-b .cm-changedLineGutter, .cm-changedLineGutter": { backgroundColor: "var(--diff-add-gutter)" },
   ".cm-mergeSpacer": { backgroundColor: "var(--diff-spacer)" },
   ".cm-collapsedLines": { background: "var(--diff-fold-bg)", color: "var(--diff-fold-text)",
     borderBlock: "1px solid var(--border)", fontFamily: "var(--font-ui)",
-    fontSize: "11.5px", padding: "3px 12px", cursor: "pointer" },
+    fontSize: "var(--fs-code-inline)", padding: "3px 12px", cursor: "pointer" },
   ".cm-collapsedLines:hover": { color: "var(--text)" },
   ".cm-mergeView .cm-editor + .cm-editor": { borderLeft: "1px solid var(--border)" },
   // The change n / p moved to: a bar on the gutter (currentChange.ts).
   ".cm-lineNumbers .ak-current-change": { boxShadow: "inset 2px 0 0 var(--you)" },
+  // Your draft comments' lines (draftMarks.ts).
+  ".ak-drafts .cm-gutterElement": { display: "flex", alignItems: "center", justifyContent: "center", width: "12px", padding: "0 0 0 4px" },
+  ".ak-draft-mark": { display: "block", width: "8px", height: "8px", borderRadius: "1.5px", backgroundColor: "var(--diff-draft-mark)" },
 });
 
 export const ariekeiHighlight = HighlightStyle.define([

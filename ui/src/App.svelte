@@ -10,10 +10,12 @@
   import Notices from "./Notices.svelte";
   import Shortcuts from "./Shortcuts.svelte";
   import WorkItem from "./WorkItem.svelte";
+  import AttentionPip, { URGENCY } from "./controls/AttentionPip.svelte";
   import Kbd from "./controls/Kbd.svelte";
   import { homeDir } from "@tauri-apps/api/path";
   import { listenToAgents } from "./lib/agent.svelte";
-  import { api, type Repo, type Row } from "./lib/api";
+  import { api, shortName, type Repo, type Row } from "./lib/api";
+  import { ATTENTION_LABEL, attentionKind } from "./lib/attention";
   import { isTyping } from "./lib/keys";
   import { browser, layout, shortcuts } from "./lib/layout.svelte";
   import { setHome } from "./lib/paths";
@@ -27,19 +29,24 @@
   // The Connect screen over a connected repo (to add another one).
   let connecting = $state(false);
   // The Inbox can collapse to a thin strip, leaving the screen to the work item. Below
-  // 1200 px it also steps aside while the review's side panel is open, unless the user
-  // opened it again.
+  // 1200 px it also steps aside once the review's side panel opens, and stays aside (whether
+  // the panel is shown or not) until the user opens it again, so the layout doesn't jump.
   let inboxCollapsed = $state(false);
   let width = $state(window.innerWidth);
+  let autoCollapsed = $state(false);
   let keepInboxOpen = $state(false);
   const crowded = $derived(width < 1200 && layout.reviewPanel);
-  const collapsed = $derived(inboxCollapsed || (crowded && !keepInboxOpen));
+  const collapsed = $derived(inboxCollapsed || autoCollapsed);
   $effect(() => {
-    if (!crowded) keepInboxOpen = false;
+    if (crowded && !keepInboxOpen) autoCollapsed = true;
+  });
+  $effect(() => {
+    if (width >= 1200) autoCollapsed = keepInboxOpen = false;
   });
 
   function toggleInbox() {
-    if (collapsed && !inboxCollapsed) {
+    if (autoCollapsed && !inboxCollapsed) {
+      autoCollapsed = false;
       keepInboxOpen = true;
       return;
     }
@@ -184,21 +191,41 @@
     <Inbox {repo} {rows} {loaded} {selected} error={pollError} {collapsed} ontoggle={toggleInbox} onselect={select} onrefresh={refresh} {refreshing} onadded={reload}
       onswitch={show} onconnect={() => (connecting = true)} bind:creating={creatingTask} />
     {#if current}
-      <WorkItem row={current} {rows} repoId={repo.id} viewer={repo.viewer} onchanged={reload} onselect={select} />
+      <WorkItem row={current} {rows} repoId={repo.id} onchanged={reload} onselect={select} />
     {:else}
-      {@const waiting = rows.filter((r) => r.attention).length}
+      <!-- What wants the user, most urgent first: the first five, to open from here. -->
+      {@const wanting = rows
+        .map((row) => ({ row, kind: attentionKind(row.attention) }))
+        .filter((w) => w.kind !== "none" && w.kind !== "working")
+        .sort((a, b) => URGENCY[a.kind] - URGENCY[b.kind])}
       <div class="empty">
-        {#if loaded && !rows.length}
-          <strong>Your Inbox is empty</strong>
-          <span>What is assigned to you, your open pull requests, review requests and PRs you reviewed in {repo.owner}/{repo.name} appear here.
-            To add any other open PR or issue, press <Kbd key="Ctrl+K" /> (Browse). To start work that has no PR or issue yet, press <Kbd key="Ctrl+N" /> (New task).</span>
-        {:else if loaded}
-          <strong>{waiting ? `${waiting} item${waiting === 1 ? " wants" : "s want"} your attention` : "You're all caught up"}</strong>
-          <span>Pick an item in the Inbox{waiting ? ", starting at the top" : ""}. <Kbd key="Ctrl+B" /> shows or hides the Inbox,
-            <Kbd key="Ctrl+N" /> starts a new task.</span>
-        {:else}
-          <span>Loading your pull requests…</span>
-        {/if}
+        <div class="column">
+          {#if loaded && !rows.length}
+            <strong>Your Inbox is empty</strong>
+            <span class="hint">What is assigned to you, your open pull requests, review requests and PRs you reviewed in {repo.owner}/{repo.name} appear here.
+              To add any other open PR or issue, press <Kbd key="Ctrl+K" /> (Browse). To start work that has no PR or issue yet, press <Kbd key="Ctrl+N" /> (New task).</span>
+          {:else if loaded}
+            <strong>{wanting.length ? `${wanting.length} item${wanting.length === 1 ? " wants" : "s want"} your attention` : "You're all caught up"}</strong>
+            {#if wanting.length}
+              <ul class="wanting" data-wanting>
+                {#each wanting.slice(0, 5) as { row, kind } (row.id)}
+                  <li>
+                    <button onclick={() => select(row.id)} data-want={row.number}>
+                      <AttentionPip {kind} label="" />
+                      <span class="num">{shortName(row)}</span>
+                      <span class="title">{row.title}</span>
+                      <span class="reason {kind}">{ATTENTION_LABEL[kind]}</span>
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+            <span class="hint">{wanting.length ? "Or pick an item in the Inbox." : "Pick an item in the Inbox."} <Kbd key="Ctrl+B" /> shows or hides the Inbox,
+              <Kbd key="Ctrl+N" /> starts a new task.</span>
+          {:else}
+            <span class="hint">Loading your pull requests…</span>
+          {/if}
+        </div>
       </div>
     {/if}
   </div>
@@ -212,6 +239,23 @@
 
 <style>
   .app { display: flex; height: 100vh; min-height: 0; overflow: hidden; }
-  .empty { flex: 1; display: flex; flex-direction: column; gap: var(--sp-3); align-items: center; justify-content: center; padding: var(--sp-9); color: var(--text-muted); font-size: var(--fs-12); text-align: center; }
-  .empty strong { color: var(--text); font-size: var(--fs-13); font-weight: var(--fw-semibold); }
+  .empty { flex: 1; display: flex; align-items: center; justify-content: center; padding: var(--sp-9); }
+  .column { width: 100%; max-width: 440px; display: flex; flex-direction: column; align-items: center; gap: var(--sp-3); text-align: center; }
+  .column strong { color: var(--text); font-size: var(--fs-13); line-height: var(--lh-13); font-weight: var(--fw-semibold); }
+  .hint { color: var(--text-muted); font-size: var(--fs-12); line-height: var(--lh-12); }
+  .wanting { list-style: none; margin: var(--sp-2) 0; padding: 0; width: 100%; display: flex; flex-direction: column; gap: 1px; text-align: left; }
+  .wanting button {
+    width: 100%; display: flex; align-items: center; gap: var(--sp-4); height: 32px; padding: 0 var(--sp-4);
+    border: 0; border-radius: var(--r-md); background: transparent; color: var(--text); font-size: var(--fs-13);
+  }
+  .wanting button:hover { background: var(--surface-hover); }
+  .wanting button:focus-visible { outline-offset: -2px; }
+  .num { flex: none; font-family: var(--font-mono); font-size: var(--fs-code-inline); color: var(--text-muted); }
+  .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .reason { flex: none; font-size: var(--fs-12); font-weight: var(--fw-medium); color: var(--text-muted); }
+  .reason.needs-you { color: var(--agent-strong); }
+  .reason.blocked, .reason.ci-failing { color: var(--bad); }
+  .reason.activity { color: var(--gh-strong); }
+  .reason.review { color: var(--you-strong); }
+  .reason.all-closed { color: var(--info); }
 </style>

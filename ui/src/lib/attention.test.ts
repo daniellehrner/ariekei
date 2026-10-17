@@ -17,6 +17,7 @@ test("an item opens on the tab that resolves its attention reason", () => {
   assert.equal(landingTab("agent needs you", all), "terminal");
   assert.equal(landingTab("agent needs you", { terminal: false }), null);
   assert.equal(landingTab("new reviews or comments", all), "comments");
+  assert.equal(landingTab("ready for review", all), "review");
   assert.equal(landingTab("CI failing", all), "overview");
   assert.equal(landingTab("agent working", all), null);
   assert.equal(landingTab(null, all), null);

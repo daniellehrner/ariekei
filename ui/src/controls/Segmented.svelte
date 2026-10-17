@@ -30,7 +30,7 @@
   .seg { display: inline-flex; padding: 2px; border-radius: var(--r-md); background: var(--surface-0); box-shadow: inset 0 0 0 1px var(--border); }
   button {
     height: 20px; padding: 0 var(--sp-4); border: 0; border-radius: var(--r-sm); background: transparent;
-    color: var(--text-muted); font: inherit; font-size: 11.5px; font-weight: var(--fw-medium); cursor: pointer;
+    color: var(--text-muted); font: inherit; font-size: var(--fs-code-inline); font-weight: var(--fw-medium); cursor: pointer;
   }
   button.on { background: var(--surface-raised); color: var(--text); box-shadow: var(--shadow-1), inset 0 0 0 1px var(--border); }
 </style>

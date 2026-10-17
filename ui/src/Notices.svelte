@@ -4,31 +4,34 @@
 <!--
   In-app notices (the backend's `notice` event, see notify.rs): shown instead of an OS
   notification while this window is focused. Clicking one opens its item; "waiting for your
-  permission" stays until the agent moves on, the rest fade after a while. Each is tinted in
-  its kind's colour and slides in with one pulse (a permission request with three), so it is
-  seen in its corner (docs/design.md, Notices).
+  permission" stays until the agent moves on, the rest fade after a while. Each is a neutral
+  raised card with its kind's pip (NoticeCard); only a permission request is tinted. The newest
+  three show; older ones fold into "+N more" (docs/design.md, Notices).
 -->
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import { fly } from "svelte/transition";
-  import AttentionPip, { type Attention } from "./controls/AttentionPip.svelte";
-  import IconButton from "./controls/IconButton.svelte";
+  import NoticeCard from "./controls/NoticeCard.svelte";
   import { agents } from "./lib/agent.svelte";
   import { api } from "./lib/api";
   import { openOn } from "./lib/layout.svelte";
-  import { FADE_MS, fades, stillCurrent, withNotice, type Notice, type NoticeKind } from "./lib/notices";
-
-  const PIP: Record<NoticeKind, Attention> = {
-    "needs-you": "needs-you", finished: "review", error: "blocked", "ci-failing": "ci-failing", activity: "activity",
-    lifecycle: "none",
-  };
+  import { durationToken } from "./lib/tokens";
+  import { FADE_MS, fades, shown, stillCurrent, withNotice, type Notice, type NoticeKind } from "./lib/notices";
 
   // The item this window shows: notices about it are done once it is on screen.
   let { selected }: { selected: number | null } = $props();
   let notices: Notice[] = $state([]);
   let next = 0;
+  // The older notices, folded into "+N more", are shown too.
+  let unfolded = $state(false);
+  const stack = $derived(shown(notices, unfolded));
+  $effect(() => {
+    if (notices.length <= 1) unfolded = false;
+  });
+  // The exit: a fade and a short slide over --dur (nothing with reduced motion).
   const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const DUR = durationToken("--dur", 120);
 
   function dismiss(id: number) {
     notices = notices.filter((n) => n.id !== id);
@@ -65,63 +68,31 @@
 
 {#if notices.length}
   <div class="notices" role="status" aria-live="polite">
-    {#each notices as n (n.id)}
-      <div class="notice" data-notice={n.kind} out:fly={{ x: 48, duration: still ? 0 : 180 }}>
-        <button class="body" onclick={() => open(n)} disabled={n.item == null}
-          title={n.item == null ? undefined : "Open"}>
-          <span class="pip"><AttentionPip kind={PIP[n.kind]} size={16} label="" /></span>
-          <span class="text">
-            <strong>{n.title}</strong>
-            <span>{n.body}</span>
-          </span>
-        </button>
-        <IconButton icon="x" label="Dismiss" size={22} onclick={() => dismiss(n.id)} />
+    {#if stack.folded}
+      <button class="more" onclick={() => (unfolded = true)} data-more-notices>+{stack.folded} more</button>
+    {/if}
+    {#each stack.visible as n (n.id)}
+      <div out:fly={{ x: 8, duration: still ? 0 : DUR }}>
+        <NoticeCard notice={n} onopen={() => open(n)} ondismiss={() => dismiss(n.id)} />
       </div>
     {/each}
   </div>
 {/if}
 
 <style>
+  /* Above the review's drafts dock when it is shown (ReviewView sets --dock-h). */
   .notices {
-    position: fixed; right: var(--sp-7); bottom: var(--sp-7); z-index: 50;
-    display: flex; flex-direction: column; gap: var(--sp-4);
-    width: min(380px, calc(100vw - 2 * var(--sp-7)));
+    position: fixed; right: var(--sp-7); bottom: max(var(--sp-7), calc(var(--dock-h, 0px) + var(--sp-6))); z-index: 50;
+    display: flex; flex-direction: column; align-items: stretch; gap: var(--sp-4);
+    width: min(var(--w-notice), calc(100vw - 2 * var(--sp-7)));
   }
-  /* --tone: the kind's colour, as in the Inbox's attention pips. */
-  .notice {
-    --tone: var(--info);
-    display: flex; align-items: flex-start; gap: var(--sp-2); padding: var(--sp-2);
-    background: color-mix(in srgb, var(--tone) 22%, var(--surface-raised));
-    border: 1px solid color-mix(in srgb, var(--tone) 75%, transparent); border-radius: var(--r-lg);
-    box-shadow: var(--shadow-pop);
-    animation: arrive var(--dur-slow) var(--ease) both, pulse var(--dur-pulse) var(--dur-slow) ease-out;
+  @media (max-width: 1199px) {
+    .notices { width: min(320px, calc(100vw - 2 * var(--sp-7))); }
   }
-  .notice[data-notice="needs-you"] { --tone: var(--agent); animation-iteration-count: 1, 3; }
-  .notice[data-notice="finished"] { --tone: var(--you); }
-  .notice[data-notice="error"], .notice[data-notice="ci-failing"] { --tone: var(--bad); }
-  .notice[data-notice="activity"] { --tone: var(--gh); }
-  @keyframes arrive {
-    from { opacity: 0; transform: translateX(var(--sp-7)); }
-    to { opacity: 1; transform: none; }
+  .more {
+    align-self: flex-end; height: 22px; padding: 0 var(--sp-5); border: 0; border-radius: var(--r-pill);
+    background: var(--surface-raised); box-shadow: var(--shadow-pop); color: var(--text-muted);
+    font-size: var(--fs-12); line-height: var(--lh-12); font-weight: var(--fw-medium);
   }
-  @keyframes pulse {
-    from { box-shadow: var(--shadow-pop), 0 0 0 0 color-mix(in srgb, var(--tone) 60%, transparent); }
-    to { box-shadow: var(--shadow-pop), 0 0 0 10px color-mix(in srgb, var(--tone) 0%, transparent); }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .notice { animation: none; }
-  }
-  .body {
-    flex: 1; min-width: 0; display: flex; gap: var(--sp-4); align-items: flex-start; text-align: left;
-    padding: var(--sp-3) var(--sp-4); border: 0; border-radius: var(--r-md); background: none; color: var(--text);
-    font: inherit; font-size: var(--fs-12); line-height: var(--lh-12); cursor: pointer;
-  }
-  .body:hover:not(:disabled) { background: var(--surface-hover); }
-  .body:disabled { cursor: default; color: var(--text); opacity: 1; }
-  .body:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-  .pip { flex: none; display: flex; padding-top: 2px; }
-  .pip:empty { display: none; }
-  .text { display: flex; flex-direction: column; min-width: 0; }
-  .text strong { font-weight: var(--fw-semibold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .text span { color: color-mix(in srgb, var(--text) 82%, transparent); overflow-wrap: anywhere; }
+  .more:hover { color: var(--text); }
 </style>

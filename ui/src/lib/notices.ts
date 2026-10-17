@@ -6,7 +6,9 @@
 export type NoticeKind = "needs-you" | "finished" | "error" | "ci-failing" | "activity" | "lifecycle";
 export type Notice = { id: number; item: number | null; kind: NoticeKind; title: string; body: string };
 
-export const MAX_NOTICES = 4;
+export const MAX_NOTICES = 8;
+/** Shown at once; older ones fold into "+N more". */
+export const SHOWN_NOTICES = 3;
 export const FADE_MS = 10_000;
 
 /** Still worth showing: not about the item on screen (`selected`), and a permission request
@@ -24,4 +26,11 @@ export function withNotice(list: Notice[], notice: Notice): Notice[] {
 /** Whether the notice goes away by itself (a permission request stays until answered). */
 export function fades(n: Notice): boolean {
   return n.kind !== "needs-you";
+}
+
+/** The notices on screen: the newest SHOWN_NOTICES, or all of them once unfolded, and how many
+ *  are folded away. */
+export function shown(list: Notice[], unfolded: boolean): { visible: Notice[]; folded: number } {
+  if (unfolded || list.length <= SHOWN_NOTICES) return { visible: list, folded: 0 };
+  return { visible: list.slice(-SHOWN_NOTICES), folded: list.length - SHOWN_NOTICES };
 }

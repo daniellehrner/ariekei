@@ -162,7 +162,7 @@ try:
     commit(upstream, "more x")
     git(upstream, "checkout", "-q", "main")
     set_pr(42, ci="PENDING")
-    eventually("CI shows as running", lambda: s.js("return !!document.querySelector(\".inbox .row[data-number='42'] .ci.warn\")"), lambda v: v, timeout=30)
+    eventually("CI shows as running", lambda: s.js("return !!document.querySelector(\".inbox .row[data-number='42'] [data-ci='pending']\")"), lambda v: v, timeout=30)
     set_pr(42, ci="FAILURE", failing="unit-tests")
     eventually("CI failing shows without the PR changing", lambda: attention(s, 42), lambda v: v == "CI failing", timeout=30)
     print("[ci] #42:", attention(s, 42))

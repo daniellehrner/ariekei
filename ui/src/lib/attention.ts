@@ -10,6 +10,7 @@ const KIND: Record<string, Attention> = {
   "finished, cleanup blocked": "blocked",
   "CI failing": "ci-failing",
   "new reviews or comments": "activity",
+  "ready for review": "review",
   "all its PRs and issues are closed": "all-closed",
   "agent working": "working",
 };
@@ -19,9 +20,12 @@ export const ATTENTION_LABEL: Record<Attention, string> = {
   blocked: "Cleanup blocked",
   "ci-failing": "CI failing",
   activity: "New activity",
-  // Only a notice's pip (the agent finished: your turn), no Inbox reason.
-  review: "Agent finished",
+  // The agent finished: your turn.
+  review: "Ready for review",
   "all-closed": "All closed",
+  // Only notices' pips: the agent stopped with an error, lifecycle news.
+  error: "Agent error",
+  info: "",
   working: "Agent working",
   none: "",
 };
@@ -33,7 +37,7 @@ export function attentionKind(reason: string | null): Attention {
 export type Tab = "overview" | "comments" | "review" | "terminal";
 
 /** The tab that resolves the item's attention reason, if any: the agent needs you → Terminal,
- *  new comments → Comments, CI failing / cleanup blocked / a
+ *  new comments → Comments, ready for review → Review, CI failing / cleanup blocked / a
  *  task's PRs and issues all closed → Overview. */
 export function landingTab(reason: string | null, has: { terminal: boolean }): Tab | null {
   switch (attentionKind(reason)) {
@@ -41,6 +45,8 @@ export function landingTab(reason: string | null, has: { terminal: boolean }): T
       return has.terminal ? "terminal" : null;
     case "activity":
       return "comments";
+    case "review":
+      return "review";
     case "blocked":
     case "ci-failing":
     case "all-closed":

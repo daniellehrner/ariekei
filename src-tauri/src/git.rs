@@ -352,6 +352,8 @@ pub struct Commit {
     pub subject: String,
     pub author: String,
     pub date: String,
+    /// How many files it changes.
+    pub files: usize,
 }
 
 /// Commits reachable from `to` but not from `from`, newest first.
@@ -360,19 +362,22 @@ pub fn commits_between(cwd: &Path, from: &str, to: &str) -> Result<Vec<Commit>, 
         cwd,
         &[
             "log",
-            "--format=%H%x1f%s%x1f%an%x1f%aI",
+            "--name-only",
+            "--format=%x1e%H%x1f%s%x1f%an%x1f%aI",
             &format!("{from}..{to}"),
         ],
     )?;
     Ok(out
-        .lines()
-        .filter_map(|l| {
-            let mut f = l.split('\u{1f}');
+        .split('\u{1e}')
+        .filter_map(|entry| {
+            let mut lines = entry.lines();
+            let mut f = lines.next()?.split('\u{1f}');
             Some(Commit {
                 sha: f.next()?.to_owned(),
                 subject: f.next()?.to_owned(),
                 author: f.next()?.to_owned(),
                 date: f.next()?.to_owned(),
+                files: lines.filter(|l| !l.trim().is_empty()).count(),
             })
         })
         .collect())
@@ -475,9 +480,9 @@ pub mod tests {
         assert_eq!(
             commits
                 .iter()
-                .map(|c| c.subject.as_str())
+                .map(|c| (c.subject.as_str(), c.files))
                 .collect::<Vec<_>>(),
-            ["grow a"]
+            [("grow a", 1)]
         );
         assert!(is_dirty(p).unwrap());
     }

@@ -30,7 +30,11 @@ pub struct Row {
     /// Reviews or comments by others since the user last looked at the item.
     pub new_activity: bool,
     pub agent: Option<AgentStatus>,
+    /// The agent finished since the user last opened the item's review.
+    pub ready_for_review: bool,
     pub worktree: Option<String>,
+    /// The item's local branch, once it has a worktree.
+    pub branch: Option<String>,
     /// Why the row is where it is (for the UI), most urgent first.
     pub attention: Option<&'static str>,
     /// Why the finished item was not cleaned up, if it was not.
@@ -71,6 +75,9 @@ fn attention(row: &Row) -> (u8, Option<&'static str>) {
     }
     if row.new_activity {
         return (2, Some("new reviews or comments"));
+    }
+    if row.ready_for_review && row.agent == Some(Finished) {
+        return (3, Some("ready for review"));
     }
     if row.agent == Some(Working) {
         return (4, Some("agent working"));
@@ -125,7 +132,9 @@ mod tests {
             unresolved_threads: 0,
             new_activity: false,
             agent: None,
+            ready_for_review: false,
             worktree: None,
+            branch: None,
             attention: None,
             cleanup_blockers: None,
             task_id: None,
@@ -219,13 +228,24 @@ mod tests {
             new_activity: true,
             ..row(8, "2026-03-01")
         };
+        let finished = Row {
+            agent: Some(AgentStatus::Finished),
+            ready_for_review: true,
+            ..row(9, "2026-01-01")
+        };
+        // Reviewed since it finished: nothing to say.
+        let seen = Row {
+            agent: Some(AgentStatus::Finished),
+            ..row(10, "2026-01-02")
+        };
 
         let ordered = order(vec![
-            quiet_old, closed, quiet_new, working, activity, ci, needs_you,
+            quiet_old, closed, quiet_new, working, activity, ci, needs_you, finished, seen,
         ]);
         let numbers: Vec<i64> = ordered.iter().map(|r| r.number).collect();
-        assert_eq!(numbers, [7, 6, 5, 3, 2, 1, 8]);
+        assert_eq!(numbers, [7, 6, 5, 9, 3, 2, 10, 1, 8]);
         assert_eq!(ordered[0].attention, Some("agent needs you"));
-        assert_eq!(ordered[4].attention, None);
+        assert_eq!(ordered[3].attention, Some("ready for review"));
+        assert_eq!(ordered[5].attention, None);
     }
 }

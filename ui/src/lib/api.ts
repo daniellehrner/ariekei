@@ -51,7 +51,11 @@ export interface Row {
   unresolvedThreads: number;
   newActivity: boolean;
   agent: AgentStatus | null;
+  /** The agent finished since the user last opened the item's review. */
+  readyForReview: boolean;
   worktree: string | null;
+  /** The item's local branch, once it has a worktree. */
+  branch: string | null;
   attention: string | null;
   /** For a PR or issue a task's agent opened: the task. */
   taskId: number | null;
@@ -84,6 +88,8 @@ export interface Commit {
   subject: string;
   author: string;
   date: string;
+  /** How many files it changes. */
+  files: number;
 }
 
 export interface ReviewState {
@@ -176,6 +182,7 @@ export const api = {
   inbox: () => invoke<Row[]>("inbox"),
   refresh: () => invoke<void>("refresh"),
   markSeen: (id: number) => invoke<void>("mark_seen", { id }),
+  reviewSeen: (agentItem: number) => invoke<void>("review_seen", { agentItem }),
   setActiveItem: (id: number | null) => invoke<void>("set_active_item", { id }),
   selectedItem: () => invoke<number | null>("selected_item"),
   uiSetting: (key: string) => invoke<string | null>("ui_setting", { key }),

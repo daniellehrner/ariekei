@@ -5,10 +5,12 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import Icon from "./Icon.svelte";
+  import Mark from "./Mark.svelte";
   import type { IconName } from "./icons";
 
   type Tone = "bad" | "warn" | "info" | "gh" | "agent" | "ok";
-  const ICON: Record<Tone, IconName> = { bad: "error", warn: "warning", info: "info", gh: "submit-github", agent: "terminal", ok: "check" };
+  // GitHub's results carry its mark (the diamond).
+  const ICON: Record<Exclude<Tone, "gh">, IconName> = { bad: "error", warn: "warning", info: "info", agent: "terminal", ok: "check" };
   let {
     tone,
     icon,
@@ -20,7 +22,7 @@
 </script>
 
 <div class="banner {tone}" class:compact role={tone === "bad" || tone === "warn" ? "alert" : "status"} {...rest}>
-  <span class="icon"><Icon name={icon ?? ICON[tone]} size={14} /></span>
+  <span class="icon">{#if icon}<Icon name={icon} size={14} />{:else if tone === "gh"}<span class="mark"><Mark who="gh" /></span>{:else}<Icon name={ICON[tone]} size={14} />{/if}</span>
   <div class="text">{@render children()}</div>
   {#if action}<div class="action">{@render action()}</div>{/if}
 </div>
@@ -36,14 +38,15 @@
   .compact .icon { padding-top: 0; }
   .text { flex: 1; min-width: 0; }
   .text :global(strong) { font-weight: var(--fw-semibold); }
-  .text :global(code) { font-size: 11.5px; }
+  .text :global(code) { font-size: var(--fs-code-inline); }
   .text :global(ul) { margin: 2px 0 0; padding-left: 16px; }
   .action { flex: none; display: flex; gap: var(--sp-2); }
   .bad { background: var(--bad-bg); box-shadow: inset 0 0 0 1px var(--bad-line); }
   .bad .icon { color: var(--bad); }
   .warn { background: var(--warn-bg); }
   .warn .icon { color: var(--warn); }
-  .info { background: var(--info-bg); }
+  .info { background: var(--info-bg); box-shadow: inset 0 0 0 1px var(--info-line); }
+  .mark { width: 14px; height: 14px; display: grid; place-items: center; }
   .info .icon { color: var(--info); }
   .gh { background: var(--gh-bg); }
   .gh .icon { color: var(--gh); }

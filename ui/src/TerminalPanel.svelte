@@ -15,7 +15,7 @@
   import type { AgentStatus } from "./lib/agent.svelte";
   import { api } from "./lib/api";
   import { shortPath } from "./lib/paths";
-  import { monoFont, xtermTheme } from "./lib/xtermTheme";
+  import { monoFont, token, xtermTheme } from "./lib/xtermTheme";
 
   let {
     id,
@@ -47,8 +47,8 @@
     const t = new Terminal({
       allowProposedApi: true,
       fontFamily: monoFont(),
-      fontSize: 12.5,
-      lineHeight: 1.35,
+      fontSize: parseFloat(token("--fs-term")) || 12.5,
+      lineHeight: parseFloat(token("--lh-term")) || 1.35,
       scrollback: 10000,
       theme: xtermTheme(),
     });
@@ -144,7 +144,7 @@
   }
   .bar {
     flex: none; display: flex; align-items: center; gap: var(--sp-4); height: 28px; padding: 0 var(--sp-5);
-    border-bottom: 1px solid var(--border); font-size: 11.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden;
+    border-bottom: 1px solid var(--border); font-size: var(--fs-12); color: var(--text-muted); white-space: nowrap; overflow: hidden;
   }
   .status { font-weight: var(--fw-medium); color: var(--text); }
   .bar code { font-size: var(--fs-11); overflow: hidden; text-overflow: ellipsis; }

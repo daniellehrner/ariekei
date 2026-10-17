@@ -71,9 +71,14 @@
     const list = items();
     const i = list.indexOf(document.activeElement as HTMLElement);
     const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+    // → from a repo reaches its window button, ← goes back.
+    const entry = (document.activeElement as HTMLElement | null)?.closest(".entry");
     if (step) {
       e.preventDefault();
       list[(i + step + list.length) % list.length]?.focus();
+    } else if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && entry) {
+      e.preventDefault();
+      entry.querySelector<HTMLElement>(e.key === "ArrowRight" ? ".ib" : ".pick")?.focus();
     } else if (e.key === "Escape") {
       e.preventDefault();
       close();

@@ -4,21 +4,22 @@ How the review view works, and the research it is based on.
 
 ## What it does
 
-- **Scopes:** all changes vs the base branch (like GitHub's Files tab), or one commit.
+- **Scopes:** all changes vs the base branch (like GitHub's Files tab), or one commit, picked
+  from the scope menu in the review bar.
 - **Review order, not alphabetical:** Source (grouped by directory) → Tests → Config & build →
   Generated, lock & vendored (folded; includes `linguist-generated`/`linguist-vendored` from
   `.gitattributes`). Switch to **Tree** (alphabetical) order.
 - **Noise and layout:** ignore whitespace (`w`, whitespace-only files labelled), unified or
-  side-by-side (`u`; unified by default when the diff column is under 720 px), syntax
-  highlighting for any language, git-exact hunks, unchanged code collapsed; the Inbox, the
-  commit list and the side panel collapse (below a 1200 px window the Inbox steps aside by
-  itself while the side panel is open).
+  side-by-side (`u`; unified by default when the diff column is under 880 px, and always for an
+  added or deleted file), syntax highlighting for any language, git-exact hunks, unchanged code
+  collapsed; the Inbox and the file panel collapse (below a 1200 px window the Inbox steps aside
+  by itself once the file panel opens).
 - **Keys:** `n`/`p` next/previous change (the change you are on is marked in the gutter;
   past a file's last change `n` goes on to the next file's first one, `p` back to the previous
-  file's last one, skipping folded sections; at the ends of the scope a note says there is no
-  change further on),
-  `]`/`[` next/previous file, `u`, `w`, `a` to ask the agent about the selection, `?` for
-  the list, `Esc` to drop a selection. They do nothing while you type or when the terminal has
+  file's last one, skipping folded sections; at the ends of the scope a note by the change says
+  there is no change further on),
+  `]`/`[` next/previous file, `u`, `w`, `a` to ask the agent about the selection, `c` to comment
+  on it, `?` for the list, `Esc` to drop a selection. They do nothing while you type or when the terminal has
   focus.
 - **Ask the agent about code:** right-click a line, or a selection of lines on either side of
   the diff, and choose **Ask agent…** (the ContextMenu key or `a` works too). Your prompt goes to
@@ -29,8 +30,9 @@ How the review view works, and the research it is based on.
   permission nothing can be sent, since the text would answer its prompt; while it works,
   Claude Code reads it after the turn. The prompt is sent as you wrote it: ask a question or
   ask for a change.
-- **Comments** go to GitHub as a review (line comments where GitHub accepts them) or to the
-  agent.
+- **Comments** are drafted in the dock under the diff (their lines keep a mark in the gutter)
+  and go to GitHub as a review (line comments where GitHub accepts them) or to the agent (not
+  while it waits for permission).
 
 ## Why
 

@@ -30,25 +30,29 @@
   import { EditorSelection, EditorState, type Extension } from "@codemirror/state";
   import { EditorView } from "@codemirror/view";
   import { basicSetup } from "codemirror";
-  import { onDestroy, tick } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import { fade } from "svelte/transition";
   import AskAgent from "./AskAgent.svelte";
   import CodeMenu from "./CodeMenu.svelte";
   import Button from "./controls/Button.svelte";
   import Icon from "./controls/Icon.svelte";
   import IconButton from "./controls/IconButton.svelte";
+  import Mark from "./controls/Mark.svelte";
   import Pill from "./controls/Pill.svelte";
   import Segmented from "./controls/Segmented.svelte";
   import Toggle from "./controls/Toggle.svelte";
   import { api, type ReviewState } from "./lib/api";
   import { ariekeiHighlight, ariekeiTheme } from "./lib/codemirrorTheme";
   import { currentChange } from "./lib/currentChange";
+  import { draftLines, draftMarks, setDraftLines } from "./lib/draftMarks";
   import { gitOverride } from "./lib/gitDiff";
   import { externalLinks } from "./lib/html";
   import { isTyping } from "./lib/keys";
   import { shortcuts } from "./lib/layout.svelte";
+  import { durationToken } from "./lib/tokens";
   import { languageFor } from "./lib/languages";
   import { layout } from "./lib/layout.svelte";
+  import type { Area } from "./lib/popover";
   import { flatten, neighbourFile, nextChange, rangeOf, scopeOf, sections, type ReviewFile } from "./lib/review";
   import { askMessage, classify, feedbackMessage, refLines, reviewBody, type CodeRef, type LineComment, type Ranges } from "./lib/reviewComments";
 
@@ -57,6 +61,7 @@
     view = $bindable(),
     onchanged,
     canSendToAgent,
+    agentItem,
     agentStatus,
     onterminal,
   }: {
@@ -64,6 +69,8 @@
     view: ReviewViewState;
     onchanged: () => void;
     canSendToAgent: boolean;
+    /// The item whose agent gets what is sent (this one, or its task).
+    agentItem?: number;
     /// The status of the agent that gets what is sent (lib/agent.svelte.ts).
     agentStatus?: string;
     /// Shows the agent's terminal (where its answer appears); after asking it about code.
@@ -78,7 +85,29 @@
   // on in the scope, `edge` says so at that end of the diff for a moment.
   let landing: 1 | -1 | 0 = 0;
   let edge = $state<1 | -1 | null>(null);
+  // Where the note goes: by the change (below the last one, above the first), centred in the
+  // new pane; null when that line is off screen (then at that end of the diff).
+  let edgeAt = $state<{ top: number; left: number } | null>(null);
   let edgeTimer: ReturnType<typeof setTimeout> | undefined;
+  const NOTE_MS = durationToken("--dur-note", 1800);
+  const DUR = durationToken("--dur", 120);
+
+  function edgeAnchor(dir: 1 | -1): { top: number; left: number } | null {
+    const v = newSide();
+    if (!v || !main || !host) return null;
+    const changes = changesOf(v);
+    const c = changes[dir > 0 ? changes.length - 1 : 0];
+    if (!c) return null;
+    const line = v.lineBlockAt(dir > 0 ? Math.max(c.from, c.to - 1) : c.from);
+    const box = main.getBoundingClientRect();
+    const view_ = host.getBoundingClientRect();
+    const pane = v.dom.getBoundingClientRect();
+    const y = v.documentTop + (dir > 0 ? line.bottom : line.top);
+    const left = pane.left + pane.width / 2 - box.left;
+    const top = dir > 0 ? y - box.top + 6 : y - box.top - 32;
+    // Off screen: at that end of the diff instead.
+    return top < view_.top - box.top || top > view_.bottom - box.top - 26 ? null : { top, left };
+  }
   const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
   let notice: string | null = $state(null);
   let noticeUrl: string | null = $state(null);
@@ -91,16 +120,22 @@
   let unified: EditorView | null = null;
   let selection: { fromLine: number; toLine: number; code: string } | null = $state(null);
   let draft = $state("");
-  // Right-click on code: its menu, then the prompt box for the agent.
-  // `below`: the bottom of the lines, where the prompt box goes so they stay in view.
-  let codeMenu: { x: number; y: number; below: number; code: CodeRef } | null = $state(null);
-  let asking: { x: number; y: number; code: CodeRef } | null = $state(null);
+  // The dock's comment composer opens with a selection; asking the agent or submitting closes
+  // it (the selection stays) until the selection changes.
+  let composerOff = $state(false);
+  // Right-click on code: its menu, then the prompt box for the agent, placed by the lines it
+  // is about (`lines`: their top and bottom) within the pane they are in (`area`).
+  type Asking = { x: number; lines: { top: number; bottom: number }; area: Area; code: CodeRef };
+  let codeMenu: { x: number; y: number; ask: Asking } | null = $state(null);
+  let asking: Asking | null = $state(null);
+  let scopeMenu = $state(false);
+  let dock: HTMLElement | undefined = $state();
   let editedPath: string | null = $state(null);
   let editedFile: string | null = null;
   // The file shown has only whitespace changes, and they are hidden.
   let onlyWhitespace = $state(false);
-  // Below 720 px the diff column is too narrow for two sides.
-  let mainWidth = $state(1000);
+  // Below 880 px the diff column is too narrow for two sides (at 1024 wide it is about 730).
+  let mainWidth = $state(1200);
 
   // Submitting to GitHub.
   let submitting = $state(false);
@@ -113,13 +148,34 @@
   const order = $derived(view.order === "tree" ? "tree" : "review");
   const list = $derived(sections(files, order));
   const ordered = $derived(flatten(list));
-  const isUnified = $derived(view.unified ?? mainWidth < 720);
+  const isUnified = $derived(view.unified ?? mainWidth < 880);
+  // The agent waits for an answer: anything sent now would answer its prompt.
+  const agentWaits = $derived(agentStatus === "waitingForPermission");
 
   // The Inbox steps aside on narrow windows while the side panel is open.
   $effect(() => {
     layout.reviewPanel = !view.sideHidden;
   });
   onDestroy(() => (layout.reviewPanel = false));
+
+  // Opening the review sees what the agent did: no longer "ready for review" in the Inbox
+  // (also when it finishes while the review is shown).
+  $effect(() => {
+    if (agentItem == null || (agentStatus && agentStatus !== "finished")) return;
+    api.reviewSeen(agentItem).then(onchanged, () => {});
+  });
+
+  // The notices sit above the dock (Notices.svelte reads --dock-h).
+  $effect(() => {
+    if (!dock) return;
+    const root = document.documentElement.style;
+    const observer = new ResizeObserver(() => root.setProperty("--dock-h", `${dock?.offsetHeight ?? 0}px`));
+    observer.observe(dock);
+    return () => {
+      observer.disconnect();
+      root.removeProperty("--dock-h");
+    };
+  });
 
   const scope = $derived(scopeOf(review, view.scope));
   const range = $derived(review ? rangeOf(review, scope) : null);
@@ -165,10 +221,15 @@
     const [from, to] = range;
     const ignoreWs = !!view.ignoreWs;
     const n = ++showing;
+    // An added or deleted file has one side only: one pane.
+    // (Read untracked: the diff is not rebuilt whenever the file list reloads.)
+    const status = untrack(() => files.find((f) => f.path === path)?.status);
+    const onePane = isUnified || status === "A" || status === "D";
     const [d, lang] = await Promise.all([api.reviewFile(id, from, to, path, ignoreWs), languageFor(path)]);
     if (n !== showing || !host) return;
     destroyEditors();
     selection = null;
+    composerOff = false;
     editedPath = null;
     onlyWhitespace = ignoreWs && !d.binary && d.hunks.length === 0 && !!files.find((f) => f.path === path)?.whitespaceOnly;
     if (d.binary) {
@@ -188,14 +249,16 @@
         if (sel.empty) selection = null;
         else {
           const doc = u.state.doc;
-          selection = { fromLine: doc.lineAt(sel.from).number, toLine: doc.lineAt(sel.to).number, code: doc.sliceString(sel.from, sel.to) };
+          const next = { fromLine: doc.lineAt(sel.from).number, toLine: doc.lineAt(sel.to).number, code: doc.sliceString(sel.from, sel.to) };
+          if (next.fromLine !== selection?.fromLine || next.toLine !== selection?.toLine) composerOff = false;
+          selection = next;
         }
       }
     });
-    const newDoc = [...common, EditorView.editable.of(to === null), EditorState.readOnly.of(to !== null), onUpdate, currentChange];
+    const newDoc = [...draftMarks, ...common, EditorView.editable.of(to === null), EditorState.readOnly.of(to !== null), onUpdate, currentChange];
     const diffConfig = { override: gitOverride(d.old, d.new, d.hunks) };
     const collapseUnchanged = { margin: 3, minSize: 6 };
-    if (isUnified) {
+    if (onePane) {
       unified = new EditorView({
         parent: host,
         doc: d.new,
@@ -214,8 +277,22 @@
         diffConfig,
       });
     }
+    markDrafts();
     land();
   }
+
+  // The new side's lines the drafts on this file cover.
+  function markDrafts() {
+    const v = newSide();
+    if (!v) return;
+    const mine = view.comments.filter((c) => c.path === view.file);
+    v.dispatch({ effects: setDraftLines.of(draftLines(mine)) });
+  }
+  $effect(() => {
+    void view.comments.length;
+    void view.file;
+    markDrafts();
+  });
 
   // The changes of the new side, as document ranges in order.
   function changesOf(v: EditorView): { from: number; to: number }[] {
@@ -244,7 +321,8 @@
     if (!next) {
       clearTimeout(edgeTimer);
       edge = dir;
-      edgeTimer = setTimeout(() => (edge = null), 1800);
+      edgeAt = edgeAnchor(dir);
+      edgeTimer = setTimeout(() => (edge = null), NOTE_MS);
       return;
     }
     landing = dir;
@@ -313,6 +391,7 @@
     }
     const actions: Record<string, () => void> = {
       a: () => askAboutSelection(),
+      c: () => commentOn(),
       "]": () => stepFile(1),
       "[": () => stepFile(-1),
       n: () => stepChange(1),
@@ -333,6 +412,8 @@
     selection = null;
   }
 
+  // Adding closes the composer and drops the selection: the draft's mark in the gutter shows
+  // where it is.
   function addComment(e?: SubmitEvent) {
     e?.preventDefault();
     if (!selection || !view.file || !draft.trim()) return;
@@ -340,6 +421,7 @@
     const rev = editedPath === view.file ? null : shownRev;
     view.comments = [...view.comments, { path: view.file, ...selection, text: draft, rev }];
     draft = "";
+    clearSelection();
   }
 
   function say(message: string, url: string | null = null) {
@@ -400,7 +482,22 @@
     if (!code) return;
     e.preventDefault();
     asking = null;
-    codeMenu = { ...point, below: Math.max(point.y, editor.coordsAtPos(to)?.bottom ?? 0), code };
+    codeMenu = { ...point, ask: askingAt(editor, from, to, code) };
+  }
+
+  // The Ask agent box for code from..to of `editor`: by those lines, within its pane.
+  function askingAt(editor: EditorView, from: number, to: number, code: CodeRef): Asking {
+    const first = editor.coordsAtPos(from);
+    const last = editor.coordsAtPos(Math.max(from, to > from && editor.state.doc.lineAt(to).from === to ? to - 1 : to));
+    const pane = editor.dom.getBoundingClientRect();
+    const view_ = host?.getBoundingClientRect() ?? pane;
+    const floor = dock?.getBoundingClientRect().top ?? view_.bottom;
+    return {
+      x: first?.left ?? pane.left,
+      lines: { top: first?.top ?? view_.top, bottom: last?.bottom ?? view_.top },
+      area: { left: pane.left, right: pane.right, top: view_.top, bottom: floor },
+      code,
+    };
   }
 
   // `a`: ask about the selection on the new side.
@@ -409,11 +506,19 @@
     const sel = v?.state.selection.main;
     if (!v || !sel || sel.empty || !canSendToAgent) return;
     const code = codeRef(v, "new", sel.from, sel.to);
-    const c = v.coordsAtPos(sel.head);
-    if (code && c) asking = { x: c.left, y: c.bottom, code };
+    if (code) openAsking(askingAt(v, sel.from, sel.to, code));
   }
 
+  function openAsking(a: Asking) {
+    composerOff = true;
+    asking = a;
+  }
+
+  // The dock's composer, for the selection (`c`, or Comment on lines).
   async function commentOn() {
+    if (!selection) return;
+    composerOff = false;
+    asking = null;
     await tick();
     document.getElementById(`composer-${id}`)?.focus();
   }
@@ -441,7 +546,7 @@
   }
 
   async function sendToAgent() {
-    if (!view.comments.length) return;
+    if (!view.comments.length || agentWaits) return;
     try {
       await api.agentSend(id, feedbackMessage(view.comments));
       say(`Sent ${view.comments.length} comment${view.comments.length > 1 ? "s" : ""} to the agent.`);
@@ -453,6 +558,7 @@
 
   async function openSubmit() {
     if (!review) return;
+    composerOff = true;
     submitting = true;
     preview = null;
     if (review.own) event = "COMMENT";
@@ -521,6 +627,29 @@
 
   const short = (sha: string) => sha.slice(0, 8);
   const linesOf = (c: DraftComment) => (c.fromLine === c.toLine ? `${c.fromLine}` : `${c.fromLine}–${c.toLine}`);
+  const withDrafts = $derived(new Set(view.comments.map((c) => c.path)));
+  const showComposer = $derived(!!selection && !!view.file && !composerOff && !asking && !submitting);
+
+  // The scope menu: ↑↓ move, Enter picks, Esc closes.
+  function onScopeKey(e: KeyboardEvent) {
+    const items = [...(e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>("[role='menuitemradio']")];
+    const i = items.indexOf(document.activeElement as HTMLElement);
+    const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+    if (step) {
+      e.preventDefault();
+      items[(i + step + items.length) % items.length]?.focus();
+    } else if (e.key === "Escape" || e.key === "Tab") {
+      e.preventDefault();
+      e.stopPropagation();
+      scopeMenu = false;
+    }
+  }
+  function focusActive(node: HTMLElement) {
+    (node.querySelector<HTMLElement>("[aria-checked='true']") ?? node.querySelector<HTMLElement>("[role='menuitemradio']"))?.focus();
+  }
+  function onWindowDown(e: MouseEvent) {
+    if (scopeMenu && !(e.target as Element).closest?.("[data-scope-wrap]")) scopeMenu = false;
+  }
   const statusOf = (f: ReviewFile) => (f.status === "?" ? "U" : f.status);
   const STATUS_TEXT: Record<string, string> = { A: "added", D: "deleted", U: "uncommitted", M: "modified" };
   const ORDERS = [
@@ -534,25 +663,59 @@
   ] as const;
 </script>
 
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydown={onKeydown} onmousedown={onWindowDown} />
 
 <div class="review" use:externalLinks role="tabpanel" aria-label="Review">
-  <header>
+  <!-- The review bar: the scope, what is shown, file navigation, the diff options. -->
+  <div class="bar" role="toolbar" aria-label="Review">
+    <Icon name="branch" size={14} />
     {#if review}
-      <div class="marker" data-marker title="{review.mode === 'ref' ? 'PR head' : 'Worktree'} {review.head}">
-        <Icon name="branch" size={14} />
-        <span class="text">
-          {review.mode === "ref" ? "PR head" : "Worktree"} <code>{short(review.head)}</code> · {review.commits.length} commit{review.commits.length === 1 ? "" : "s"} vs {review.baseRef}{#if review.dirty}{" · "}<span class="warn">uncommitted changes</span>{/if}
-        </span>
-      </div>
-      <IconButton icon="refresh" label="Reload" onclick={() => { load(); loadFiles(); }} data-reload />
-    {:else}
-      <span class="spacer"></span>
+      <span class="scope-wrap" data-scope-wrap>
+        <button class="scope-button" onclick={() => (scopeMenu = !scopeMenu)} aria-haspopup="menu" aria-expanded={scopeMenu}
+          title={scopeLabel} data-scope-menu>
+          <span class="scope-label">{scopeLabel}</span><Icon name="chevron-down" size={12} />
+        </button>
+        {#if scopeMenu}
+          <div class="scope-menu" role="menu" aria-label="Scope" tabindex="-1" use:focusActive onkeydown={onScopeKey}>
+            <button role="menuitemradio" aria-checked={scope === "all"} onclick={() => { setScope("all"); scopeMenu = false; }} data-scope="all">
+              <span class="check">{#if scope === "all"}<Icon name="check" size={14} />{/if}</span>
+              <span class="grow">All changes vs {review.baseRef}</span>
+              {#if scope === "all"}<span class="n">{files.length}</span>{/if}
+            </button>
+            {#each review.commits as c (c.sha)}
+              <button role="menuitemradio" aria-checked={scope === c.sha} onclick={() => { setScope(c.sha); scopeMenu = false; }}
+                title="{c.subject}&#10;{c.author}, {c.date}" data-scope={c.sha}>
+                <span class="check">{#if scope === c.sha}<Icon name="check" size={14} />{/if}</span>
+                <code class="sha">{short(c.sha)}</code>
+                <span class="grow subject">{c.subject}</span>
+                <span class="n">{c.files}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </span>
+      <span class="marker" data-marker title="{review.mode === 'ref' ? 'PR head' : 'Worktree'} {review.head}">
+        <code>{short(review.head)}</code> · {review.commits.length} commit{review.commits.length === 1 ? "" : "s"}{#if review.dirty}{" · "}<span class="warn">uncommitted changes</span>{/if}
+      </span>
     {/if}
-    <IconButton icon="panel" label={view.sideHidden ? "Show the side panel" : "Hide the side panel"} pressed={!view.sideHidden}
+    {#if view.sideHidden && ordered.length}
+      <span class="divider"></span>
+      <IconButton icon="chevron-up" label="Previous file ([)" size={22} onclick={() => stepFile(-1)} />
+      <IconButton icon="chevron-down" label="Next file (])" size={22} onclick={() => stepFile(1)} />
+      <span class="current-file" title={view.file ?? ""}><strong>{view.file ? nameOf(view.file) : ""}</strong> <span class="muted">{fileIndex + 1}/{ordered.length}</span></span>
+    {/if}
+    <span class="spacer"></span>
+    {#if editedPath}<Button size="sm" variant="primary" onclick={save} title="Save {editedPath}" data-save>Save file</Button>{/if}
+    <Toggle pressed={!!view.ignoreWs} icon="whitespace" kbd="w" aria-label="Hide whitespace (w)" title="Hide whitespace (w)"
+      onclick={() => (view.ignoreWs = !view.ignoreWs)} data-opt="ws"><span class="tlabel">Whitespace</span></Toggle>
+    <Toggle pressed={isUnified} icon="unified" kbd="u" aria-label="Unified diff (u)" title="Unified diff (u)"
+      onclick={() => (view.unified = !isUnified)} data-opt="unified"><span class="tlabel">Unified</span></Toggle>
+    <span class="divider"></span>
+    {#if review}<IconButton icon="refresh" label="Reload" onclick={() => { load(); loadFiles(); }} data-reload />{/if}
+    <IconButton icon="panel" label={view.sideHidden ? "Show the files" : "Hide the files"} pressed={!view.sideHidden}
       onclick={() => (view.sideHidden = !view.sideHidden)} data-toggle="side" />
     <IconButton icon="keyboard" label="Keyboard shortcuts (?)" onclick={() => (shortcuts.open = !shortcuts.open)} data-keys />
-  </header>
+  </div>
 
   {#if error}
     <div class="note bad" role="alert"><Icon name="error" size={14} /><span class="grow">{error}</span>
@@ -561,51 +724,26 @@
   {/if}
   {#if notice}
     <div class="note" class:gh={!!noticeUrl} role="status" data-notice>
-      <Icon name={noticeUrl ? "submit-github" : "info"} size={14} /><span class="grow">{notice}</span>
+      {#if noticeUrl}<span class="lead"><Mark who="gh" /></span>{:else}<Icon name="info" size={14} />{/if}<span class="grow">{notice}</span>
       {#if noticeUrl}<a href={noticeUrl}>Open</a>{/if}
       <IconButton icon="x" label="Dismiss" size={22} onclick={() => (notice = null)} />
     </div>
   {/if}
   <div class="body">
     {#if !view.sideHidden}
-      <aside class="side" aria-label="Review side panel">
-        <section class="scope">
-          <button class="section-head" onclick={() => (view.commitsOpen = !view.commitsOpen)} aria-expanded={!!view.commitsOpen} data-toggle="commits">
-            <span class="chev" class:folded={!view.commitsOpen}><Icon name="chevron-down" size={14} /></span>
-            <span class="grow">Scope</span>
-            <span class="count">{review ? `${review.commits.length} commit${review.commits.length === 1 ? "" : "s"}` : ""}</span>
-          </button>
-          {#if view.commitsOpen}
-            <div class="scopes" role="listbox" aria-label="Scope">
-              <button role="option" aria-selected={scope === "all"} class:active={scope === "all"} onclick={() => setScope("all")} data-scope="all">
-                <span class="grow">All changes vs {review?.baseRef ?? "base"}</span>
-              </button>
-              {#each review?.commits ?? [] as c (c.sha)}
-                <button role="option" aria-selected={scope === c.sha} class:active={scope === c.sha} onclick={() => setScope(c.sha)}
-                  title="{c.subject}&#10;{c.author}, {c.date}" data-scope={c.sha}>
-                  <code class="sha">{short(c.sha)}</code>
-                  <span class="grow subject">{c.subject}</span>
-                </button>
-              {/each}
-            </div>
-          {:else}
-            <!-- Folded: the active scope. -->
-            <div class="scope-folded">
-              <div class="active-scope" title={scopeLabel}>{scopeLabel}</div>
-            </div>
-          {/if}
-        </section>
-
+      <aside class="side" aria-label="Files">
         <section class="files-section">
           <div class="files-head">
-            <span class="grow label-caps">Files</span>
+            <span class="label-caps">Files</span>
+            <span class="count">{files.length}</span>
+            <span class="grow"></span>
             <Segmented label="File order" options={ORDERS} bind:value={() => order, (v) => (view.order = v)} data-order />
           </div>
           {#each list as s (s.key)}
             {@const open = isOpen(s)}
             <div class="group" data-group={s.key}>
               <button class="group-title" onclick={() => toggleSection(s)} aria-expanded={open}>
-                <span class="chev" class:folded={!open}><Icon name="chevron-down" size={14} /></span>
+                <span class="chev" class:folded={!open}><Icon name="chevron-down" size={12} /></span>
                 <span class="grow title">{s.title}</span>
                 <span class="count">{s.files.length}</span>
               </button>
@@ -620,6 +758,7 @@
                       <span class="st s{statusOf(f)}" title={STATUS_TEXT[statusOf(f)] ?? statusOf(f)}>{statusOf(f)}</span>
                       <button class:active={f.path === view.file} onclick={() => (view.file = f.path)} title={f.path} data-file={f.path}>{!dir ? f.path : nameOf(f.path)}</button>
                       {#if f.whitespaceOnly}<span class="ws"><Pill size="xs">whitespace</Pill></span>{/if}
+                      {#if withDrafts.has(f.path)}<span class="has-drafts" title="Has draft comments"><Mark who="you" /></span>{/if}
                     </li>
                   {/each}
                 </ul>
@@ -633,48 +772,31 @@
     {/if}
 
     <div class="main" bind:this={main}>
-      <div class="toolbar" role="toolbar" aria-label="Diff">
-        {#if view.sideHidden && ordered.length}
-          <IconButton icon="chevron-up" label="Previous file ([)" size={24} onclick={() => stepFile(-1)} />
-          <IconButton icon="chevron-down" label="Next file (])" size={24} onclick={() => stepFile(1)} />
-          <span class="current-file" title={view.file ?? ""}><strong>{view.file ? nameOf(view.file) : ""}</strong> <span class="muted">{fileIndex + 1}/{ordered.length} · {scopeLabel}</span></span>
-        {/if}
-        {#if editedPath}<Button variant="primary" onclick={save} data-save>Save {nameOf(editedPath)}</Button>{/if}
-        {#if selection && view.file}
-          <form class="composer" onsubmit={addComment} data-composer>
-            <label for="composer-{id}">Lines {selection.fromLine}{selection.toLine !== selection.fromLine ? `–${selection.toLine}` : ""}:</label>
-            <input id="composer-{id}" bind:value={draft} placeholder="Comment on these lines" />
-            <Button type="submit" variant="primary" disabled={!draft.trim()} data-add-comment>Add comment</Button>
-            <IconButton icon="x" label="Cancel comment" size={24} type="button" onclick={clearSelection} />
-          </form>
-        {:else}
-          <span class="hint">Select code to comment on it{editable ? "; edit it to change the file" : ""}</span>
-        {/if}
-        <Toggle pressed={!!view.ignoreWs} icon="whitespace" kbd="w" title="Hide whitespace (w)" onclick={() => (view.ignoreWs = !view.ignoreWs)} data-opt="ws"><span class="tlabel">Whitespace</span></Toggle>
-        <Toggle pressed={isUnified} icon="unified" kbd="u" title="Unified diff (u)" onclick={() => (view.unified = !isUnified)} data-opt="unified"><span class="tlabel">Unified</span></Toggle>
-      </div>
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <div class="diff" bind:this={host} tabindex="0" role="region" oncontextmenu={onContextMenu}
-        aria-label="Diff of {view.file ?? 'no file'}. Shortcuts: ] and [ files, n and p changes (on into the next or previous file), u unified, w whitespace, a ask the agent about the selection, ? help. Right-click code to ask the agent about it."></div>
+        aria-label="Diff of {view.file ?? 'no file'}. Shortcuts: ] and [ files, n and p changes (on into the next or previous file), u unified, w whitespace, a ask the agent about the selection, c comment on it, ? help. Right-click code to ask the agent about it."></div>
       {#if edge}
-        <!-- At that end of the diff itself (the toolbar above it, the drafts bar below). -->
-        <div class="edge" style:top={edge < 0 ? `${(host?.offsetTop ?? 0) + 12}px` : undefined}
-          style:bottom={edge > 0 ? `${(main?.clientHeight ?? 0) - (host ? host.offsetTop + host.offsetHeight : 0) + 16}px` : undefined} role="status"
-          transition:fade={{ duration: still ? 0 : 180 }} data-edge={edge > 0 ? "end" : "start"}>
-          <Icon name={edge > 0 ? "chevron-down" : "chevron-up"} size={14} />
-          {edge > 0 ? "That was the last change in this scope" : "That was the first change in this scope"}
+        <!-- By the change itself (or at that end of the diff when it is off screen). -->
+        <div class="edge" style:top={edgeAt ? `${edgeAt.top}px` : edge < 0 ? `${(host?.offsetTop ?? 0) + 12}px` : undefined}
+          style:left={edgeAt ? `${edgeAt.left}px` : undefined}
+          style:bottom={!edgeAt && edge > 0 ? `${(main?.clientHeight ?? 0) - (host ? host.offsetTop + host.offsetHeight : 0) + 16}px` : undefined} role="status"
+          transition:fade={{ duration: still ? 0 : DUR }} data-edge={edge > 0 ? "end" : "start"}>
+          <span class="end" class:first={edge < 0}><Icon name="end" size={14} /></span>
+          {edge > 0 ? "Last change in this scope" : "First change in this scope"}
         </div>
       {/if}
       {#if codeMenu}
         {@const m = codeMenu}
-        <CodeMenu x={m.x} y={m.y} lines={m.code.fromLine === m.code.toLine ? `line ${m.code.fromLine}` : `lines ${refLines(m.code)}`}
-          noAgent={canSendToAgent ? null : "No agent works on this item: start working on it first"}
-          oncomment={m.code.side === "new" ? commentOn : undefined}
-          onask={() => (asking = { x: m.x, y: m.below, code: m.code })} oncopy={() => copyCode(m.code)} onclose={() => (codeMenu = null)} />
+        <CodeMenu x={m.x} y={m.y} lines={m.ask.code.fromLine === m.ask.code.toLine ? `Line ${m.ask.code.fromLine}` : `Lines ${refLines(m.ask.code)}`}
+          side={m.ask.code.side}
+          noAgent={canSendToAgent ? null : "No agent on this item yet"}
+          oncomment={m.ask.code.side === "new" ? commentOn : undefined}
+          onask={() => openAsking(m.ask)} oncopy={() => copyCode(m.ask.code)} onclose={() => (codeMenu = null)} />
       {/if}
       {#if asking}
         {@const a = asking}
-        <AskAgent x={a.x} y={a.y} code={a.code} status={agentStatus} onsend={(prompt) => ask(a.code, prompt)} onclose={() => (asking = null)} />
+        <AskAgent x={a.x} lines={a.lines} area={a.area} code={a.code} status={agentStatus} {onterminal}
+          onsend={(prompt) => ask(a.code, prompt)} onclose={() => (asking = null)} />
       {/if}
       {#if onlyWhitespace}
         <div class="ws-only">
@@ -684,135 +806,170 @@
         </div>
       {/if}
 
-      <div class="dock" data-dock>
-        {#if view.comments.length || submitting}
+      <!-- The dock: your review — the comment composer, your drafts, and where they go. -->
+      <div class="dock" bind:this={dock} data-dock>
+        {#if showComposer && selection}
+          <form class="composer" onsubmit={addComment} data-composer>
+            <Mark who="you" />
+            <label for="composer-{id}">Lines {selection.fromLine}{selection.toLine !== selection.fromLine ? `–${selection.toLine}` : ""}</label>
+            <input id="composer-{id}" bind:value={draft} placeholder="Comment on these lines" />
+            <Button type="submit" size="sm" variant="primary" disabled={!draft.trim()} data-add-comment>Add comment</Button>
+            <IconButton icon="x" label="Cancel comment (Esc)" size={22} type="button" onclick={clearSelection} />
+          </form>
+        {/if}
+        {#if view.comments.length}
           <div class="drafts">
-            {#if view.comments.length}
-              <div class="label-caps">Draft comments · {view.comments.length}</div>
-              <ul data-drafts>
-                {#each view.comments as c, i}
-                  <li>
-                    <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><rect width="8" height="8" rx="1.5" /></svg>
-                    <code title={c.path}>{nameOf(c.path)}:{linesOf(c)}</code>
-                    <span class="text" title={c.text}>{c.text}</span>
-                    <IconButton icon="trash" label="Remove draft" size={22} onclick={() => (view.comments = view.comments.filter((_, j) => j !== i))} />
-                  </li>
-                {/each}
-              </ul>
+            <div class="drafts-head"><span class="label-caps">Draft comments</span><span class="count">{view.comments.length}</span></div>
+            <ul data-drafts>
+              {#each view.comments as c, i}
+                <li>
+                  <Mark who="you" />
+                  <code title={c.path}>{nameOf(c.path)}:{linesOf(c)}</code>
+                  <span class="text" title={c.text}>{c.text}</span>
+                  <IconButton icon="trash" label="Remove draft" size={22} onclick={() => (view.comments = view.comments.filter((_, j) => j !== i))} />
+                </li>
+              {/each}
+            </ul>
+          </div>
+          <div class="actions">
+            {#if canSendToAgent && agentWaits}
+              <span class="waits">The agent is waiting for your permission — answer it before sending.</span>
             {/if}
-            {#if submitting}
-              <form class="submit" onsubmit={submit} aria-label="Submit review to GitHub" data-submit>
-                <label><span class="field">Summary</span>
-                  <textarea bind:value={summary} rows="2" placeholder="Overall comment (optional for a comment review)"></textarea>
-                </label>
-                <div class="events" role="group" aria-label="Event">
-                  <span class="field">Event</span>
-                  {#each EVENTS as [value, label]}
-                    <Button type="button" size="sm" pressed={event === value} class="event" disabled={value !== "COMMENT" && review?.own}
-                      onclick={() => (event = value)} data-event={value}>{label}</Button>
-                  {/each}
-                  {#if review?.own}<span class="faint">No approve on your own PR</span>{/if}
-                </div>
-                {#if preview}
-                  <p class="preview" data-preview>
-                    {preview.line.length} as line comment{preview.line.length === 1 ? "" : "s"} on the PR diff{#if preview.body.length}; {preview.body.length} in the review text (not on lines of the PR diff at its head commit){/if}.
-                  </p>
-                {/if}
-                <div class="actions">
-                  <Button type="button" variant="quiet" onclick={() => (submitting = false)}>Cancel</Button>
-                  <Button type="submit" variant="gh" icon="submit-github" loading={busy} disabled={!preview} data-send-review>Submit to GitHub</Button>
-                </div>
-              </form>
-            {:else}
-              <div class="actions">
-                {#if canSendToAgent}<Button variant="agent" icon="send-to-agent" onclick={sendToAgent} data-send-agent>Send to the agent</Button>{/if}
-                {#if review?.prHead}<Button icon="submit-github" onclick={openSubmit} data-open-submit>Submit to GitHub…</Button>{/if}
-              </div>
+            {#if canSendToAgent}<Button size="sm" variant="agent" mark="agent" onclick={sendToAgent} disabled={agentWaits} data-send-agent>Send to agent</Button>{/if}
+            {#if review?.prHead}
+              <span class="submit-anchor">
+                <Button size="sm" mark="gh" onclick={openSubmit} aria-expanded={submitting} data-open-submit>Submit to GitHub…</Button>
+                {#if submitting}{@render submitPanel()}{/if}
+              </span>
             {/if}
           </div>
-        {:else}
+        {:else if !showComposer}
           <div class="empty-dock">
-            <span class="grow">No draft comments</span>
-            {#if review?.prHead}<Button variant="quiet" icon="submit-github" onclick={openSubmit} data-open-submit>Review on GitHub…</Button>{/if}
+            <span class="grow hint">Select code to comment on it{editable ? "; edit it to change the file" : ""}.</span>
+            {#if review?.prHead}
+              <span class="submit-anchor">
+                <Button size="sm" variant="quiet" mark="gh" onclick={openSubmit} aria-expanded={submitting} data-open-submit>Review on GitHub…</Button>
+                {#if submitting}{@render submitPanel()}{/if}
+              </span>
+            {/if}
           </div>
         {/if}
       </div>
     </div>
   </div>
-
 </div>
+
+{#snippet submitPanel()}
+  <form class="submit" onsubmit={submit} aria-label="Submit review to GitHub" data-submit>
+    <div class="submit-head">
+      <Mark who="gh" />
+      <strong class="grow">Submit review to GitHub</strong>
+      <IconButton icon="x" label="Close" size={22} type="button" onclick={() => (submitting = false)} />
+    </div>
+    <label><span class="field">Summary</span>
+      <textarea bind:value={summary} rows="2" placeholder="Overall comment (optional for a comment review)"></textarea>
+    </label>
+    <div class="events">
+      <span class="field">Event</span>
+      <div class="seg" role="radiogroup" aria-label="Event">
+        {#each EVENTS as [value, label]}
+          <button type="button" role="radio" aria-checked={event === value} class:on={event === value} disabled={value !== "COMMENT" && review?.own}
+            onclick={() => (event = value)} data-event={value}>{label}</button>
+        {/each}
+      </div>
+    </div>
+    {#if review?.own}<p class="own">Your own PR: you can only comment.</p>{/if}
+    {#if preview}
+      <p class="preview" data-preview>
+        {preview.line.length} as line comment{preview.line.length === 1 ? "" : "s"} on the PR diff{#if preview.body.length}; {preview.body.length} in the review text (not on lines of the PR diff at its head commit){/if}.
+      </p>
+    {/if}
+    <div class="submit-actions">
+      <Button type="button" size="sm" variant="quiet" onclick={() => (submitting = false)}>Cancel</Button>
+      <Button type="submit" size="sm" variant="gh" mark="gh" loading={busy} disabled={!preview} data-send-review>Submit to GitHub</Button>
+    </div>
+  </form>
+{/snippet}
 
 <style>
   .review { flex: 1; display: flex; flex-direction: column; height: 100%; min-height: 0; position: relative; }
   .grow { flex: 1; min-width: 0; }
   .muted { color: var(--text-muted); }
-  .faint { color: var(--text-faint); }
   .spacer { flex: 1; }
-  .chev { display: flex; transition: transform var(--dur-fast) var(--ease); }
+  .chev { display: flex; color: var(--text-faint); transition: transform var(--dur-fast) var(--ease); }
   .chev.folded { transform: rotate(-90deg); }
+  .count { flex: none; font-family: var(--font-mono); font-size: var(--fs-11); font-weight: var(--fw-regular); color: var(--text-faint); }
 
-  /* Header: what is shown, progress and the review actions. */
-  header {
-    flex: none; display: flex; align-items: center; gap: var(--sp-3); min-height: 38px;
-    padding: 0 var(--sp-4) 0 var(--sp-7); border-bottom: 1px solid var(--border); box-sizing: border-box;
+  /* The review bar: one row. */
+  .bar {
+    flex: none; display: flex; align-items: center; gap: var(--sp-3); height: var(--h-review-bar);
+    padding: 0 var(--sp-4) 0 var(--sp-5); border-bottom: 1px solid var(--border); box-sizing: border-box;
+    color: var(--text-muted); white-space: nowrap;
   }
-  .marker { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-12); color: var(--text-muted); white-space: nowrap; }
-  .marker :global(svg) { flex: none; }
-  .marker .text { overflow: hidden; text-overflow: ellipsis; }
-  .marker code { font-size: 11.5px; color: var(--text); }
+  .bar > :global(svg) { flex: none; }
+  .divider { flex: none; width: 1px; height: 16px; margin: 0 var(--sp-1); background: var(--border); }
+  .scope-wrap { position: relative; flex: 0 1 auto; min-width: 0; display: flex; }
+  .scope-button {
+    display: flex; align-items: center; gap: var(--sp-2); min-width: 0; height: var(--h-control); padding: 0 var(--sp-3) 0 var(--sp-4);
+    border: 0; border-radius: var(--r-md); background: transparent; color: var(--text);
+    font-size: var(--fs-12); font-weight: var(--fw-semibold);
+  }
+  .scope-button:hover, .scope-button[aria-expanded="true"] { background: var(--surface-hover); }
+  .scope-label { max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+  .scope-menu {
+    position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; width: 360px; max-width: calc(100vw - 32px);
+    max-height: 60vh; overflow-y: auto; padding: var(--sp-2); box-sizing: border-box; display: flex; flex-direction: column; gap: 1px;
+    border-radius: var(--r-lg); background: var(--surface-raised); box-shadow: var(--shadow-pop);
+  }
+  .scope-menu:focus { outline: none; }
+  .scope-menu button {
+    display: flex; align-items: center; gap: var(--sp-4); height: 28px; padding: 0 var(--sp-4); flex: none;
+    border: 0; border-radius: var(--r-md); background: transparent; color: var(--text); font-size: var(--fs-12); text-align: left;
+  }
+  .scope-menu button:hover { background: var(--surface-hover); }
+  .scope-menu button[aria-checked="true"] { background: var(--surface-selected); font-weight: var(--fw-semibold); }
+  .scope-menu button:focus-visible { outline-offset: -2px; }
+  .check { flex: none; width: 14px; display: flex; color: var(--text-muted); }
+  .sha { flex: none; font-size: var(--fs-code-inline); color: var(--text-muted); font-weight: var(--fw-regular); }
+  .subject { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .n { flex: none; font-family: var(--font-mono); font-size: var(--fs-11); color: var(--text-faint); font-weight: var(--fw-regular); }
+  .marker { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-12); }
+  .marker code { font-size: var(--fs-code-inline); }
   .warn { color: var(--warn); }
+  .current-file { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: baseline; gap: var(--sp-3); font-size: var(--fs-12); overflow: hidden; }
+  .current-file strong { font-family: var(--font-mono); font-weight: var(--fw-semibold); color: var(--text); overflow: hidden; text-overflow: ellipsis; }
+  @media (max-width: 1200px) { .tlabel { display: none; } }
 
-  /* Notes under the header. */
+  /* Notes under the bar. */
   .note {
     flex: none; display: flex; align-items: center; gap: var(--sp-4); min-height: 28px; padding: var(--sp-1) var(--sp-3) var(--sp-1) var(--sp-7);
     border-bottom: 1px solid var(--border); background: var(--info-bg); font-size: var(--fs-12); box-sizing: border-box;
   }
   .note > :global(svg) { flex: none; color: var(--info); }
+  .note .lead { width: 14px; display: flex; justify-content: center; }
   .note.gh { background: var(--gh-bg); }
-  .note.gh > :global(svg), .note.gh a { color: var(--gh-strong); }
+  .note.gh a { color: var(--gh-strong); }
   .note a { font-weight: var(--fw-medium); text-decoration: none; padding: 0 var(--sp-4); }
   .note.bad { background: var(--bad-bg); }
   .note.bad > :global(svg) { color: var(--bad); }
 
   .body { flex: 1; display: flex; min-height: 0; }
 
-  /* Side panel: scope, files. */
+  /* Side panel: the files. */
   .side {
     flex: none; width: var(--w-panel); display: flex; flex-direction: column; min-height: 0; overflow-y: auto;
     border-right: 1px solid var(--border); background: var(--surface-2); font-size: var(--fs-12); line-height: var(--lh-12);
   }
   @media (max-width: 1100px) { .side { width: var(--w-panel-compact); } }
-  .side > section { flex: none; display: flex; flex-direction: column; border-bottom: 1px solid var(--border); }
-  .side > section.files-section { flex: 1 0 auto; border-bottom: 0; }
-  .section-head {
-    display: flex; align-items: center; gap: var(--sp-3); height: 30px; padding: 0 var(--sp-5); flex: none;
-    border: 0; border-radius: 0; background: transparent; color: var(--text-muted); text-align: left;
-    font-size: var(--fs-11); font-weight: var(--fw-semibold); letter-spacing: 0.04em; text-transform: uppercase;
-  }
-  .section-head:focus-visible, .group-title:focus-visible { outline-offset: -2px; }
-  .section-head .count { letter-spacing: 0; text-transform: none; font-weight: var(--fw-regular); }
-
-  .scopes { padding: 0 var(--sp-3) var(--sp-4); display: flex; flex-direction: column; gap: 1px; }
-  .scopes button {
-    display: flex; align-items: center; gap: var(--sp-4); min-height: 26px; padding: var(--sp-1) var(--sp-3);
-    border: 0; border-radius: var(--r-md); background: transparent; color: var(--text); font-size: var(--fs-12); text-align: left;
-  }
-  .scopes button:hover { background: var(--surface-hover); }
-  .scopes button.active { background: var(--surface-selected); font-weight: var(--fw-semibold); }
-  .scopes button:focus-visible { outline-offset: -2px; }
-  .sha { flex: none; font-size: var(--fs-11); color: var(--text-muted); }
-  .subject { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .scope-folded { padding: 0 var(--sp-5) var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-3); }
-  .active-scope { font-weight: var(--fw-semibold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
+  .side > section { flex: 1 0 auto; display: flex; flex-direction: column; }
   .files-head { display: flex; align-items: center; gap: var(--sp-3); height: 34px; padding: 0 var(--sp-4) 0 var(--sp-5); flex: none; }
   .group { display: flex; flex-direction: column; padding-bottom: var(--sp-2); }
   .group-title {
-    display: flex; align-items: center; gap: var(--sp-3); min-height: 26px; padding: var(--sp-1) var(--sp-5);
+    display: flex; align-items: center; gap: var(--sp-3); height: var(--h-section); padding: 0 var(--sp-5);
     border: 0; border-radius: 0; background: transparent; color: var(--text); font-size: var(--fs-12); font-weight: var(--fw-semibold); text-align: left;
   }
+  .group-title:focus-visible { outline-offset: -2px; }
   .group-title .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .group .count { flex: none; font-family: var(--font-mono); font-size: var(--fs-11); font-weight: var(--fw-medium); color: var(--text-muted); }
   .files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
   .dir { padding: var(--sp-2) var(--sp-5) 1px var(--sp-7); font-family: var(--font-mono); font-size: var(--fs-11); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .file {
@@ -821,6 +978,8 @@
   }
   .file:hover { background: var(--surface-hover); }
   .file.current { background: var(--surface-selected); box-shadow: inset 0 0 0 1px var(--you-line); }
+  /* The focus ring goes on the whole row. */
+  .file:has(button:focus-visible) { outline: 2px solid var(--focus); outline-offset: -2px; }
   .st { flex: none; width: 12px; font-family: var(--font-mono); font-size: var(--fs-11); font-weight: var(--fw-semibold); text-align: center; color: var(--text-muted); }
   .st.sA { color: var(--ok); }
   .st.sD { color: var(--bad); }
@@ -829,65 +988,72 @@
     flex: 1; min-width: 0; height: 22px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--text);
     font-size: var(--fs-12); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .file button:focus-visible { outline-offset: 0; }
+  .file button:focus-visible { outline: none; }
   .file.current button { font-weight: var(--fw-semibold); color: var(--text); }
   .file.deleted button { text-decoration: line-through; color: var(--text-muted); }
-  .ws { flex: none; display: flex; }
+  .ws, .has-drafts { flex: none; display: flex; }
   .none { padding: var(--sp-2) var(--sp-6); color: var(--text-muted); margin: 0; }
 
   /* The diff column. */
   .main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
-  .toolbar {
-    flex: none; display: flex; align-items: center; gap: var(--sp-3); min-height: var(--h-toolbar); padding: 0 var(--sp-4);
-    border-bottom: 1px solid var(--border); box-sizing: border-box;
-  }
-  .current-file { flex: 0 1 auto; display: inline-flex; align-items: baseline; gap: var(--sp-3); font-size: var(--fs-12); white-space: nowrap; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
-  .current-file strong { font-family: var(--font-mono); font-weight: var(--fw-semibold); }
-  .hint { flex: 1; min-width: 0; font-size: var(--fs-12); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .composer { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--sp-3); margin: 0; }
-  .composer label { flex: none; font-size: var(--fs-12); font-weight: var(--fw-semibold); color: var(--you-strong); }
-  .composer input { flex: 1; min-width: 120px; height: var(--h-control); }
-  @media (max-width: 1200px) { .tlabel { display: none; } }
 
-  /* n / p found no change further on: a raised note at that end of the diff. */
+  /* n / p found no change further on: a note by that change. */
   .edge {
     position: absolute; left: 50%; z-index: 5; transform: translateX(-50%);
-    display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-6); white-space: nowrap;
-    border-radius: var(--r-lg); background: var(--surface-raised); box-shadow: var(--shadow-pop);
-    font-size: var(--fs-12); color: var(--text);
+    display: flex; align-items: center; gap: var(--sp-3); height: 26px; padding: 0 var(--sp-6); box-sizing: border-box; white-space: nowrap;
+    border-radius: var(--r-pill); background: var(--surface-raised); box-shadow: var(--shadow-pop);
+    font-size: var(--fs-12); color: var(--text-muted);
   }
-  .edge :global(svg) { color: var(--text-muted); }
+  .end { display: flex; }
+  .end.first { transform: rotate(180deg); }
   .diff { flex: 1; overflow: auto; min-height: 0; background: var(--surface-editor); }
   .diff:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  /* CodeMirror draws no focus ring of its own: the diff shows that it has the keys. */
+  .diff:focus-within { box-shadow: inset 0 0 0 1px var(--focus-soft); }
   .diff :global(.cm-editor) { font-size: var(--fs-code); }
   .diff :global(.cm-editor.cm-focused) { outline: none; }
   .ws-only { position: absolute; top: 120px; left: var(--sp-9); display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-3); }
   .ws-only strong { font-weight: var(--fw-semibold); }
 
-  /* Drafts dock. */
-  .dock { flex: none; border-top: 1px solid var(--border); background: var(--surface-0); display: flex; flex-direction: column; }
-  .empty-dock { display: flex; align-items: center; gap: var(--sp-4); height: 32px; padding: 0 var(--sp-5); font-size: var(--fs-12); color: var(--text-faint); }
-  .drafts { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) var(--sp-5) var(--sp-4); }
-  .drafts > .label-caps { height: 22px; display: flex; align-items: center; }
+  /* The dock: your review. */
+  .dock { flex: none; border-top: 1px solid var(--border); background: var(--surface-0); display: flex; flex-direction: column; font-size: var(--fs-12); line-height: var(--lh-12); }
+  .composer { display: flex; align-items: center; gap: var(--sp-3); margin: 0; padding: var(--sp-3) var(--sp-4) var(--sp-3) var(--sp-6); }
+  .composer label { flex: none; font-weight: var(--fw-semibold); color: var(--you-strong); }
+  .composer input { flex: 1; min-width: 120px; height: var(--h-control); }
+  .empty-dock { display: flex; align-items: center; gap: var(--sp-4); height: 32px; padding: 0 var(--sp-4) 0 var(--sp-6); }
+  .hint { color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .drafts { display: flex; flex-direction: column; gap: var(--sp-1); padding: 0 var(--sp-4) 0 var(--sp-6); }
+  .drafts-head { height: 26px; display: flex; align-items: center; gap: var(--sp-3); }
   .drafts ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); max-height: 96px; overflow: auto; }
   .drafts li {
     display: flex; align-items: center; gap: var(--sp-4); min-height: 24px; padding: 0 var(--sp-2) 0 var(--sp-4);
-    border-radius: var(--r-md); background: var(--you-bg); font-size: var(--fs-12);
+    border-radius: var(--r-md); background: var(--you-bg);
   }
-  .drafts li svg { flex: none; fill: var(--you); }
-  .drafts li code { flex: none; font-size: 11.5px; color: var(--you-strong); }
+  .drafts li code { flex: none; font-size: var(--fs-code-inline); color: var(--you-strong); }
   .drafts li .text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .actions { display: flex; justify-content: flex-end; gap: var(--sp-3); padding-top: var(--sp-2); }
+  .actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4) var(--sp-4) var(--sp-6); }
+  .waits { flex: 1; min-width: 0; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .submit-anchor { position: relative; display: inline-flex; }
+
+  /* The submit panel: a popover above its button. */
   .submit {
-    margin: var(--sp-2) 0 0; padding: var(--sp-5); border-radius: var(--r-lg); background: var(--surface-raised);
-    box-shadow: inset 0 0 0 1px var(--gh-line); display: flex; flex-direction: column; gap: var(--sp-4); font-size: var(--fs-12);
+    position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 30; width: var(--w-popover); max-width: calc(100vw - 32px);
+    box-sizing: border-box; padding: var(--sp-6); display: flex; flex-direction: column; gap: 10px;
+    border-radius: var(--r-lg); background: var(--surface-raised); box-shadow: var(--shadow-pop), inset 0 0 0 1px var(--gh-line);
+    font-size: var(--fs-12); line-height: var(--lh-12); white-space: normal;
   }
+  .submit-head { display: flex; align-items: center; gap: var(--sp-4); }
+  .submit-head strong { font-weight: var(--fw-semibold); }
   .submit label { display: flex; flex-direction: column; gap: var(--sp-2); }
   .field { font-weight: var(--fw-semibold); }
   .submit textarea { width: 100%; background: var(--surface-editor); }
-  .events { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
-  .events .field { margin-right: var(--sp-4); }
-  .events :global(.event[aria-pressed="true"]) { border-color: var(--gh); background: var(--gh-bg); color: var(--gh-strong); }
-  .events .faint { margin-left: var(--sp-3); }
-  .preview { margin: 0; color: var(--text-muted); }
+  .events { display: flex; align-items: center; gap: var(--sp-4); }
+  .seg { display: inline-flex; padding: 2px; border-radius: var(--r-md); background: var(--surface-0); box-shadow: inset 0 0 0 1px var(--border); }
+  .seg button {
+    height: 22px; padding: 0 var(--sp-4); border: 0; border-radius: var(--r-sm); background: transparent;
+    color: var(--text-muted); font-size: var(--fs-12); font-weight: var(--fw-medium);
+  }
+  .seg button.on { background: var(--surface-raised); color: var(--text); box-shadow: var(--shadow-1), inset 0 0 0 1px var(--border); }
+  .own, .preview { margin: 0; color: var(--text-muted); }
+  .submit-actions { display: flex; justify-content: flex-end; gap: var(--sp-3); }
 </style>

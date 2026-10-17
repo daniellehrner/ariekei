@@ -12,10 +12,9 @@
   let {
     id,
     conv,
-    viewer,
     onchanged,
     onshow,
-  }: { id: number; conv: Conversation; viewer: string; onchanged: () => void; onshow?: (path: string) => void } = $props();
+  }: { id: number; conv: Conversation; onchanged: () => void; onshow?: (path: string) => void } = $props();
 
   let replyTo: string | null = $state(null);
   let replyText = $state("");
@@ -33,9 +32,9 @@
     if (days < 7) return `${days} days ago`;
     return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
   };
-  const REVIEW_STATE: Record<string, [string, "ok" | "bad" | "neutral" | null]> = {
+  const REVIEW_STATE: Record<string, [string, "ok" | "warn" | "neutral" | null]> = {
     APPROVED: ["Approved", "ok"],
-    CHANGES_REQUESTED: ["Changes requested", "bad"],
+    CHANGES_REQUESTED: ["Changes requested", "warn"],
     COMMENTED: ["", null],
     DISMISSED: ["Dismissed", "neutral"],
   };
@@ -55,7 +54,6 @@
 
   const unresolved = $derived(conv.threads.filter((t) => !t.resolved));
   const resolved = $derived(conv.threads.filter((t) => t.resolved));
-  const me = (who: string) => who === viewer;
 
   async function act(f: () => Promise<void>) {
     busy = true;
@@ -84,14 +82,9 @@
     });
 </script>
 
-{#snippet avatar(who: string)}
-  <span class="avatar" class:mine={me(who)}>{who.slice(0, 1).toUpperCase()}</span>
-{/snippet}
-
 {#snippet comments(t: Thread)}
   {#each t.comments as c (c.id)}
     <div class="comment">
-      {@render avatar(c.author)}
       <div class="said">
         <span class="who"><strong>{c.author}</strong> <span class="muted">· {ago(c.createdAt)}</span></span>
         <div class="markdown">{@html sanitize(c.bodyHtml)}</div>
@@ -107,7 +100,7 @@
       <Icon name="comment" size={14} />
       <code title={t.path}>{short(t.path)}{t.line ? `:${t.line}` : ""}</code>
       {#if t.outdated}<Pill size="sm">outdated</Pill>{/if}
-      {#if onshow}<Button variant="quiet" size="sm" class="show" onclick={() => onshow(t.path)} data-show-in-review>Show in Review</Button>{/if}
+      {#if onshow}<Button variant="quiet" size="sm" icon="chevron-right" onclick={() => onshow(t.path)} data-show-in-review>Show in Review</Button>{/if}
     </header>
     {#if lines.length}
       <pre class="hunk">{#each lines as l}<span class="l {l.kind}"><span class="n">{l.number ?? ""}</span>{l.text}</span>{/each}</pre>
@@ -118,7 +111,7 @@
         <textarea bind:value={replyText} rows="3" placeholder="Reply — Markdown supported"></textarea>
         <div class="buttons">
           <Button variant="quiet" onclick={() => (replyTo = null)}>Cancel</Button>
-          <Button variant="gh" icon="submit-github" onclick={() => sendReply(t)} disabled={busy || !replyText.trim()} data-send-reply>Reply on GitHub</Button>
+          <Button variant="gh" mark="gh" onclick={() => sendReply(t)} disabled={busy || !replyText.trim()} data-send-reply>Reply on GitHub</Button>
         </div>
       </div>
     {:else}
@@ -165,7 +158,6 @@
         {#each timeline as item}
           {@const look = item.kind === "review" ? REVIEW_STATE[item.state] : null}
           <li>
-            {@render avatar(item.author)}
             <div class="said">
               <span class="who">
                 <strong>{item.author}</strong>
@@ -185,15 +177,15 @@
       <span class="label">New comment</span>
       <textarea bind:value={newComment} rows="3" placeholder="Comment on the {conv.headRef ? 'pull request' : 'issue'} — Markdown supported"></textarea>
       <span class="buttons">
-        <Button icon="submit-github" onclick={sendComment} disabled={busy || !newComment.trim()} data-send-comment>Comment on GitHub</Button>
+        <Button mark="gh" onclick={sendComment} disabled={busy || !newComment.trim()} data-send-comment>Comment on GitHub</Button>
       </span>
     </label>
   </div>
 </div>
 
 <style>
-  .comments { flex: 1; min-height: 0; height: 100%; box-sizing: border-box; overflow: auto; padding: var(--sp-8) var(--sp-9) 40px; }
-  .column { max-width: 820px; display: flex; flex-direction: column; gap: 14px; }
+  .comments { flex: 1; min-height: 0; height: 100%; box-sizing: border-box; overflow: auto; padding: var(--sp-8) var(--sp-9) var(--sp-10); }
+  .column { max-width: 820px; display: flex; flex-direction: column; gap: var(--sp-6); }
   h2 {
     margin: 0; font-size: var(--fs-11); line-height: var(--lh-11); font-weight: var(--fw-semibold);
     letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted);
@@ -204,10 +196,9 @@
     display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-3) var(--sp-5);
     background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: var(--fs-12); color: var(--text-muted);
   }
-  .thread header code { flex: 1; min-width: 0; font-size: 11.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .thread header :global(.show) { color: var(--you); }
+  .thread header code { flex: 1; min-width: 0; font-size: var(--fs-code-inline); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .hunk {
-    margin: 0; padding: var(--sp-3) 0; font-size: 11.5px; line-height: 18px; background: var(--surface-editor);
+    margin: 0; padding: var(--sp-3) 0; font-size: var(--fs-code); line-height: var(--lh-code); background: var(--surface-editor);
     border-bottom: 1px solid var(--border); overflow-x: auto;
   }
   .hunk .l { display: block; padding: 0 var(--sp-5); white-space: pre; }
@@ -216,11 +207,6 @@
   .hunk .n { display: inline-block; width: 4ch; margin-right: 1ch; text-align: right; color: var(--diff-gutter-text); }
   .comment { display: flex; gap: var(--sp-5); padding: var(--sp-5) var(--sp-6) 0; }
   .comment:last-of-type { padding-bottom: var(--sp-5); }
-  .avatar {
-    flex: none; width: 22px; height: 22px; border-radius: 11px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border);
-    display: inline-grid; place-items: center; font-size: 10px; font-weight: var(--fw-semibold); color: var(--text-muted);
-  }
-  .avatar.mine { background: var(--you-bg); box-shadow: none; color: var(--you-strong); }
   .said { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
   .who { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-12); }
   .who strong { font-weight: var(--fw-semibold); }
@@ -232,7 +218,8 @@
     width: 100%; display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-5);
     border: 0; border-radius: var(--r-lg); background: transparent; color: var(--text-muted); font-size: var(--fs-12); text-align: left;
   }
-  .fold code { font-size: 11.5px; }
+  .fold:focus-visible { outline-offset: -2px; }
+  .fold code { font-size: var(--fs-code-inline); }
   .fold .summary { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .chev { display: flex; transition: transform var(--dur-fast) var(--ease); }
   .chev.open { transform: rotate(90deg); }
@@ -241,12 +228,10 @@
   .none { padding: var(--sp-6) 0; display: flex; flex-direction: column; gap: var(--sp-2); color: var(--text-muted); }
   .none strong { color: var(--text); font-weight: var(--fw-semibold); }
   .timeline {
-    list-style: none; margin: 0; padding: 0 0 0 11px; display: flex; flex-direction: column; gap: 14px;
+    list-style: none; margin: 0; padding: 0 0 0 var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-6);
     border-left: 1px solid var(--border);
   }
-  .timeline li { display: flex; gap: var(--sp-5); margin-left: -11px; }
-  .timeline .avatar { background: var(--surface-0); }
-  .timeline .avatar.mine { background: var(--you-bg); }
+  .timeline li { display: flex; }
   .compose { display: flex; flex-direction: column; gap: var(--sp-3); }
   label.compose { margin-top: var(--sp-4); }
   .compose .label { font-size: var(--fs-12); font-weight: var(--fw-semibold); }
@@ -259,6 +244,7 @@
   .markdown :global(pre) { background: var(--surface-2); padding: var(--sp-4); overflow-x: auto; border-radius: var(--r-md); font-size: 12px; }
   .markdown :global(code) { font-family: var(--font-mono); font-size: 12px; padding: 1px 4px; border-radius: var(--r-sm); background: var(--surface-2); }
   .markdown :global(pre code) { padding: 0; background: none; }
-  .markdown :global(a) { color: var(--you); }
+  /* Blue is "yours", not "clickable": links are underlined text. */
+  .markdown :global(a) { color: var(--text); text-decoration: underline; text-decoration-color: var(--border-strong); }
   .markdown :global(img) { max-width: 100%; }
 </style>

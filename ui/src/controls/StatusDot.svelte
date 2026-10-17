@@ -3,7 +3,9 @@
 
 <!--
   Agent status dot. Always a circle (= the agent), copper, red only for error.
-  none: dotted grey ring · starting: dashed ring · ready: ring · working: ring + centre dot (ring spins)
+  none: nothing (the 14 px slot stays, so rows line up)   ← CHANGED 2026-10-17: was a dotted grey
+        ring at 1.75:1 on every row without an agent — noise that read as "something is here"
+  starting: dashed ring · ready: ring · working: ring + centre dot (ring spins)
   waiting: solid + halo · finished: donut · error: solid red · stopped: grey ring + stop square
 -->
 <script lang="ts" module>
@@ -26,12 +28,16 @@
   const s = $derived(status ?? "none");
 </script>
 
-<svg class="dot {s}" width={size} height={size} viewBox="0 0 14 14" role="img" aria-label={AGENT_LABEL[s]} data-agent={s}>
-  {#if s === "waitingForPermission"}<circle class="halo" cx="7" cy="7" r="6.25" />{/if}
-  <circle class="ring" cx="7" cy="7" r="3.75" />
-  {#if s === "working" || s === "finished"}<circle class="inner" cx="7" cy="7" r="1.6" />{/if}
-  {#if s === "stopped"}<rect class="stop" x="5.4" y="5.4" width="3.2" height="3.2" rx="0.6" />{/if}
-</svg>
+{#if s === "none"}
+  <span class="dot none" style:width="{size}px" style:height="{size}px" data-agent="none"></span>
+{:else}
+  <svg class="dot {s}" width={size} height={size} viewBox="0 0 14 14" role="img" aria-label={AGENT_LABEL[s]} data-agent={s}>
+    {#if s === "waitingForPermission"}<circle class="halo" cx="7" cy="7" r="6.25" />{/if}
+    <circle class="ring" cx="7" cy="7" r="3.75" />
+    {#if s === "working" || s === "finished"}<circle class="inner" cx="7" cy="7" r="1.6" />{/if}
+    {#if s === "stopped"}<rect class="stop" x="5.4" y="5.4" width="3.2" height="3.2" rx="0.6" />{/if}
+  </svg>
+{/if}
 
 <style>
   .dot { flex: none; display: block; }
@@ -39,7 +45,6 @@
   .halo { fill: none; stroke: var(--agent); stroke-opacity: 0.4; stroke-width: 1.5; }
   .inner { fill: var(--agent); }
 
-  .none .ring { stroke: var(--border-strong); stroke-dasharray: 2 2; }
   .starting .ring { stroke-dasharray: 2 2; }
   .waitingForPermission .ring, .finished .ring { fill: var(--agent); }
   .finished .inner { fill: var(--surface-0); }
@@ -47,7 +52,8 @@
   .stopped .ring { stroke: var(--text-faint); }
   .stop { fill: var(--text-faint); }
 
-  .working .ring { stroke-dasharray: 17 6.6; transform-origin: 7px 7px; animation: spin 1.2s linear infinite; }
+  /* CHANGED: one rotation speed for the whole app (--dur-spin), shared with Spinner and the refresh arrow */
+  .working .ring { stroke-dasharray: 17 6.6; transform-origin: 7px 7px; animation: spin var(--dur-spin) linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) {
     .working .ring { animation: none; stroke-dasharray: none; }

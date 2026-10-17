@@ -34,4 +34,5 @@ export function xtermTheme(): ITheme {
   };
 }
 
-export const monoFont = () => getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim();
+export const token = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+export const monoFont = () => token("--font-mono");

@@ -2,8 +2,13 @@
      SPDX-License-Identifier: Apache-2.0 -->
 
 <!--
-  Stars or unstars an item: starred items head the Inbox. The star is the user's own mark, so
-  a set star is filled in the user's hue; an unset one is a grey outline.
+  Stars or unstars an item: starred items head the Inbox. The star is the user's own mark, so a
+  set star is filled in the user's hue; an unset one is a grey outline.
+
+  CHANGED 2026-10-17:
+  - one fixed label ("Star #12") with aria-pressed; flipping the label as well announced the state twice
+  - in Inbox rows it lives in the row's hover actions only (HANDOFF D2): rows in Starred don't
+    repeat a star that the section already says; the item header keeps it after the title.
 -->
 <script lang="ts">
   import Icon from "./Icon.svelte";
@@ -25,7 +30,7 @@
 </script>
 
 <button {...rest} class="star" class:on={starred} style:width="{size}px" style:height="{size}px" aria-pressed={starred}
-  aria-label={starred ? `Unstar ${name}` : `Star ${name}`} title={starred ? "Unstar" : "Star: keep it at the top of the Inbox"}
+  aria-label="Star {name}" title={starred ? "Starred — click to unstar" : "Star: keep it at the top of the Inbox"}
   onclick={(e) => { e.stopPropagation(); onclick(); }}>
   <Icon name="star" size={14} filled={starred} />
 </button>

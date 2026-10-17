@@ -19,7 +19,7 @@ D-Bus; to choose the theme, point D-Bus nowhere and set it in a GTK settings fil
   E2E_WEBDRIVER=http://127.0.0.1:4444 python3 -I e2e/gallery.py <app> <work> [light|dark] [1440x900] [screen,...]
 
 Screens: connect, empty (nothing selected yet), overview, menu, comments, collapsed, waiting, terminal, review,
-selection, drafts, submit, code-menu, ask-agent, shortcuts, review-hidden, notice-arriving,
+scope-menu, selection, drafts, submit, code-menu, ask-agent, shortcuts, review-hidden, notice-arriving,
 notices, inbox (every section, one item starred), browse, new-task (on a fork's branch),
 change-end (n past the last change), task (a task with the PR its agent opened).
 """
@@ -216,13 +216,21 @@ try:
         s.wait(".inbox.collapsed", timeout=10)
         shot(s, "collapsed")
         s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }))")
-    if need("review", "change-end", "selection", "drafts", "submit", "code-menu", "ask-agent", "shortcuts", "review-hidden"):
+    if need("review", "scope-menu", "change-end", "selection", "drafts", "submit", "code-menu", "ask-agent", "shortcuts", "review-hidden"):
         tab(s, "Review")
         s.wait("[data-file]", timeout=60)
         shot(s, "review")
+        if need("scope-menu"):
+            click(s, "[data-scope-menu]")
+            s.wait("[data-scope='all']", timeout=10)
+            shot(s, "scope-menu")
+            key(s, "Escape")
+            s.js("document.querySelector('[data-scope-menu]').click()") if s.find("[role=menu][aria-label=Scope]") else None
         if need("change-end"):
             # n past the last change of the last file: the note at the end of the diff.
             s.js("[...document.querySelectorAll('.side .files [data-file]')].at(-1).click()")
+            # The file's diff first: n before it shows would already be past its last change.
+            s.wait_js("return [...document.querySelectorAll('.diff .cm-content')].at(-1)?.textContent.includes('testImplementation')", timeout=30)
             for _ in range(20):
                 key(s, "n")
                 time.sleep(0.3)
@@ -232,9 +240,9 @@ try:
             shot(s, "change-end")
         if need("selection", "drafts", "submit"):
             click(s, "[data-file$='SnapSyncState.java']")
-            s.wait_js("return document.querySelectorAll('.cm-mergeViewEditor .cm-content')[1]?.cmView?.rootView?.view?.state.doc.lines > 30 "
-                      "|| document.querySelectorAll('.cm-mergeViewEditor .cm-content')[1]?.textContent.includes('field29')", timeout=30)
-            s.js("""const el = document.querySelectorAll('.cm-mergeViewEditor .cm-content')[1];
+            s.wait_js("return [...document.querySelectorAll('.diff .cm-content')].at(-1)?.cmView?.rootView?.view?.state.doc.lines > 30 "
+                      "|| [...document.querySelectorAll('.diff .cm-content')].at(-1)?.textContent.includes('field29')", timeout=30)
+            s.js("""const el = [...document.querySelectorAll('.diff .cm-content')].at(-1);
               const view = el && (el.cmView?.rootView?.view ?? el.cmTile?.root?.view ?? el.cmView?.view);
               const doc = view.state.doc; view.dispatch({ selection: { anchor: doc.line(34).from, head: doc.line(36).to } });""")
             s.type(s.wait("[data-composer] input"), "Keep a one-argument constructor for the old tests?")
@@ -248,9 +256,9 @@ try:
             # Without the submit panel, which leaves little room for the diff in a small window.
             s.js("[...document.querySelectorAll('[data-submit] button')].find((b) => b.textContent.trim() === 'Cancel')?.click()")
             click(s, "[data-file$='SnapSyncState.java']")
-            s.wait_js("return document.querySelectorAll('.cm-mergeViewEditor .cm-content')[1]?.textContent.includes('field29')", timeout=30)
+            s.wait_js("return [...document.querySelectorAll('.diff .cm-content')].at(-1)?.textContent.includes('field29')", timeout=30)
             # Right-click in a selection of three lines.
-            s.js("""const el = document.querySelectorAll('.cm-mergeViewEditor .cm-content')[1];
+            s.js("""const el = [...document.querySelectorAll('.diff .cm-content')].at(-1);
               const view = el && (el.cmView?.rootView?.view ?? el.cmTile?.root?.view ?? el.cmView?.view);
               const doc = view.state.doc; view.dispatch({ selection: { anchor: doc.line(34).from, head: doc.line(36).to }, scrollIntoView: true });
               await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -297,13 +305,13 @@ try:
         s.js("""const rows = (await window.__TAURI_INTERNALS__.invoke('inbox')).filter((r) => r.kind !== 'task');
           const emit = (i, kind, title, body) => window.__TAURI_INTERNALS__.invoke('plugin:event|emit',
             { event: 'notice', payload: { item: rows[i]?.id ?? null, kind, title, body } });
-          await emit(1, 'finished', '#' + rows[1]?.number + ' ' + rows[1]?.title, 'The agent finished.');
-          await emit(2, 'ci-failing', '#' + rows[2]?.number + ' ' + rows[2]?.title, 'CI is failing: build (ubuntu-24.04)');
-          await emit(3, 'activity', '#' + rows[3]?.number + ' ' + rows[3]?.title, 'New reviews or comments.');""")
+          await emit(1, 'finished', '#' + rows[1]?.number + ' ' + rows[1]?.title, 'the agent finished');
+          await emit(2, 'ci-failing', '#' + rows[2]?.number + ' ' + rows[2]?.title, 'build (ubuntu-24.04)');
+          await emit(3, 'activity', '#' + rows[3]?.number + ' ' + rows[3]?.title, '');""")
         s.wait("[data-notice='activity']", timeout=10)
         s.js("""const rows = (await window.__TAURI_INTERNALS__.invoke('inbox')).filter((r) => r.kind !== 'task');
           await window.__TAURI_INTERNALS__.invoke('plugin:event|emit', { event: 'notice', payload: { item: null,
-            kind: 'needs-you', title: '#' + rows[4]?.number + ' ' + rows[4]?.title, body: 'The agent is waiting for your permission: Bash(./gradlew test)' } });""")
+            kind: 'needs-you', title: '#' + rows[4]?.number + ' ' + rows[4]?.title, body: 'Bash(./gradlew test)' } });""")
         time.sleep(0.15)
         if wanted is None or "notice-arriving" in wanted:
             print("[shot] notice-arriving:", "saved" if s.screenshot(os.path.join(shots, "notice-arriving.png")) else "skipped", flush=True)

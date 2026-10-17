@@ -18,7 +18,8 @@ pub trait Events: Send + Sync {
     /// Polling `repo` failed (`inbox-error`).
     fn inbox_error(&self, repo: i64, message: &str);
     /// Tells the user something about item `key`: in the focused window, or as an OS
-    /// notification. `kind`: needs-you, finished, error, ci-failing, activity or lifecycle.
+    /// notification. `kind`: needs-you, finished, error, ci-failing, activity or lifecycle;
+    /// `body`: the detail after the kind's reason (the whole sentence for lifecycle news).
     fn notice(&self, key: &str, kind: &str, title: &str, body: &str);
     /// Whether item `key` is on screen in a focused window (then nothing needs telling).
     fn watching(&self, key: &str) -> bool;
@@ -92,7 +93,13 @@ impl Events for TauriEvents {
             if let Err(e) = app.emit_to(label.as_str(), "notice", notice) {
                 tracing::warn!("notice failed: {e}");
             }
-        } else if let Err(e) = app.notification().builder().title(title).body(body).show() {
+        } else if let Err(e) = app
+            .notification()
+            .builder()
+            .title(title)
+            .body(crate::notify::sentence(kind, body))
+            .show()
+        {
             tracing::warn!("notification failed: {e}");
         }
     }

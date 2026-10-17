@@ -14,7 +14,7 @@
   viewBox="0 0 16 16"
   fill={filled || name === "play" ? "currentColor" : "none"}
   stroke="currentColor"
-  stroke-width={name === "pending" ? 2.2 : 1.5}
+  stroke-width="1.5"
   stroke-linecap="round"
   stroke-linejoin="round"
   role={label ? "img" : undefined}

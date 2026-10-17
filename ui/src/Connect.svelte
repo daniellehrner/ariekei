@@ -157,8 +157,8 @@
   .open:focus-visible { outline-offset: -2px; }
   .text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .name { color: var(--text); font-weight: var(--fw-medium); }
-  .path { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .path { font-family: var(--font-mono); font-size: var(--fs-code-inline); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .state { font-size: var(--fs-11); color: var(--text-faint); white-space: nowrap; }
   .hint { margin: 0; color: var(--text-faint); font-size: var(--fs-12); }
-  code { font-size: 11.5px; }
+  code { font-size: var(--fs-code-inline); }
 </style>

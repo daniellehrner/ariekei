@@ -132,7 +132,9 @@ def tab(s, name):
     s.js("[...document.querySelectorAll('[role=tab]')].find(t => t.textContent.trim().startsWith(arguments[0]))?.click()", name)
 
 
-NEW_SIDE = """const el = document.querySelectorAll('.cm-mergeViewEditor .cm-content')[1];
+# The new side's editor: the right one side by side, the only one in a unified diff (an added
+# or deleted file shows as one pane).
+NEW_SIDE = """const el = [...document.querySelectorAll('.diff .cm-content')].at(-1);
         const view = el && (el.cmView?.rootView?.view ?? el.cmTile?.root?.view ?? el.cmView?.view);"""
 
 
@@ -249,12 +251,12 @@ try:
     equal("? on the Overview shows all shortcuts", sections, ["Anywhere", "In the review"])
     press_on(s, "[data-tab=overview]", "Escape")
     eventually("Esc closes the shortcuts", lambda: bool(s.find("[data-shortcuts]")), lambda v: not v, timeout=10)
-    # Not while typing: ? in the search field is just a character.
-    press_on(s, "[data-browse-field]", "?")
+    tab(s, "Comments")
+    # Not while typing: ? in a text field is just a character.
+    s.wait("label.compose textarea", timeout=10)
+    press_on(s, "label.compose textarea", "?")
     time.sleep(0.3)
     check("? in a text field types, it does not open the shortcuts", not s.find("[data-shortcuts]"))
-
-    tab(s, "Comments")
     s.wait(".thread", timeout=20)
     print("[comments] threads:", s.js("return document.querySelectorAll('.thread').length"), "| conversation:",
           s.js("return [...document.querySelectorAll('.timeline li')].map(e => e.innerText.replace(/\\n+/g, ' '))"))
@@ -283,19 +285,21 @@ try:
     s.wait(".review .marker", timeout=30)
     s.wait(".files [data-file]", timeout=30)
     print("[review]", " ".join(s.js("return document.querySelector('.review .marker').textContent").split()),
-          "| scopes:", s.js("return [...document.querySelectorAll('.scopes button, .scope-folded .active-scope, .scope-folded button')].map(l => l.textContent.trim())"),
+          "| scope:", s.js("return document.querySelector('[data-scope-menu]')?.textContent.trim()"),
           "| files:", s.js("return [...document.querySelectorAll('.files [data-file]')].map(b => b.dataset.file)"))
     print("[review] worktrees in the clone:", len(git(clone, "worktree", "list").splitlines()))
     equal("reviewing without a worktree adds none", len(git(clone, "worktree", "list").splitlines()), 1)
     equal("files of #43 in review order", s.js("return [...document.querySelectorAll('.files [data-file]')].map(b => b.dataset.file)"), ["a.txt", "b.txt", "c.rs", "w.txt", "tests/parser_test.rs"])
-    # Any language is highlighted, not just Java: a Rust file gets syntax-styled tokens.
+    # Any language is highlighted, not just Java: a Rust file gets syntax-styled tokens. (An
+    # added file shows as one pane.)
     side_by_side(s)
     s.click(s.wait(".files [data-file='c.rs']"))
-    s.wait_js("return document.querySelectorAll('.cm-mergeViewEditor .cm-line span[class]').length > 0", timeout=20)
-    print("[review] c.rs styled tokens:", s.js("return document.querySelectorAll('.cm-mergeViewEditor .cm-line span[class]').length"))
-    check("a Rust file is highlighted", s.js("return document.querySelectorAll('.cm-mergeViewEditor .cm-line span[class]').length") > 0)
+    s.wait_js("return document.querySelectorAll('.diff .cm-line span[class]').length > 0", timeout=20)
+    print("[review] c.rs styled tokens:", s.js("return document.querySelectorAll('.diff .cm-line span[class]').length"))
+    check("a Rust file is highlighted", s.js("return document.querySelectorAll('.diff .cm-line span[class]').length") > 0)
+    check("an added file shows as one pane, even side by side", not s.find(".diff .cm-mergeView"))
     # Code shows as written: no ligatures (-> or <= drawn as one arrow by fonts like JetBrains Mono).
-    lig = s.js("const st = getComputedStyle(document.querySelector('.cm-mergeViewEditor .cm-line')); return [st.fontVariantLigatures, st.fontFeatureSettings]")
+    lig = s.js("const st = getComputedStyle(document.querySelector('.diff .cm-line')); return [st.fontVariantLigatures, st.fontFeatureSettings]")
     print("[review] code ligatures:", lig)
     check("the diff draws no ligatures", lig[0] == "none" and '"calt" 0' in lig[1], lig)
     s.click(s.wait(".files [data-file='a.txt']"))
@@ -341,11 +345,13 @@ try:
     width = lambda css: s.js("return Math.round(document.querySelector(arguments[0]).getBoundingClientRect().width)", css)
     open_inbox(s)
     before = (width(".item"), width(".review .main"))
-    print("[layout] scope list collapsed by default:", s.js("return document.querySelectorAll('.scopes button, .scope-folded .active-scope, .scope-folded button').length"), "entries:",
-          s.js("return [...document.querySelectorAll('.scopes button, .scope-folded .active-scope, .scope-folded button')].map(l => l.textContent.trim())"))
-    s.click(s.wait("[data-toggle='commits']"))
-    print("[layout] expanded:", s.js("return [...document.querySelectorAll('.scopes button, .scope-folded .active-scope, .scope-folded button')].map(l => l.textContent.trim())"))
-    s.click(s.wait("[data-toggle='commits']"))
+    # The scope is a menu in the review bar: all changes, or one commit (with its file count).
+    s.click(s.wait("[data-scope-menu]"))
+    scopes = s.js("return [...document.querySelectorAll('[data-scope]')].map(l => l.textContent.replace(/\\s+/g, ' ').trim())")
+    print("[layout] scope menu:", scopes)
+    check("the scope menu lists all changes and each commit", len(scopes) >= 2 and scopes[0].startswith("All changes"), scopes)
+    press_on(s, "[role=menu][aria-label=Scope]", "Escape")
+    eventually("Esc closes the scope menu", lambda: bool(s.find("[data-scope='all']")), lambda v: not v, timeout=5)
     s.click(s.wait(".inbox header button[aria-label^='Collapse Inbox']"))
     s.wait(".inbox.collapsed", timeout=5)
     s.click(s.wait("[data-toggle='side']"))
@@ -354,11 +360,11 @@ try:
     print(f"[layout] work item width {before[0]} -> {after[0]} px, diff area {before[1]} -> {after[1]} px",
           "| attention dots:", s.js("return document.querySelectorAll('.inbox.collapsed .pip').length"))
     check("collapsing the Inbox and the side panel widens the diff", after[1] > before[1] + 300, (before, after))
-    first = s.js("return document.querySelector('.toolbar .current-file')?.textContent.trim()")
+    first = s.js("return document.querySelector('.bar .current-file')?.textContent.trim()")
     s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: ']', bubbles: true }))")
     time.sleep(0.5)
-    print("[layout] file before/after ']':", first, "->", s.js("return document.querySelector('.toolbar .current-file')?.textContent.trim()"))
-    contains("']' goes to the next file", s.js("return document.querySelector('.toolbar .current-file')?.textContent.trim()"), "b.txt")
+    print("[layout] file before/after ']':", first, "->", s.js("return document.querySelector('.bar .current-file')?.textContent.trim()"))
+    contains("']' goes to the next file", s.js("return document.querySelector('.bar .current-file')?.textContent.trim()"), "b.txt")
     s.screenshot(os.path.join(shots, "r5-wide.png"))
     # Ctrl+B brings the Inbox back (the state is saved for the next launch).
     s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }))")
@@ -406,7 +412,7 @@ try:
     equal("n entered the next file", active(), shown[1])
     # Where the cursor is: the new side's text (which file), its line, on a marked change.
     at = lambda: s.js(NEW_SIDE + """return view && [view.state.doc.line(1).text, view.state.doc.lineAt(view.state.selection.main.head).number,
-        document.querySelectorAll('.cm-mergeViewEditor .ak-current-change').length > 0];""")
+        document.querySelectorAll('.diff .ak-current-change').length > 0];""")
     eventually("n enters it at its first change", at, lambda v: v and v[0] == "new file" and v[1] == 1 and v[2], timeout=10)
     key("p")
     eventually("p goes back into the previous file", active, lambda v: v == shown[0])
@@ -469,7 +475,7 @@ try:
     s.wait(".item header .title", timeout=30, text="#42")
     tab(s, "Review")
     s.wait(".review .marker", timeout=30)
-    eventually("all changes vs main", lambda: s.js("return document.querySelector('.scope-folded .active-scope, .scopes button.active')?.textContent ?? ''"), lambda v: "All" in v)
+    eventually("all changes vs main", lambda: s.js("return document.querySelector('[data-scope-menu]')?.textContent ?? ''"), lambda v: "All" in v)
     print("[own] files:", s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"),
           "| own PR offers approve:", s.js("return !!document.querySelector(\"[data-event='APPROVE']:not(:disabled)\")"))
     check("no approving your own PR", not s.js("return !!document.querySelector(\"[data-event='APPROVE']:not(:disabled)\")"))

@@ -16,6 +16,7 @@ use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 use tauri::ipc::{Channel, InvokeResponseBody};
@@ -89,6 +90,8 @@ struct Term {
     output: Mutex<Output>,
     /// Latest status and when it was reported.
     status: Mutex<(AgentStatus, Instant)>,
+    /// The agent finished a turn since the user last opened the item's review.
+    unreviewed: AtomicBool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -208,8 +211,26 @@ impl TerminalManager {
         let term = self.get(key).ok()?;
         let previous =
             std::mem::replace(&mut *term.status.lock().unwrap(), (status, Instant::now())).0;
+        if status == AgentStatus::Finished && previous != AgentStatus::Finished {
+            term.unreviewed.store(true, Ordering::Relaxed);
+        }
         self.events.agent_status(key, status, detail);
         Some(previous)
+    }
+
+    /// The agent finished and the user has not opened the item's review since.
+    pub fn ready_for_review(&self, key: &str) -> bool {
+        self.get(key).is_ok_and(|t| {
+            t.unreviewed.load(Ordering::Relaxed)
+                && t.status.lock().unwrap().0 == AgentStatus::Finished
+        })
+    }
+
+    /// The user opened the item's review: what the agent did so far is seen.
+    pub fn review_seen(&self, key: &str) {
+        if let Ok(term) = self.get(key) {
+            term.unreviewed.store(false, Ordering::Relaxed);
+        }
     }
 
     /// Attaches `view` to the item's terminal, starting `claude` in `cwd` if it isn't
@@ -280,6 +301,7 @@ impl TerminalManager {
                 view: Some(view),
             }),
             status: Mutex::new((AgentStatus::Starting, Instant::now())),
+            unreviewed: AtomicBool::new(false),
         });
         // Registered before output starts, so the first hook finds the item.
         self.terms

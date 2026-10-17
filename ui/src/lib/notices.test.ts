@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { MAX_NOTICES, fades, stillCurrent, withNotice, type Notice } from "./notices.ts";
+import { MAX_NOTICES, SHOWN_NOTICES, fades, shown, stillCurrent, withNotice, type Notice } from "./notices.ts";
 
 const notice = (id: number, item: number | null, kind: Notice["kind"] = "finished"): Notice => ({ id, item, kind, title: "", body: "" });
 
@@ -31,7 +31,17 @@ test("a newer notice about the same item replaces the older one, and only the ne
   // Notices about no item never replace each other.
   list = withNotice(withNotice(list, notice(4, null)), notice(5, null));
   assert.deepEqual(list.map((n) => n.id), [2, 3, 4, 5]);
-  list = withNotice(list, notice(6, 9));
+  for (let id = 6; id < 6 + MAX_NOTICES; id++) list = withNotice(list, notice(id, id + 10));
   assert.equal(list.length, MAX_NOTICES);
-  assert.deepEqual(list.map((n) => n.id), [3, 4, 5, 6]);
+  assert.equal(list.at(-1)?.id, 5 + MAX_NOTICES);
+});
+
+test("only the newest notices show; the older ones fold until unfolded", () => {
+  const list = [1, 2, 3, 4, 5].map((id) => notice(id, id));
+  const folded = shown(list, false);
+  assert.equal(folded.visible.length, SHOWN_NOTICES);
+  assert.deepEqual(folded.visible.map((n) => n.id), [3, 4, 5]);
+  assert.equal(folded.folded, 2);
+  assert.deepEqual(shown(list, true), { visible: list, folded: 0 });
+  assert.deepEqual(shown(list.slice(0, 2), false), { visible: list.slice(0, 2), folded: 0 });
 });

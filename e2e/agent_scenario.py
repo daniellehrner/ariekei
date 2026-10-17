@@ -214,11 +214,12 @@ try:
     print("[turn 1]", st, "| last commit:", git(worktree, "log", "-1", "--format=%s"))
     equal("turn 1 commits", (st, git(worktree, "log", "-1", "--format=%s")), ("finished", "add two"))
     print("[inbox] #42 attention:", row_info(s, 42)["attention"])
-    equal("after the turn: nothing in the Inbox wants attention", row_info(s, 42)["attention"], None)
+    equal("after the turn the changes are ready for review", row_info(s, 42)["attention"], "Ready for review")
     s.screenshot(os.path.join(shots, "agent-terminal.png"))
 
     tab(s, "Review")
     s.wait(".files [data-file]", timeout=30)
+    eventually("opening the review sees them", lambda: row_info(s, 42)["attention"], lambda v: v is None, timeout=10)
     print("[review]", review_marker(s), "| files:", s.js("return [...document.querySelectorAll('.files [data-file]')].map(b => b.dataset.file)"))
     equal("files vs main", s.js("return [...document.querySelectorAll('.files [data-file]')].map(b => b.dataset.file)"), ["a.txt", "b.txt"])
     s.screenshot(os.path.join(shots, "agent-review-base.png"))
@@ -229,7 +230,7 @@ try:
     tab(s, "Review")
     s.click(s.wait(".review [data-reload]"))
     eventually("the review has the new commit", lambda: invoke(s, "review_state", {"id": item_id})["commits"][0]["subject"], lambda v: v == "add three")
-    print("[review]", review_marker(s), "| scopes:", s.js("return [...document.querySelectorAll('.scopes button, .scope-folded .active-scope, .scope-folded button')].map(l => l.textContent.trim())"))
+    print("[review]", review_marker(s), "| scope:", s.js("return document.querySelector('[data-scope-menu]')?.textContent.trim()"))
     newest = invoke(s, "review_state", {"id": item_id})["commits"][0]
     diff = invoke(s, "review_file", {"id": item_id, "from": newest["sha"] + "^", "to": newest["sha"], "path": "a.txt", "ignoreWs": False})
     print("[review] a.txt in", newest["sha"][:8], newest["subject"], ": hunks", diff["hunks"], "| new side ends with:", diff["new"].splitlines()[-2:])

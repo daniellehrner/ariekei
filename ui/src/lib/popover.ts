@@ -17,3 +17,17 @@ export function place(el: HTMLElement, x: number, y: number) {
   const r = el.getBoundingClientRect();
   return clampTo(x, y, r.width, r.height, window.innerWidth, window.innerHeight);
 }
+
+export type Area = { left: number; right: number; top: number; bottom: number };
+
+/** Where a box (w × h) about some lines (`lines`: their top and bottom) goes in `area` (the
+ *  pane the lines are in; its bottom is where the review's dock starts): below the lines if it
+ *  fits, else above them, else docked at the bottom of the area. Never over the lines, unless
+ *  it is docked. Horizontally at `x`, kept in the area. */
+export function nearLines(w: number, h: number, x: number, lines: { top: number; bottom: number }, area: Area) {
+  const left = Math.max(area.left + MARGIN, Math.min(x, area.right - w - MARGIN));
+  const gap = 4;
+  if (lines.bottom + gap + h <= area.bottom - MARGIN) return { left, top: lines.bottom + gap, docked: false };
+  if (lines.top - gap - h >= area.top + MARGIN) return { left, top: lines.top - gap - h, docked: false };
+  return { left: area.left + MARGIN, top: area.bottom - h - MARGIN, docked: true };
+}

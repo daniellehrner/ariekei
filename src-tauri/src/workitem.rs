@@ -168,7 +168,9 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             unresolved_threads: 0,
             new_activity: false,
             agent,
+            ready_for_review: false,
             worktree: None,
+            branch: item.branch.clone(),
             attention: None,
             cleanup_blockers: None,
             issue_number: None,
@@ -198,7 +200,9 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             unresolved_threads: 0,
             new_activity: issue.latest_activity.unwrap_or_default() > seen,
             agent,
+            ready_for_review: false,
             worktree: None,
+            branch: item.branch.clone(),
             attention: None,
             cleanup_blockers: None,
             issue_number: None,
@@ -228,7 +232,9 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             unresolved_threads: pr.unresolved_threads,
             new_activity: pr.latest_activity.clone().unwrap_or_default() > seen,
             agent,
+            ready_for_review: false,
             worktree: None,
+            branch: item.branch.clone(),
             attention: None,
             cleanup_blockers: None,
             issue_number: item.issue_number,
@@ -243,6 +249,7 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
     if worktree.is_some() {
         row.agent_item = Some(item.id);
     }
+    row.ready_for_review = state.terminals.ready_for_review(&item.id.to_string());
     row.removable = removable(&item);
     row.worktree = worktree.map(|p| p.to_string_lossy().into_owned());
     row.cleanup_blockers = item.cleanup_blockers;

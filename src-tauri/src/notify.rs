@@ -18,26 +18,42 @@ fn label(state: &AppState, key: &str) -> String {
     }
 }
 
-/// What, if anything, to say about an agent status change (`detail`: what it asks to run),
-/// with the notice's kind.
+/// What, if anything, to say about an agent status change (`detail`: what it asks to run):
+/// the notice's kind and its detail. The in-app notice shows the kind as its reason ("Agent
+/// needs you") and the detail after it; an OS notification says it in a sentence (`sentence`).
 fn agent_message(
     previous: AgentStatus,
     status: AgentStatus,
     detail: Option<&str>,
 ) -> Option<(&'static str, String)> {
     match (previous, status) {
-        (_, AgentStatus::WaitingForPermission) => Some((
-            "needs-you",
-            match detail {
-                Some(d) => format!("The agent is waiting for your permission: {d}"),
-                None => "The agent is waiting for your permission.".to_owned(),
-            },
-        )),
-        (AgentStatus::Working, AgentStatus::Finished) => {
-            Some(("finished", "The agent finished.".to_owned()))
+        (_, AgentStatus::WaitingForPermission) => {
+            Some(("needs-you", detail.unwrap_or_default().to_owned()))
         }
-        (_, AgentStatus::Error) => Some(("error", "The agent stopped with an error.".to_owned())),
+        (AgentStatus::Working, AgentStatus::Finished) => {
+            Some(("finished", "the agent finished".to_owned()))
+        }
+        (_, AgentStatus::Error) => Some(("error", String::new())),
         _ => None,
+    }
+}
+
+/// A notice as one sentence, for an OS notification: its kind's reason with the detail.
+pub fn sentence(kind: &str, detail: &str) -> String {
+    let with = |what: &str| {
+        if detail.is_empty() {
+            format!("{what}.")
+        } else {
+            format!("{what}: {detail}")
+        }
+    };
+    match kind {
+        "needs-you" => with("The agent is waiting for your permission"),
+        "finished" => "The agent finished: ready for review.".to_owned(),
+        "error" => "The agent stopped with an error.".to_owned(),
+        "ci-failing" => with("CI is failing"),
+        "activity" => "New reviews or comments.".to_owned(),
+        _ => detail.to_owned(),
     }
 }
 
@@ -67,13 +83,10 @@ fn pr_messages(before: &PrSummary, after: &PrSummary) -> Vec<(&'static str, Stri
     let mut messages = vec![];
     let failing = |p: &PrSummary| matches!(p.ci.as_deref(), Some("FAILURE" | "ERROR"));
     if failing(after) && !failing(before) {
-        messages.push((
-            "ci-failing",
-            format!("CI is failing: {}", after.failing_checks.join(", ")),
-        ));
+        messages.push(("ci-failing", after.failing_checks.join(", ")));
     }
     if after.latest_activity > before.latest_activity {
-        messages.push(("activity", "New reviews or comments.".to_owned()));
+        messages.push(("activity", String::new()));
     }
     messages
 }
@@ -101,10 +114,15 @@ mod tests {
         use AgentStatus::*;
         assert_eq!(
             agent_message(Working, WaitingForPermission, Some("Bash ./gradlew test")),
-            Some((
-                "needs-you",
-                "The agent is waiting for your permission: Bash ./gradlew test".to_owned()
-            ))
+            Some(("needs-you", "Bash ./gradlew test".to_owned()))
+        );
+        assert_eq!(
+            sentence("needs-you", "Bash ./gradlew test"),
+            "The agent is waiting for your permission: Bash ./gradlew test"
+        );
+        assert_eq!(
+            sentence("needs-you", ""),
+            "The agent is waiting for your permission."
         );
         assert_eq!(
             agent_message(Working, Finished, None).unwrap().0,
@@ -136,8 +154,9 @@ mod tests {
         };
         assert_eq!(
             pr_messages(&base, &failing),
-            [("ci-failing", "CI is failing: test".to_owned())]
+            [("ci-failing", "test".to_owned())]
         );
+        assert_eq!(sentence("ci-failing", "test"), "CI is failing: test");
         assert!(
             pr_messages(&failing, &failing).is_empty(),
             "only the transition is news"
@@ -148,7 +167,9 @@ mod tests {
         };
         assert_eq!(
             pr_messages(&base, &commented),
-            [("activity", "New reviews or comments.".to_owned())]
+            [("activity", String::new())]
         );
+        assert_eq!(sentence("activity", ""), "New reviews or comments.");
+        assert_eq!(sentence("lifecycle", "Cleaned up."), "Cleaned up.");
     }
 }

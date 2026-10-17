@@ -213,6 +213,12 @@ fn mark_seen(state: State<'_, AppState>, id: i64) -> Res<()> {
     workitem::mark_seen(&state, id)
 }
 
+/// The user opened the review of the item whose agent is `agent_item`: no longer "ready for review".
+#[tauri::command]
+fn review_seen(state: State<'_, AppState>, agent_item: i64) {
+    state.terminals.review_seen(&agent_item.to_string());
+}
+
 /// The item shown in this window; remembered (per repo) so the next launch opens it again.
 #[tauri::command]
 fn set_active_item(state: State<'_, AppState>, window: tauri::Window, id: Option<i64>) -> Res<()> {
@@ -601,6 +607,7 @@ pub fn run() {
             inbox,
             refresh,
             mark_seen,
+            review_seen,
             set_active_item,
             selected_item,
             ui_setting,

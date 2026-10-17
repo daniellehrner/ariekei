@@ -11,6 +11,7 @@
   import TerminalPanel from "./TerminalPanel.svelte";
   import Banner from "./controls/Banner.svelte";
   import Button from "./controls/Button.svelte";
+  import CiMark, { ciState } from "./controls/CiMark.svelte";
   import Icon from "./controls/Icon.svelte";
   import IconButton from "./controls/IconButton.svelte";
   import InlineConfirm from "./controls/InlineConfirm.svelte";
@@ -21,13 +22,11 @@
   import { api, shortName, type Conversation, type Row } from "./lib/api";
   import { landingTab, type Tab } from "./lib/attention";
   import { openOn } from "./lib/layout.svelte";
-  import { shortPath } from "./lib/paths";
 
   let {
     row,
     rows,
     repoId,
-    viewer,
     onchanged,
     onselect,
   }: {
@@ -35,7 +34,6 @@
     /** The Inbox rows: a task's PRs and issues, a PR's or issue's task. */
     rows: Row[];
     repoId: number;
-    viewer: string;
     onchanged: () => void;
     onselect: (id: number) => void;
   } = $props();
@@ -54,7 +52,29 @@
   let fetched = $state(false);
   let preparing = $state(false);
   let error: string | null = $state(null);
+  // Lifecycle news ("Created the worktree …"); `code` spans are written `like this`. It goes by
+  // itself after a while: it is news, nothing to act on.
   let notice: string | null = $state(null);
+  const NOTICE_MS = 6_000;
+  $effect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => (notice = null), NOTICE_MS);
+    return () => clearTimeout(timer);
+  });
+  // The last part of a path: a worktree is named by its folder (the full path is its title).
+  const folderName = (path: string) => path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? path;
+
+  // Clicking the worktree chip copies its full path, and says so for a moment.
+  let copied = $state(false);
+  async function copyPath(path: string) {
+    try {
+      await navigator.clipboard.writeText(path);
+      copied = true;
+      setTimeout(() => (copied = false), 1500);
+    } catch (e) {
+      error = `Could not copy the path: ${e}`;
+    }
+  }
 
   const id = $derived(row.id);
   const agent = $derived(agents[String(row.id)]);
@@ -150,7 +170,7 @@
     error = null;
     try {
       const p = await api.prepareItem(id);
-      notice = p.adopted ? `Using the existing worktree ${shortPath(p.path)}.` : `Created the worktree ${shortPath(p.path)} on ${p.branch}.`;
+      notice = p.adopted ? `Using the existing worktree \`${folderName(p.path)}\`.` : `Created the worktree \`${folderName(p.path)}\` on \`${p.branch}\`.`;
       if (p.note) error = p.note;
       if (ui) ui.tab = "terminal";
       onchanged();
@@ -235,12 +255,12 @@
   }
 
   const shownBlockers = $derived(blockersDismissed ? null : (blockers ?? row.cleanupBlockers));
-  const ciFailing = $derived(row.ci === "FAILURE" || row.ci === "ERROR");
+  const ci = $derived(ciState(row.ci));
   const ciLabel = $derived.by(() => {
-    if (!row.ci) return null;
-    if (row.ci === "SUCCESS") return "CI passing";
-    if (ciFailing) return `CI failing${row.failingChecks.length ? `: ${row.failingChecks.join(", ")}` : ""}`;
-    return "CI running";
+    if (ci === "pass") return "CI passing";
+    if (ci === "fail") return `CI failing${row.failingChecks.length ? `: ${row.failingChecks.join(", ")}` : ""}`;
+    if (ci === "pending") return "CI running";
+    return null;
   });
   const DECISION: Record<string, [string, string]> = {
     APPROVED: ["approved", "ok"],
@@ -276,13 +296,15 @@
             <InlineConfirm text="Discard this task{losses.length ? ' and lose its work' : ''}?" confirm="Discard"
               onconfirm={discard} oncancel={() => (losses = null)} data-confirm-discard />
           {:else}
-            <Button icon="trash" onclick={askDiscard}
+            <!-- Rarer and destructive: it does not compete with Done. -->
+            <Button variant="quiet" icon="trash" onclick={askDiscard}
               title="Delete the task with its worktree, branch and agent session, even if that loses work (you see what first)" data-discard>Discard</Button>
           {/if}
         {/if}
         {#if confirmDone}
+          <!-- Neutral: Done only cleans up when nothing would be lost. -->
           <InlineConfirm text="Clean up {row.worktree ? 'the worktree, agent and ' : ''}this {isTask ? 'task' : 'item'}?" confirm="Clean up"
-            onconfirm={done} oncancel={() => (confirmDone = false)} data-confirm-done />
+            tone="neutral" onconfirm={done} oncancel={() => (confirmDone = false)} data-confirm-done />
         {:else if !losses}
           <Button icon="done" onclick={() => (confirmDone = true)}
             title="Remove this item's worktree, agent session and refs, and hide it — only if nothing would be lost" data-done>Done</Button>
@@ -299,16 +321,20 @@
       {/if}
       {#if !isTask}<span>by {row.author}</span>{/if}
       {#if ciLabel}
-        <span class={row.ci === "SUCCESS" ? "ok" : ciFailing ? "bad" : "warn"}>
-          <Icon name={row.ci === "SUCCESS" ? "check" : ciFailing ? "x" : "pending"} size={12} />{ciLabel}
-        </span>
+        <span class={ci === "pass" ? "ok" : ci === "fail" ? "bad" : "warn"}><CiMark state={ci} label="" />{ciLabel}</span>
       {/if}
       {#if row.reviewDecision}
         {@const d = DECISION[row.reviewDecision] ?? [row.reviewDecision.toLowerCase(), ""]}
         <span class={d[1]}>{d[0]}</span>
       {/if}
       {#if row.unresolvedThreads}<span class="gh"><Icon name="comment" size={12} />{row.unresolvedThreads} unresolved</span>{/if}
-      {#if row.worktree}<span class="path" title={row.worktree}><Icon name="folder" size={12} /><code>{shortPath(row.worktree)}</code></span>{/if}
+      {#if isTask && row.branch}<span class="branch" title="Branch"><Icon name="branch" size={12} /><code>{row.branch}</code></span>{/if}
+      {#if row.worktree}
+        {@const path = row.worktree}
+        <button class="path" title="{path} — click to copy" onclick={() => copyPath(path)} data-worktree>
+          <Icon name="folder" size={12} /><code>{copied ? "Copied" : folderName(path)}</code>
+        </button>
+      {/if}
       {#if status}
         <span class="agent" data-agent-status={status}>
           <StatusDot {status} size={12} /><span class="t">{AGENT_LABEL[status].replace(/^Agent /, "").replace(/^./, (c) => c.toUpperCase())}{agent?.detail && status !== "waitingForPermission" ? ` — ${agent.detail}` : ""}</span>
@@ -321,10 +347,11 @@
     <div class="waiting" role="status" data-waiting>
       <StatusDot status="waitingForPermission" />
       <span class="what">
-        <strong>The agent is waiting for your permission</strong>{#if agent?.detail}<span class="muted">{" · "}</span><code>{agent.detail}</code>{/if}
+        <strong>Waiting for your permission</strong>{#if agent?.detail}<code>{agent.detail}</code>{/if}
       </span>
       {#if tab !== "terminal"}
-        <Button variant="agent" size="sm" icon="terminal" onclick={() => ui && (ui.tab = "terminal")} data-answer>Answer in Terminal</Button>
+        <!-- Only switches tab, so not a filled agent button. -->
+        <Button variant="agent-soft" size="sm" icon="terminal" onclick={() => ui && (ui.tab = "terminal")} data-answer>Answer in Terminal</Button>
       {/if}
     </div>
   {/if}
@@ -342,7 +369,7 @@
         <strong>{row.open ? "Not cleaned up" : "Finished, but not cleaned up"}, so no work is lost:</strong>
         <ul>{#each shownBlockers as b}<li>{b}</li>{/each}</ul>
         <span class="muted">Commit and push these, or discard them, then press Done again.</span>
-        {#snippet action()}<IconButton icon="x" label="Dismiss" size={24} onclick={() => (blockersDismissed = true)} />{/snippet}
+        {#snippet action()}<IconButton icon="x" label="Dismiss" size={22} onclick={() => (blockersDismissed = true)} />{/snippet}
       </Banner>
     </div>
   {/if}
@@ -357,7 +384,7 @@
   {#if notice}
     <div class="banner">
       <Banner tone="info" data-notice>
-        {notice}
+        <span class="note">{#each notice.split("`") as part, i}{#if i % 2}<code>{part}</code>{:else}{part}{/if}{/each}</span>
         {#snippet action()}<IconButton icon="x" label="Dismiss" size={22} onclick={() => (notice = null)} />{/snippet}
       </Banner>
     </div>
@@ -376,7 +403,7 @@
       {/each}
       <span class="spacer"></span>
       {#if row.agentItem != null && row.kind === "pr"}
-        <Button variant="quiet" icon="send-to-agent" onclick={sendPrFeedback}
+        <Button variant="quiet" mark="agent" onclick={sendPrFeedback}
           title="Send the PR's current review threads, review summaries and failing checks to the agent">Send PR feedback to agent</Button>
       {/if}
     </div>
@@ -390,13 +417,13 @@
           <TaskOverview task={row} {links} {onselect} />
         {:else if tab === "overview" || tab === "comments"}
           {#if conv}
-            {#if tab === "overview"}<Overview {conv} />{:else}<Comments {id} {conv} {viewer} onchanged={changed} onshow={hasReview ? showInReview : undefined} />{/if}
+            {#if tab === "overview"}<Overview {conv} />{:else}<Comments {id} {conv} onchanged={changed} onshow={hasReview ? showInReview : undefined} />{/if}
           {:else}
             <p class="hint">{convError ? `Could not load the ${row.kind === "pr" ? "pull request" : "issue"} from GitHub: ${convError}` : "Loading…"}</p>
           {/if}
         {:else if tab === "review"}
           {#if row.worktree || fetched}
-            <ReviewView {id} bind:view={ui.review} onchanged={changed} canSendToAgent={row.agentItem != null}
+            <ReviewView {id} bind:view={ui.review} onchanged={changed} canSendToAgent={row.agentItem != null} agentItem={row.agentItem ?? undefined}
               agentStatus={row.agentItem == null ? undefined : (agents[String(row.agentItem)]?.status ?? (row.agentItem === row.id ? row.agent ?? undefined : undefined))}
               onterminal={showAgent} />
           {:else}
@@ -425,12 +452,16 @@
     display: flex; align-items: center; gap: var(--sp-6); min-width: 0; padding-left: 26px;
     font-size: var(--fs-12); line-height: var(--lh-12); color: var(--text-muted); white-space: nowrap; overflow: hidden;
   }
-  .meta > span { display: inline-flex; align-items: center; gap: var(--sp-2); flex: none; }
-  /* The worktree path gives way first, so the agent's status (the last chip) stays visible. */
-  .meta > span.path { flex: 0 100 auto; min-width: 6em; overflow: hidden; }
-  .meta > span.agent { flex: none; max-width: 45%; color: var(--agent-strong); }
-  .meta .t, .meta > span.path code { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .meta code { font-size: 11.5px; }
+  .meta > span, .meta > .path { display: inline-flex; align-items: center; gap: var(--sp-2); flex: none; }
+  /* The branch and worktree give way first; the agent's status sits at the right end. */
+  .meta > .branch, .meta > .path { flex: 0 100 auto; min-width: 4em; overflow: hidden; }
+  .meta > .path {
+    padding: 0; border: 0; border-radius: var(--r-sm); background: none; color: inherit; font: inherit; cursor: copy;
+  }
+  .meta > .path:hover { color: var(--text); }
+  .meta > span.agent { flex: none; max-width: 45%; margin-left: auto; color: var(--agent-strong); }
+  .meta .t, .meta code { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .meta code { font-size: var(--fs-code-inline); }
   .ok { color: var(--ok); }
   .bad { color: var(--bad); }
   .warn { color: var(--warn); }
@@ -447,9 +478,20 @@
     padding: var(--sp-3) var(--sp-3) var(--sp-3) var(--sp-5); min-height: 24px;
     border-radius: var(--r-lg); background: var(--agent-bg); box-shadow: inset 0 0 0 1px var(--agent-line);
   }
-  .waiting .what { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-12); }
-  .waiting strong { font-weight: var(--fw-semibold); color: var(--agent-strong); }
-  .waiting code { font-size: 11.5px; }
+  .waiting .what {
+    flex: 1; min-width: 0; display: flex; align-items: baseline; gap: var(--sp-4);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-12); line-height: var(--lh-12);
+  }
+  .waiting strong { flex: none; font-weight: var(--fw-semibold); color: var(--agent-strong); }
+  .waiting code { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-code-inline); }
+  /* In a narrow window the command wraps to a second line instead of being cut. */
+  @media (max-width: 1199px) {
+    .waiting { align-items: flex-start; }
+    .waiting .what { flex-wrap: wrap; white-space: normal; }
+    .waiting code { white-space: normal; overflow-wrap: anywhere; }
+  }
+  /* The lifecycle note is one line. */
+  .note { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .banner { flex: none; margin: var(--sp-4) var(--sp-7) 0; }
 
   .tabs {
@@ -464,8 +506,8 @@
   [role="tab"].on { color: var(--text); font-weight: var(--fw-semibold); box-shadow: inset 0 -2px 0 var(--text); }
   [role="tab"]:focus-visible { outline-offset: -2px; }
   .badge {
-    min-width: 16px; height: 16px; padding: 0 var(--sp-2); box-sizing: border-box; border-radius: 8px;
-    background: var(--gh-bg); color: var(--gh-strong); font-size: var(--fs-11); line-height: 16px; font-weight: var(--fw-semibold); text-align: center;
+    min-width: 16px; height: 16px; padding: 0 var(--sp-2); box-sizing: border-box; border-radius: var(--r-pill);
+    box-shadow: inset 0 0 0 1px var(--gh-line); color: var(--gh-strong); font-size: var(--fs-11); line-height: 16px; font-weight: var(--fw-semibold); text-align: center;
   }
   .tabs > :global(.btn) { align-self: center; }
   .spacer { flex: 1; }

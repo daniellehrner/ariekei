@@ -12,7 +12,7 @@
 </svg>
 
 <style>
-  .spinner { flex: none; display: block; animation: spin 0.9s linear infinite; }
+  .spinner { flex: none; display: block; animation: spin var(--dur-spin) linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
 </style>
