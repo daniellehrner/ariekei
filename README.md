@@ -5,6 +5,8 @@ task that has neither yet: each work item gets its own worktree and its own Clau
 Inbox orders them by what needs you. The agent writes the code; you review it here. For deep
 code navigation or debugging, use your IDE on the same worktree. Tauri 2 (Rust) + Svelte 5.
 
+How to use it: [docs/manual.md](docs/manual.md) (user manual).
+
 ## What it does
 
 - **Inbox:** sections **Starred**, **Tasks**, **Assigned** (PRs and issues), **Approved** (your
@@ -38,20 +40,10 @@ code navigation or debugging, use your IDE on the same worktree. Tauri 2 (Rust) 
 Language-agnostic: the review diff comes from git, any file type is syntax-highlighted, and the
 agent works in any language. Code navigation and debugging are left to your IDE.
 
-How to use it: [docs/manual.md](docs/manual.md) (user manual).
 
 Details: [docs/pull-requests.md](docs/pull-requests.md) (Inbox, PRs, the agent, review) and
 [docs/lifecycle.md](docs/lifecycle.md) (issues, tasks, cleanup). The UI's design rules: [docs/design.md](docs/design.md). How the agent integration came
 about: [docs/spike-results.md](docs/spike-results.md).
-
-## Roadmap
-
-- **Checks for what you're reviewing:** run the repo's build/test command in the worktree
-  (presets detected for Gradle, Maven, npm, Cargo, Go, Make; editable), with per-test results
-  from JUnit XML reports next to the diff, and failures sendable to the agent.
-- **Open in editor:** jump from the review to the same file and line in your IDE (configurable
-  command, e.g. `idea --line {line} {file}` or `code -g {file}:{line}`).
-- **Accept/reject single hunks** in the review, reverting rejected ones and telling the agent.
 
 ## Requirements
 
