@@ -1,3 +1,6 @@
+# Copyright contributors to Ariekei.
+# SPDX-License-Identifier: Apache-2.0
+
 """E2E: reviewing PRs (your own and other people's) against a fake GitHub.
 
 GitHub is replaced by e2e/fake_gh.py (ARIEKEI_GH), which serves the fixture's PRs and

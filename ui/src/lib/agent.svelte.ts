@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 // Agent status per work item, as reported by Claude Code hooks (see hooks.rs).
 // The conversation itself lives in the embedded terminal.
 

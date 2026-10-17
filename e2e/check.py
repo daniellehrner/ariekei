@@ -1,3 +1,6 @@
+# Copyright contributors to Ariekei.
+# SPDX-License-Identifier: Apache-2.0
+
 """Assertions for the e2e scenarios: a failed check stops the scenario with what was seen."""
 
 

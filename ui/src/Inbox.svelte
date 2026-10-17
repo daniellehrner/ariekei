@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <script lang="ts">
   import RepoMenu from "./RepoMenu.svelte";
   import AttentionPip, { URGENCY } from "./controls/AttentionPip.svelte";

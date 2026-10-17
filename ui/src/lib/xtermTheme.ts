@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 // The xterm.js theme. xterm needs concrete colours, so they are read from tokens.css at runtime
 // (and again when the system switches between light and dark).
 

@@ -1,3 +1,6 @@
+# Copyright contributors to Ariekei.
+# SPDX-License-Identifier: Apache-2.0
+
 """Drives the Ariekei app for the e2e scenarios (stdlib only).
 
 By default the app is a test build (`cargo build --features e2e`, see src-tauri/src/e2e.rs):

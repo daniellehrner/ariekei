@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 //! The PR context given to the agent via `--append-system-prompt-file`. Claude Code
 //! records the system prompt on a conversation's first request and reuses it on resume,
 //! so this describes the PR as it was when the conversation started.

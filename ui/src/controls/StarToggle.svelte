@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <!--
   Stars or unstars an item: starred items head the Inbox. The star is the user's own mark, so
   a set star is filled in the user's hue; an unset one is a grey outline.

@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <!--
   The prompt box for asking the agent about code in the review (see CodeMenu): the lines it is
   about, a prompt, Send. Enter sends, Shift+Enter starts a new line; Esc, or a click elsewhere

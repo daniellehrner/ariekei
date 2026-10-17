@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <!-- A segmented switch (radio group), e.g. the file order. -->
 <script lang="ts" generics="T extends string">
   let {

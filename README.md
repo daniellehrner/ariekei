@@ -120,3 +120,15 @@ design. Test-only environment variables:
 | `ARIEKEI_CLAUDE` | Use this `claude` binary |
 | `ARIEKEI_PYTHON` | Interpreter for a `.py` given as `ARIEKEI_GH` or `ARIEKEI_CLAUDE` (default `python3`) |
 | `ARIEKEI_E2E_PORT` | Serve the e2e bridge on this port (test builds only) |
+
+## License
+
+Apache License 2.0, see [LICENSE](LICENSE). Every source file starts with an SPDX header:
+
+```
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+```
+
+(in the file's own comment syntax; CI fails when a `.rs`, `.ts`, `.js`, `.svelte`, `.py`,
+`.css` or `.html` file lacks it).

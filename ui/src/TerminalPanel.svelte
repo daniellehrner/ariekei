@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <script lang="ts">
   // The work item's `claude` TUI. The process lives in the backend; this view attaches to
   // it (replaying the scrollback) and detaches on unmount, so switching items is lossless.

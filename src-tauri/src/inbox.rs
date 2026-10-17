@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 //! The Inbox: one row per work item, ordered by what needs the user's attention.
 
 use crate::hooks::AgentStatus;

@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 // Keyboard shortcuts: the app's (anywhere in the window) and the review view's.
 
 export const APP_SHORTCUTS: [string[], string][] = [

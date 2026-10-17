@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <!-- Busy indicator for buttons that are working (aria-busy). -->
 <script lang="ts">
   let { size = 14 }: { size?: number } = $props();

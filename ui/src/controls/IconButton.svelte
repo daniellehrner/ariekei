@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <!-- An icon-only button; `label` is its accessible name and tooltip. -->
 <script lang="ts">
   import type { HTMLButtonAttributes } from "svelte/elements";

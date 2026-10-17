@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 // The CodeMirror 6 and @codemirror/merge theme. It reads the tokens.css variables, so one theme
 // serves light and dark.
 import { EditorView } from "@codemirror/view";

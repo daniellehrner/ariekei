@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 // HTML rendered by GitHub (descriptions, comments) shown inside the app.
 
 import DOMPurify from "dompurify";

@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 // Paths as shown: the home directory as ~.
 
 let home: string | null = null;

@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <script lang="ts" module>
   import type { DraftComment } from "./lib/reviewComments";
   import type { Order } from "./lib/review";

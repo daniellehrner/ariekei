@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 // The end of a review thread's diff hunk (the lines the comment is on), with line numbers.
 
 export interface HunkLine {

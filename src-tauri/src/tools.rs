@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 //! External programs given by path. Tests replace `gh` and `claude` with Python fakes
 //! (`ARIEKEI_GH`, `ARIEKEI_CLAUDE`); a `.py` path runs through Python, because Windows does
 //! not honour the script's `#!` line. `ARIEKEI_PYTHON` names the interpreter (default

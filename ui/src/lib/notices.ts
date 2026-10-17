@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 // In-app notices (see Notices.svelte): which to keep showing, and how a new one is added.
 
 export type NoticeKind = "needs-you" | "finished" | "error" | "ci-failing" | "activity" | "lifecycle";

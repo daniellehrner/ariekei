@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 // File lists of the review view: grouping, order, and moving between changes and files.
 
 import type { ReviewState } from "./api";

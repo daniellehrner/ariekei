@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <!--
   Attention pip for Inbox rows and the collapsed strip.
   Shape = who wants something (circle agent, square you, diamond GitHub); hue = the same,

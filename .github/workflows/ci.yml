@@ -23,6 +23,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: License headers
+        if: runner.os == 'Linux'
+        run: |
+          missing=$(git ls-files '*.rs' '*.ts' '*.js' '*.svelte' '*.py' '*.css' '*.html' \
+            | xargs grep -L 'SPDX-License-Identifier: Apache-2.0' || true)
+          if [ -n "$missing" ]; then
+            echo "Missing the SPDX license header (see README, License):"
+            echo "$missing"
+            exit 1
+          fi
+
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
         run: |

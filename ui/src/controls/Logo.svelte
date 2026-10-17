@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <!-- The mark: a circle (the agent) and a square (you) that overlap where the work is decided. -->
 <script lang="ts">
   let { size = 28 }: { size?: number } = $props();

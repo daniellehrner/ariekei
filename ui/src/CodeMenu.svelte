@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <!--
   The review's menu on code (right-click, or the ContextMenu key): ask the agent about the
   lines, comment on them, copy them. Placed at the pointer, inside the window.

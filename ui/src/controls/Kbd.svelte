@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <!-- A key hint, as in toolbar buttons and tooltips. -->
 <script lang="ts">
   let { key }: { key: string } = $props();

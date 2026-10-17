@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 //! Persistent app state in SQLite: connected repos and their work items.
 //!
 //! Migrations are ordered SQL scripts; `PRAGMA user_version` records how many ran.

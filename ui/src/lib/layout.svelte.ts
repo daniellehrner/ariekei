@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 import type { Tab } from "./attention";
 
 // Layout facts shared between views: the review's side panel is open (then the Inbox steps

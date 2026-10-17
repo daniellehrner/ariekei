@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <!--
   The browser over the window: the repo's open PRs and issues, searched with GitHub's syntax,
   to add to the Inbox (they are listed under Open) or take out again. It stays open after

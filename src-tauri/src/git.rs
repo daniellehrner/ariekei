@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 //! Git access via the `git` CLI (respects the user's config, credentials and worktrees).
 
 use serde::Serialize;

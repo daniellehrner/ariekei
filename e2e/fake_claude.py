@@ -1,4 +1,7 @@
 #!/usr/bin/env -S python3 -I
+# Copyright contributors to Ariekei.
+# SPDX-License-Identifier: Apache-2.0
+
 """A stand-in for `claude`, for E2E tests (point ARIEKEI_CLAUDE at this file).
 
 A minimal terminal agent that reports through the hooks of `--settings` like Claude Code does (UserPromptSubmit, PermissionRequest, PostToolUse, Stop, SessionEnd):

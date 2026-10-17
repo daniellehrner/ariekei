@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <script lang="ts">
   import Button from "./controls/Button.svelte";
   import Icon from "./controls/Icon.svelte";

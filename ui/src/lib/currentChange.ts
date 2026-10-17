@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 // Marks the change the cursor is in (where n / p moved to) with a bar on the line-number gutter.
 
 import { getChunks } from "@codemirror/merge";

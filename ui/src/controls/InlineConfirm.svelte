@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <!-- An inline confirmation in place of the button that asked (Done → clean up, Discard). -->
 <script lang="ts">
   import Button from "./Button.svelte";

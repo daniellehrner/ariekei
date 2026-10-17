@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 //! One embedded terminal per work item, running the user's `claude` TUI unmodified.
 //!
 //! Output is kept in a bounded scrollback buffer so the UI can detach (switch work

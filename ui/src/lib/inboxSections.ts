@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 // The Inbox's sections. Each item is listed once, in the first section that fits; a task's PRs
 // and issues are listed under the task, wherever the task is.
 

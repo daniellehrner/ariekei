@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 //! The order files are reviewed in. Not alphabetical: what a file is decides when it is
 //! read — source first (grouped by directory), then tests, then config and build files,
 //! and generated, lock and vendored files last (collapsed in the UI). Files shown late get

@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { clampTo } from "./popover.ts";

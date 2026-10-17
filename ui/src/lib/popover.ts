@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 // Where a popover opened at a point goes: at the point, flipped above it or moved left when
 // it would leave the window.
 

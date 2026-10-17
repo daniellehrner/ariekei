@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 //! What the backend tells the windows and the desktop: agent status, Inbox refreshes and
 //! poll errors, and notices. The app sends them through Tauri (`TauriEvents`); tests record
 //! them (`Recorded`), so the logic behind them runs without a Tauri app.

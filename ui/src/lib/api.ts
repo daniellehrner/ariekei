@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 // Typed wrappers around the backend commands (src-tauri/src/lib.rs).
 
 import { Channel, invoke } from "@tauri-apps/api/core";

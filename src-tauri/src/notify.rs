@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 //! Notifications for things that need the user: an agent waiting for permission or
 //! finishing a turn, CI starting to fail, and new reviews or comments. Nothing is shown
 //! for the item the user is looking at in a focused window. While an Ariekei window is

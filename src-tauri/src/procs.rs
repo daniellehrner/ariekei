@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 //! The processes an agent started, e.g. Claude Code's background shells: closing the agent
 //! would end them, and resuming the conversation does not start them again.
 

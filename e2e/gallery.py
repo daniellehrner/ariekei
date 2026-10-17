@@ -1,3 +1,6 @@
+# Copyright contributors to Ariekei.
+# SPDX-License-Identifier: Apache-2.0
+
 """Screenshots of every screen, for comparing the UI with the design (not a test).
 
 Builds a fixture with PRs in every attention state, drives the app through the screens and

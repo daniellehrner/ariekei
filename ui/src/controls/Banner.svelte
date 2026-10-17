@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <!-- Banners and notices: bad (work at risk, errors), warn, info, gh (GitHub results), agent. -->
 <script lang="ts">
   import type { Snippet } from "svelte";

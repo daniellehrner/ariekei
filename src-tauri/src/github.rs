@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 //! GitHub through the `gh` CLI: reuses the user's login (and any GitHub host it knows),
 //! so Ariekei never handles tokens itself.
 

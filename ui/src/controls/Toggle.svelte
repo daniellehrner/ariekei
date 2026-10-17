@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <!-- A pressed/unpressed toolbar toggle with its key hint (Whitespace w, Unified u). -->
 <script lang="ts">
   import type { Snippet } from "svelte";

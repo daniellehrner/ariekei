@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 // Draft review comments and where they can go: GitHub (as line comments when possible)
 // or the agent.
 

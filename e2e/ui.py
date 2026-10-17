@@ -1,3 +1,6 @@
+# Copyright contributors to Ariekei.
+# SPDX-License-Identifier: Apache-2.0
+
 """Steps through Ariekei's UI shared by the scenarios."""
 
 

@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <!--
   A task's Overview: what to look into, and the PRs and issues its agent opened (linked by
   Ariekei from `gh pr create` / `gh issue create`).

@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 //! Finds the user's installed `claude` CLI, which Ariekei runs unmodified in a terminal.
 //!
 //! Order: `ARIEKEI_CLAUDE`, then PATH, then the native installer's and Homebrew's

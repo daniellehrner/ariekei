@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 mod claude;
 mod context;
 #[cfg(feature = "e2e")]

@@ -1,3 +1,6 @@
+# Copyright contributors to Ariekei.
+# SPDX-License-Identifier: Apache-2.0
+
 """E2E: a task, work that starts with no PR or issue, against a fake GitHub.
 
 GitHub is e2e/fake_gh.py (ARIEKEI_GH) and the agent e2e/fake_claude.py (ARIEKEI_CLAUDE); the

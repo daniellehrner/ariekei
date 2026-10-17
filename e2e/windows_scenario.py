@@ -1,3 +1,6 @@
+# Copyright contributors to Ariekei.
+# SPDX-License-Identifier: Apache-2.0
+
 """E2E: two repos, switching between them, and a window per repo, against a fake GitHub.
 
 Covers: connecting a second repo from the repo menu, the poller keeping both Inboxes

@@ -1,3 +1,6 @@
+# Copyright contributors to Ariekei.
+# SPDX-License-Identifier: Apache-2.0
+
 """E2E: a work item's life, from an issue to cleanup, against a fake GitHub.
 
 GitHub is e2e/fake_gh.py (ARIEKEI_GH); the "GitHub" repo is a local git repo reached

@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Ariekei icon set — 16 px grid, 1.5 px stroke, round caps and joins, stroke="currentColor".
  * Each value is the SVG path data for <path d="…"> in a 0 0 16 16 viewBox.

@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <!--
   The keyboard shortcuts (?): the app's, which work anywhere outside text fields and the
   terminal, and the review's, which work while the Review tab is shown.

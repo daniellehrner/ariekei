@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 //! Work item operations behind the UI commands: connecting a repo, the Inbox rows,
 //! preparing a PR's worktree, starting its agent with context, and review markers.
 

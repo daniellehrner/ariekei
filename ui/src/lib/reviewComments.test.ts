@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { askMessage, classify, feedbackMessage, MAX_ASK_LINES, reviewBody, type CodeRef, type DraftComment } from "./reviewComments.ts";

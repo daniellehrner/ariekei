@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <!--
   Pills and tags. GitHub facts are outlined (neutral, ok, warn, bad, gh); local state is a
   tinted fill (you, warn-fill, agent).

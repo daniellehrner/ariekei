@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <!--
   Buttons. Filled agent / GitHub variants only where an action leaves Ariekei for that party.
 -->

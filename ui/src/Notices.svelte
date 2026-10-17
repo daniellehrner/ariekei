@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <!--
   In-app notices (the backend's `notice` event, see notify.rs): shown instead of an OS
   notification while this window is focused. Clicking one opens its item; "waiting for your

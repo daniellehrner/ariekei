@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 //! Keeps the Inbox current: polls GitHub for the open PRs of every repo shown in a window
 //! every minute (or right away when asked) and stores the result.
 //!

@@ -1,3 +1,6 @@
+# Copyright contributors to Ariekei.
+# SPDX-License-Identifier: Apache-2.0
+
 """E2E for the agent in the terminal and the review loop, on a local fixture (no real GitHub
 repo is touched).
 

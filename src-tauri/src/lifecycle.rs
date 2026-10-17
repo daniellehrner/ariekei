@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 //! The start and end of a work item's life:
 //! - an issue whose pushed branch has a PR (opened by the user or the agent; Ariekei opens
 //!   none) becomes that PR;

@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 // Syntax highlighting for any file type: CodeMirror's language list, picked by file name
 // and loaded only when a file of that type is shown.
 

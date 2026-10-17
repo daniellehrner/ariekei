@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 //! Remote control for the end-to-end tests (cargo feature `e2e`, never in release builds).
 //!
 //! With `ARIEKEI_E2E_PORT` set, the app serves a small HTTP API on 127.0.0.1 that runs

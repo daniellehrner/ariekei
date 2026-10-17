@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 // The Inbox's attention reasons (inbox.rs, most urgent first) as pip kinds and labels.
 
 import type { Attention } from "../controls/AttentionPip.svelte";

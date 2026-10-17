@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 //! Test kit for the logic behind the commands: an `AppState` without a Tauri app (events
 //! are recorded), a "GitHub" repo with a clone of it, GitHub itself played by
 //! `e2e/fake_gh.py`, and agents by `e2e/fake_claude.py` (as in the e2e scenarios).

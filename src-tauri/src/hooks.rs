@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 //! Agent status from Claude Code hooks.
 //!
 //! Every `claude` that Ariekei starts gets `--settings <claude-hooks.json>`, which adds

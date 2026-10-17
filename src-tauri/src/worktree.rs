@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 //! A work item's isolated working copy: an existing worktree that already has its branch,
 //! or a new one next to the main clone (`<clone>_pr<N>`, `<clone>_issue<N>`, `<clone>_task<n>`).
 

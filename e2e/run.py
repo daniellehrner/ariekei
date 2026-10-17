@@ -1,3 +1,6 @@
+# Copyright contributors to Ariekei.
+# SPDX-License-Identifier: Apache-2.0
+
 """Runs the e2e scenarios against a test build of the app, each in a fresh work directory.
 
   cd src-tauri && cargo build --release --features e2e   (after `npm run build`)

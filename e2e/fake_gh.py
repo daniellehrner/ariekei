@@ -1,4 +1,7 @@
 #!/usr/bin/env -S python3 -I
+# Copyright contributors to Ariekei.
+# SPDX-License-Identifier: Apache-2.0
+
 """A stand-in for the `gh` CLI, for E2E tests (point ARIEKEI_GH at this file).
 
 Serves the PRs described in $FAKE_GH_DIR/data.json and appends every write (REST POSTs and

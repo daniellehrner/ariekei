@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 // Diff for the review view: chunk boundaries come from git's hunks, so the view shows
 // exactly what git considers changed; within each hunk CodeMirror's own diff adds
 // character-level detail.

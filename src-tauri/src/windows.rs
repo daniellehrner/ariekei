@@ -1,3 +1,6 @@
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
 //! Windows and the repos they show. Each window shows one repo, or the Connect screen
 //! while it has none. A repo is open in at most one window (picking it elsewhere focuses
 //! that window), so two views never drive the same agent terminal. The windows open at

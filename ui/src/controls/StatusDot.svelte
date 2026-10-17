@@ -1,3 +1,6 @@
+<!-- Copyright contributors to Ariekei.
+     SPDX-License-Identifier: Apache-2.0 -->
+
 <!--
   Agent status dot. Always a circle (= the agent), copper, red only for error.
   none: dotted grey ring · starting: dashed ring · ready: ring · working: ring + centre dot (ring spins)
