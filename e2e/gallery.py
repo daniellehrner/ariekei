@@ -21,7 +21,7 @@ D-Bus; to choose the theme, point D-Bus nowhere and set it in a GTK settings fil
 Screens: connect, empty (nothing selected yet), overview, menu, comments, collapsed, waiting, terminal, review,
 selection, drafts, submit, code-menu, ask-agent, shortcuts, review-hidden, notice-arriving,
 notices, inbox (every section, one item starred), browse, new-task (on a fork's branch),
-change-end (n past the last change).
+change-end (n past the last change), task (a task with the PR its agent opened).
 """
 
 import json
@@ -139,6 +139,8 @@ def click(s, css):
 
 def hover(s, css):
     """Moves the pointer over `css`, so :hover styles show."""
+    # Below the fold in a small window, the pointer can't reach it.
+    s.js("document.querySelector(arguments[0]).scrollIntoView({ block: 'nearest' })", css)
     el = s.find(css)[0]
     s.s("POST", "/actions", {"actions": [{"type": "pointer", "id": "mouse", "parameters": {"pointerType": "mouse"},
                                           "actions": [{"type": "pointerMove", "duration": 0, "origin": {ELEMENT: el}, "x": 0, "y": 0}]}]})
@@ -243,12 +245,15 @@ try:
             s.wait("[data-submit]", timeout=30)
             shot(s, "submit")
         if need("code-menu", "ask-agent"):
+            # Without the submit panel, which leaves little room for the diff in a small window.
+            s.js("[...document.querySelectorAll('[data-submit] button')].find((b) => b.textContent.trim() === 'Cancel')?.click()")
             click(s, "[data-file$='SnapSyncState.java']")
             s.wait_js("return document.querySelectorAll('.cm-mergeViewEditor .cm-content')[1]?.textContent.includes('field29')", timeout=30)
             # Right-click in a selection of three lines.
             s.js("""const el = document.querySelectorAll('.cm-mergeViewEditor .cm-content')[1];
               const view = el && (el.cmView?.rootView?.view ?? el.cmTile?.root?.view ?? el.cmView?.view);
-              const doc = view.state.doc; view.dispatch({ selection: { anchor: doc.line(34).from, head: doc.line(36).to } });
+              const doc = view.state.doc; view.dispatch({ selection: { anchor: doc.line(34).from, head: doc.line(36).to }, scrollIntoView: true });
+              await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
               const c = view.coordsAtPos(doc.line(35).from + 4), x = c.left, y = (c.top + c.bottom) / 2;
               document.elementFromPoint(x, y).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y }));""")
             s.wait("[data-code-menu]", timeout=10)
@@ -265,6 +270,28 @@ try:
             s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }))")
             click(s, "[data-toggle='side']")
             shot(s, "review-hidden")
+    if need("task"):
+        # A task whose agent opened a PR: the Tasks section with the PR under it, and the task's
+        # Overview listing it.
+        s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, bubbles: true }))")
+        # The form keeps what the new-task screen typed.
+        s.wait("[data-task-form]")
+        s.js("""document.querySelectorAll('[data-task-form] input, [data-task-form] textarea').forEach((f) => {
+          f.value = ''; f.dispatchEvent(new Event('input', { bubbles: true })); });""")
+        s.type(s.wait("[data-task-form] input"), "Peers drop after restart")
+        s.type(s.wait("[data-task-form] textarea"), "Look at how the peer table is reset when the node restarts.")
+        s.click(s.wait("[data-task-form] button[type=submit]"))
+        s.wait(".terminal .xterm", timeout=120)
+        s.wait(".inbox .row[data-number='-1'] [data-agent='ready'], .inbox .row[data-number='-1'] [data-agent='finished']", timeout=60)
+        wt = os.path.join(work, "proj_task1")
+        write(os.path.join(wt, "src/main/java/org/example/p2p/PeerTable.java"), "package org.example.p2p;\n\nclass PeerTable {}\n")
+        commit(wt, "Reset the peer table once")
+        s.js("const t = Object.values(window.__ariekeiTerminals).at(-1); t.focus(); "
+             "t.input(\"Open a pull request titled 'Reset the peer table once'\\r\")")
+        s.wait(".inbox .row[data-number='8021']", timeout=60)
+        tab(s, "Overview")
+        s.wait("[data-links]", timeout=30)
+        shot(s, "task")
     if need("notice-arriving", "notices"):
         # One notice of each kind, as the backend sends them (notify.rs).
         s.js("""const rows = (await window.__TAURI_INTERNALS__.invoke('inbox')).filter((r) => r.kind !== 'task');
