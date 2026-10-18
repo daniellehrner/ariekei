@@ -10,6 +10,10 @@ const domain = process.env.ARIEKEI_DOMAIN;
 
 export default defineConfig({
   site: domain ? `https://${domain}` : undefined,
+  // The site's own tsconfig for every file. Searched for, a file outside src/ (e.g. Vite's
+  // entries) would get the app's ../tsconfig.json, whose base (@tsconfig/svelte) is not
+  // installed with the site's packages (CI installs only those).
+  vite: { tsconfig: 'tsconfig.json' },
   integrations: [
     starlight({
       title: 'Ariekei',
