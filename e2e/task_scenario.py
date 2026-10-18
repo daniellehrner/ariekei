@@ -383,9 +383,13 @@ try:
     s.type(s.wait("[data-task-branch]"), "friend:feature-y")
     s.click(s.wait("[data-task-form] button[type=submit]"))
     s.wait(".item header .title", timeout=120, text="feature-y")
-    where = s.js("return document.querySelector('.item [data-worktree]')?.title ?? ''")
+    # The chip comes with the row that has the worktree; git spells the path its own way
+    # (C:/Users/RUNNER~1/… on Windows), so the folders are compared.
+    s.wait(".item [data-worktree]", timeout=60)
+    where = s.js("return document.querySelector('.item [data-worktree]').title").split(" — ")[0]
     print("[own checkout] worktree:", where)
-    check("the task works in the user's checkout", where.startswith(clone + " ") and not os.path.exists(os.path.join(work, "proj_task2")), where)
+    check("the task works in the user's checkout",
+          os.path.samefile(where, clone) and not os.path.exists(os.path.join(work, "proj_task2")), where)
     eventually("its agent is ready", lambda: agent(s, -2), lambda a: a in ("ready", "finished"), timeout=60)
     # Switched to another branch (as in an IDE): the agent is paused until it is back.
     git(clone, "checkout", "-q", "main")
