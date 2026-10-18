@@ -197,8 +197,10 @@ tracking the PR head, so a plain `git push` in the worktree updates the PR. For 
 the fork's remote is added the way `gh pr checkout` does it.
 
 If a worktree with the PR's branch (or `pr-<N>`, or a branch tracking the PR head) already
-exists, Ariekei reuses it. A reused branch is fast-forwarded to the PR head; if it has commits
-of its own it is left as it is and Ariekei tells you.
+exists, Ariekei reuses it, even your clone's own checkout (unless it is on the PR's base
+branch): git checks a branch out in one place only, so the agent works where the branch is.
+A reused branch is fast-forwarded to the PR head; if it has commits of its own it is left as it
+is and Ariekei tells you. See [Your own checkout](#your-own-checkout) for what changes then.
 
 You do not need a worktree to review someone else's PR: opening any PR fetches its head
 read-only, and the Review tab works on that.
@@ -406,6 +408,21 @@ a local branch of that name tracks something else, it is left alone and the work
 `task-<n>-…` branch instead. If the branch cannot be fetched, no task is created. The review
 compares the branch with the default branch.
 
+If the branch is already checked out, in another worktree or in your clone itself, the task
+works there instead of in a new worktree.
+
+### Your own checkout
+
+When a task or PR works in a checkout that was there before (your clone, or a worktree you
+made), it is still yours:
+
+- **Done** and **Discard** only detach it: the checkout, its branch and your uncommitted
+  changes stay, and they do not block cleanup.
+- If you switch it to another branch, the item says so ("proj is on main now, not on
+  feature-y"), its terminal is greyed out and takes no input, and nothing can be sent to the
+  agent: its work would land on the other branch. Switch back and it carries on. Ariekei
+  notices when its window gets the focus again, or on the next poll.
+
 ### PRs and issues from a task
 
 Ask the agent to open them when the work is ready. When it runs `gh pr create` or
@@ -566,7 +583,9 @@ activity, a grey bar for lifecycle news.
 - **Done is refused**: read the listed reasons; commit and push or discard the work, then press
   Done again.
 - **Send to agent is greyed out** (in the Ask agent box or under the drafts): the agent is
-  waiting for your permission. Answer it in the Terminal first (**Answer in Terminal**).
+  waiting for your permission. Answer it in the Terminal first (**Answer in Terminal**). Or
+  its checkout is on another branch (see [Your own checkout](#your-own-checkout)): switch it
+  back.
 
 Not supported yet:
 

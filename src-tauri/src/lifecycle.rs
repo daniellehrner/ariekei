@@ -20,7 +20,8 @@ use crate::worktree;
 use serde::Serialize;
 use std::path::Path;
 
-/// Why the item cannot be cleaned up without losing something; empty if it can.
+/// Why the item cannot be cleaned up without losing something; empty if it can. A worktree
+/// Ariekei adopted (e.g. the user's own checkout) is kept, so what is in it is not lost.
 pub fn blockers(repo: &Repo, item: &WorkItem, agent: Option<AgentStatus>) -> Vec<String> {
     let mut found = vec![];
     if matches!(
@@ -29,7 +30,11 @@ pub fn blockers(repo: &Repo, item: &WorkItem, agent: Option<AgentStatus>) -> Vec
     ) {
         found.push("The agent is in the middle of a turn".to_owned());
     }
-    let Some(dir) = item.worktree_path.as_deref().filter(|p| p.exists()) else {
+    let Some(dir) = item
+        .worktree_path
+        .as_deref()
+        .filter(|p| item.worktree_created && p.exists())
+    else {
         return found;
     };
     match git::git_str(dir, &["status", "--porcelain"]) {

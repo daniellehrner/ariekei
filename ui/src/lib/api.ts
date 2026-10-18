@@ -56,6 +56,11 @@ export interface Row {
   worktree: string | null;
   /** The item's local branch, once it has a worktree. */
   branch: string | null;
+  /** The branch its worktree is on instead ("": a detached HEAD), when someone switched it;
+   *  the agent gets nothing until it is back. */
+  movedTo: string | null;
+  /** Its worktree was there before (e.g. the user's own checkout): cleanup keeps it. */
+  adopted: boolean;
   attention: string | null;
   /** For a PR or issue a task's agent opened: the task. */
   taskId: number | null;

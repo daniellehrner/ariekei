@@ -159,6 +159,12 @@ pub fn head(cwd: &Path) -> Result<String, String> {
     git_str(cwd, &["rev-parse", "HEAD"])
 }
 
+/// The branch checked out at `cwd`, or `None` with a detached HEAD.
+pub fn current_branch(cwd: &Path) -> Result<Option<String>, String> {
+    let name = git_str(cwd, &["rev-parse", "--symbolic-full-name", "HEAD"])?;
+    Ok(name.strip_prefix("refs/heads/").map(str::to_owned))
+}
+
 pub fn merge_base(cwd: &Path, a: &str, b: &str) -> Result<String, String> {
     git_str(cwd, &["merge-base", a, b])
 }

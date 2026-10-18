@@ -110,18 +110,20 @@ fn fetch(repo: &Path, remote: &str, branch: &str) -> Result<String, String> {
     Ok(tracking)
 }
 
-/// An existing linked worktree for the branch `tracking`: its branch tracks it, is `own`
-/// (the item's own name, e.g. `pr-<N>`), or is `plain` (the remote's branch name) with no
-/// upstream. The main checkout is never adopted.
+/// An existing worktree for the branch `tracking`: its branch tracks it, is `own` (the
+/// item's own name, e.g. `pr-<N>`), or is `plain` (the remote's branch name) with no
+/// upstream. The main checkout counts too (git checks a branch out in one place only), unless
+/// it is on `base`, the branch everything starts from.
 fn find_existing(
     repo: &Path,
     own: &str,
     plain: &str,
     tracking: &str,
+    base: &str,
 ) -> Result<Option<git::Worktree>, String> {
     Ok(git::worktrees(repo)?
         .into_iter()
-        .filter(|w| !w.main && w.path.exists())
+        .filter(|w| w.path.exists() && !(w.main && w.branch.as_deref() == Some(base)))
         .find(|w| {
             w.branch.as_deref().is_some_and(|b| {
                 b == own
@@ -305,7 +307,7 @@ pub fn prepare_task_on(
         tracing::warn!("could not fetch {default_branch}: {e}");
     }
     let own = task_branch(n, title);
-    if let Some(w) = find_existing(&repo.path, &own, branch, &tracking)? {
+    if let Some(w) = find_existing(&repo.path, &own, branch, &tracking, default_branch)? {
         return Ok(Prepared {
             path: w.path,
             branch: w.branch.unwrap_or_default(),
@@ -459,6 +461,7 @@ pub fn prepare(repo: &Repo, pr: &PrSummary) -> Result<Prepared, String> {
         &format!("pr-{}", pr.number),
         &pr.head_ref,
         &tracking,
+        &pr.base_ref,
     )? {
         return Ok(Prepared {
             path: w.path,
@@ -880,5 +883,30 @@ mod tests {
             (canon(&p.path), p.branch.as_str(), p.adopted),
             (canon(&mine), "pr-42", true)
         );
+    }
+
+    #[test]
+    fn adopts_the_main_checkout_on_the_branch_but_not_on_the_base() {
+        let (_root, repo, pr) = setup();
+        git(
+            &repo.path,
+            &["checkout", "-q", "-b", "feature/x", "origin/feature/x"],
+        )
+        .unwrap();
+        let p = prepare(&repo, &pr).unwrap();
+        assert_eq!(
+            (canon(&p.path), p.branch.as_str(), p.adopted),
+            (canon(&repo.path), "feature/x", true)
+        );
+
+        // A PR from the base branch (e.g. a fork's `main`) never gets the clone's own `main`.
+        git(&repo.path, &["checkout", "-q", "main"]).unwrap();
+        let from_main = PrSummary {
+            number: 43,
+            head_ref: "main".into(),
+            ..pr
+        };
+        let err = prepare(&repo, &from_main).unwrap_err();
+        assert!(err.contains("is checked out in"), "{err}");
     }
 }

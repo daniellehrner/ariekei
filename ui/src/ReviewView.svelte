@@ -61,6 +61,7 @@
     view = $bindable(),
     onchanged,
     canSendToAgent,
+    agentAway = null,
     agentItem,
     agentStatus,
     onterminal,
@@ -69,6 +70,8 @@
     view: ReviewViewState;
     onchanged: () => void;
     canSendToAgent: boolean;
+    /// Why the agent takes no work now (its worktree is on another branch), if it doesn't.
+    agentAway?: string | null;
     /// The item whose agent gets what is sent (this one, or its task).
     agentItem?: number;
     /// The status of the agent that gets what is sent (lib/agent.svelte.ts).
@@ -504,7 +507,7 @@
   function askAboutSelection() {
     const v = newSide();
     const sel = v?.state.selection.main;
-    if (!v || !sel || sel.empty || !canSendToAgent) return;
+    if (!v || !sel || sel.empty || !canSendToAgent || agentAway) return;
     const code = codeRef(v, "new", sel.from, sel.to);
     if (code) openAsking(askingAt(v, sel.from, sel.to, code));
   }
@@ -546,7 +549,7 @@
   }
 
   async function sendToAgent() {
-    if (!view.comments.length || agentWaits) return;
+    if (!view.comments.length || agentWaits || agentAway) return;
     try {
       await api.agentSend(id, feedbackMessage(view.comments));
       say(`Sent ${view.comments.length} comment${view.comments.length > 1 ? "s" : ""} to the agent.`);
@@ -789,7 +792,7 @@
         {@const m = codeMenu}
         <CodeMenu x={m.x} y={m.y} lines={m.ask.code.fromLine === m.ask.code.toLine ? `Line ${m.ask.code.fromLine}` : `Lines ${refLines(m.ask.code)}`}
           side={m.ask.code.side}
-          noAgent={canSendToAgent ? null : "No agent on this item yet"}
+          noAgent={canSendToAgent ? agentAway : "No agent on this item yet"}
           oncomment={m.ask.code.side === "new" ? commentOn : undefined}
           onask={() => openAsking(m.ask)} oncopy={() => copyCode(m.ask.code)} onclose={() => (codeMenu = null)} />
       {/if}
@@ -834,10 +837,12 @@
             </ul>
           </div>
           <div class="actions">
-            {#if canSendToAgent && agentWaits}
+            {#if canSendToAgent && agentAway}
+              <span class="waits" title={agentAway}>{agentAway}</span>
+            {:else if canSendToAgent && agentWaits}
               <span class="waits">The agent is waiting for your permission — answer it before sending.</span>
             {/if}
-            {#if canSendToAgent}<Button size="sm" variant="agent" mark="agent" onclick={sendToAgent} disabled={agentWaits} data-send-agent>Send to agent</Button>{/if}
+            {#if canSendToAgent}<Button size="sm" variant="agent" mark="agent" onclick={sendToAgent} disabled={agentWaits || !!agentAway} data-send-agent>Send to agent</Button>{/if}
             {#if review?.prHead}
               <span class="submit-anchor">
                 <Button size="sm" mark="gh" onclick={openSubmit} aria-expanded={submitting} data-open-submit>Submit to GitHub…</Button>

@@ -15,7 +15,9 @@ permission, a closed issue staying under its task, Discard (shows the work it lo
 removes the worktree, branch and task; the PR goes back to My PRs), and a second task (the +
 button) whose merged PR stays under it ("All closed") until Done removes it, and a task on a
 fork's branch (named after it, the fork's remote added, the branch tracking it, its context naming
-it) whose PR, opened on GitHub, is linked to it on a poll.
+it) whose PR, opened on GitHub, is linked to it on a poll, and a task on the branch the user's own
+checkout is on (it works there; switched to another branch, the agent is paused until it is
+back; Done keeps the checkout and the user's changes).
 
 Run it with `python3 e2e/run.py <test-app> task` (see run.py), which sets the environment.
 """
@@ -64,6 +66,9 @@ subprocess.run(["git", "clone", "-q", "-c", "core.autocrlf=false", upstream, for
 git(fork, "checkout", "-q", "-b", "feature-x")
 open(os.path.join(fork, "x.txt"), "w").write("friend's work\n")
 commit(fork, "Feature X")
+git(fork, "checkout", "-q", "-b", "feature-y", "main")
+open(os.path.join(fork, "y.txt"), "w").write("more of friend's work\n")
+commit(fork, "Feature Y")
 git(fork, "checkout", "-q", "--detach")
 git(clone, "config", f"url.{fork}.insteadOf", "git@github.com:friend/proj.git")
 
@@ -370,5 +375,37 @@ try:
     json.dump(data, open(data_file, "w"))
     eventually("the fork's PR is listed under the task", lambda: listed(s), lambda rows: [103, True] in rows, timeout=30)
     print("[fork] inbox:", sections(s), listed(s))
+
+    # --- a task on the branch of the user's own checkout: it works there ---
+    git(clone, "fetch", "-q", "friend", "feature-y")
+    git(clone, "checkout", "-q", "-b", "feature-y", "friend/feature-y")
+    s.click(s.wait("[data-new-task]"))
+    s.type(s.wait("[data-task-branch]"), "friend:feature-y")
+    s.click(s.wait("[data-task-form] button[type=submit]"))
+    s.wait(".item header .title", timeout=120, text="feature-y")
+    where = s.js("return document.querySelector('.item [data-worktree]')?.title ?? ''")
+    print("[own checkout] worktree:", where)
+    check("the task works in the user's checkout", where.startswith(clone + " ") and not os.path.exists(os.path.join(work, "proj_task2")), where)
+    eventually("its agent is ready", lambda: agent(s, -2), lambda a: a in ("ready", "finished"), timeout=60)
+    # Switched to another branch (as in an IDE): the agent is paused until it is back.
+    git(clone, "checkout", "-q", "main")
+    s.js("window.dispatchEvent(new Event('focus'))")
+    moved = s.text(s.wait(".item [data-moved]", timeout=30))
+    print("[own checkout] switched to main:", moved.strip(), "| terminal paused:", bool(s.find(".terminal.paused")))
+    contains("the item says where the checkout went", moved, "proj is on main now, not on feature-y")
+    check("the agent's terminal is paused", bool(s.find(".terminal.paused")))
+    git(clone, "checkout", "-q", "feature-y")
+    s.js("window.dispatchEvent(new Event('focus'))")
+    s.wait_js("return !document.querySelector('.item [data-moved]') && !document.querySelector('.terminal.paused')", timeout=30)
+    # Done keeps the checkout, its branch and the user's own changes.
+    open(os.path.join(clone, "mine.txt"), "w").write("wip\n")
+    s.click(s.wait(".item header .actions button", text="Done"))
+    confirm = s.text(s.wait("[data-confirm-done]"))
+    s.click(s.wait("[data-confirm-done] button", text="Clean up"))
+    eventually("Done removes the task", lambda: [n for n, _ in listed(s)], lambda rows: -2 not in rows, timeout=30)
+    kept = (git(clone, "rev-parse", "--abbrev-ref", "HEAD"), os.path.exists(os.path.join(clone, "mine.txt")))
+    print("[own checkout] done:", confirm.strip(), "| branch, changes kept:", kept)
+    contains("Done does not offer to remove the checkout", confirm, "Clean up the agent and this task?")
+    equal("the checkout keeps its branch and changes", kept, ("feature-y", True))
 finally:
     s.quit()

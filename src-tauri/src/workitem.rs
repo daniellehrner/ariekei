@@ -171,6 +171,8 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             ready_for_review: false,
             worktree: None,
             branch: item.branch.clone(),
+            moved_to: None,
+            adopted: false,
             attention: None,
             cleanup_blockers: None,
             issue_number: None,
@@ -203,6 +205,8 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             ready_for_review: false,
             worktree: None,
             branch: item.branch.clone(),
+            moved_to: None,
+            adopted: false,
             attention: None,
             cleanup_blockers: None,
             issue_number: None,
@@ -235,6 +239,8 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             ready_for_review: false,
             worktree: None,
             branch: item.branch.clone(),
+            moved_to: None,
+            adopted: false,
             attention: None,
             cleanup_blockers: None,
             issue_number: item.issue_number,
@@ -250,6 +256,8 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
         row.agent_item = Some(item.id);
     }
     row.ready_for_review = state.terminals.ready_for_review(&item.id.to_string());
+    row.moved_to = moved_to(&item);
+    row.adopted = worktree.is_some() && !item.worktree_created;
     row.removable = removable(&item);
     row.worktree = worktree.map(|p| p.to_string_lossy().into_owned());
     row.cleanup_blockers = item.cleanup_blockers;
@@ -325,6 +333,7 @@ pub fn prepare(state: &AppState, id: i64) -> Result<Prepared, String> {
 /// Resume the item's conversation if it has one; otherwise start a new one with the PR's
 /// current context appended to the system prompt.
 pub fn session_plan(state: &AppState, data_dir: &Path, id: i64) -> Result<SessionPlan, String> {
+    ensure_on_branch(state, id)?;
     let (item, repo) = item_repo(state, id)?;
     if let Some(session_id) = item.session_id.clone()
         && terminal::resumable(item.session_started, item.transcript_path.as_deref())
@@ -532,6 +541,35 @@ fn polled_pr(repo: &Repo, number: i64) -> Result<PolledPr, String> {
         open: pr.state == "OPEN",
         snapshot: serde_json::to_value(&pr).unwrap_or_default(),
     })
+}
+
+/// The branch the item's worktree is on instead of the item's (`""`: a detached HEAD), if
+/// it was switched. Mostly the user's own checkout, which Ariekei adopts but the user also
+/// works in.
+pub fn moved_to(item: &WorkItem) -> Option<String> {
+    let dir = item.worktree_path.as_deref().filter(|p| p.exists())?;
+    let branch = item.branch.as_deref().filter(|b| !b.is_empty())?;
+    let now = git::current_branch(dir).ok()?.unwrap_or_default();
+    (now != branch).then_some(now)
+}
+
+/// Refuses work for the agent of item `id` while its worktree is on another branch: it would
+/// land there.
+pub fn ensure_on_branch(state: &AppState, id: i64) -> Result<(), String> {
+    let item = state.store.item(id)?;
+    match moved_to(&item) {
+        None => Ok(()),
+        Some(now) => Err(format!(
+            "{} is on {} now, not on {}; switch it back to give the agent work",
+            item.worktree_path.unwrap_or_default().display(),
+            if now.is_empty() {
+                "a detached HEAD".to_owned()
+            } else {
+                now
+            },
+            item.branch.unwrap_or_default()
+        )),
+    }
 }
 
 /// Whose agent works on item `id`: its own, or (a PR or issue without a worktree that a
@@ -1282,6 +1320,59 @@ mod tests {
             !git(&app.clone, &["remote"]).lines().any(|r| r == "friend"),
             "no second remote"
         );
+    }
+
+    #[test]
+    fn a_task_on_the_branch_of_the_users_checkout_works_there_while_it_stays_on_it() {
+        let app = TestApp::new();
+        app.fork("friend", "feat/evm");
+        git(
+            &app.clone,
+            &["remote", "add", "mine", "git@github.com:friend/proj.git"],
+        );
+        git(&app.clone, &["fetch", "-q", "mine", "feat/evm"]);
+        git(
+            &app.clone,
+            &["checkout", "-q", "-b", "feat/evm", "mine/feat/evm"],
+        );
+        let id = create_task(
+            &app.state,
+            Some(app.repo.clone()),
+            "",
+            "",
+            "friend:feat/evm",
+        )
+        .unwrap();
+        let item = app.state.store.item(id).unwrap();
+        assert_eq!(
+            (
+                std::fs::canonicalize(item.worktree_path.as_ref().unwrap()).unwrap(),
+                item.worktree_created
+            ),
+            (std::fs::canonicalize(&app.clone).unwrap(), false)
+        );
+        assert_eq!(moved_to(&item), None);
+        assert!(ensure_on_branch(&app.state, id).is_ok());
+
+        // Switched away: the agent gets nothing until it is back.
+        git(&app.clone, &["checkout", "-q", "main"]);
+        assert_eq!(moved_to(&item).as_deref(), Some("main"));
+        let err = session_plan(&app.state, &app.state.data_dir, id).unwrap_err();
+        assert!(err.contains("is on main now, not on feat/evm"), "{err}");
+
+        // Done keeps the checkout, the branch and the user's own changes.
+        git(&app.clone, &["checkout", "-q", "feat/evm"]);
+        write(&app.clone.join("mine.txt"), "wip\n");
+        let crate::lifecycle::Cleanup::Cleaned { removed } = mark_done(&app.state, id).unwrap()
+        else {
+            panic!("blocked")
+        };
+        assert!(
+            removed.iter().any(|r| r.contains("your worktree is kept")),
+            "{removed:?}"
+        );
+        assert!(app.clone.join("mine.txt").exists());
+        assert_eq!(git(&app.clone, &["branch", "--show-current"]), "feat/evm");
     }
 
     #[test]

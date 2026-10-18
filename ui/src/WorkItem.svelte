@@ -88,6 +88,15 @@
   // A PR or issue the task's agent works on (it has no worktree of its own).
   const viaTask = $derived(row.agentItem != null && row.agentItem !== row.id);
   const tab = $derived(ui && ui.tab === "terminal" && !row.worktree ? "overview" : ui?.tab);
+  // The agent's worktree was switched to another branch (it is often the user's own
+  // checkout): the agent gets nothing until it is back, or its work would land there.
+  const agentRow = $derived(row.agentItem == null ? null : row.agentItem === row.id ? row : (rows.find((r) => r.id === row.agentItem) ?? null));
+  const moved = $derived.by(() => {
+    const r = agentRow;
+    if (r?.movedTo == null || !r.worktree || !r.branch) return null;
+    return { folder: folderName(r.worktree), now: r.movedTo, branch: r.branch };
+  });
+  const agentAway = $derived(moved && `${moved.folder} is on ${moved.now || "a detached HEAD"}, not on ${moved.branch}`);
 
   async function loadConversation(current: number) {
     if (isTask) return;
@@ -298,16 +307,20 @@
           {:else}
             <!-- Rarer and destructive: it does not compete with Done. -->
             <Button variant="quiet" icon="trash" onclick={askDiscard}
-              title="Delete the task with its worktree, branch and agent session, even if that loses work (you see what first)" data-discard>Discard</Button>
+              title={row.adopted
+                ? "Delete the task and its agent session; the worktree it used and its branch are kept"
+                : "Delete the task with its worktree, branch and agent session, even if that loses work (you see what first)"} data-discard>Discard</Button>
           {/if}
         {/if}
         {#if confirmDone}
           <!-- Neutral: Done only cleans up when nothing would be lost. -->
-          <InlineConfirm text="Clean up {row.worktree ? 'the worktree, agent and ' : ''}this {isTask ? 'task' : 'item'}?" confirm="Clean up"
+          <InlineConfirm text="Clean up {row.worktree ? (row.adopted ? 'the agent and ' : 'the worktree, agent and ') : ''}this {isTask ? 'task' : 'item'}?" confirm="Clean up"
             tone="neutral" onconfirm={done} oncancel={() => (confirmDone = false)} data-confirm-done />
         {:else if !losses}
           <Button icon="done" onclick={() => (confirmDone = true)}
-            title="Remove this item's worktree, agent session and refs, and hide it — only if nothing would be lost" data-done>Done</Button>
+            title={row.adopted
+              ? "Remove this item's agent session and refs, and hide it; the worktree it used is kept"
+              : "Remove this item's worktree, agent session and refs, and hide it — only if nothing would be lost"} data-done>Done</Button>
         {/if}
       </div>
     </div>
@@ -353,6 +366,14 @@
         <!-- Only switches tab, so not a filled agent button. -->
         <Button variant="agent-soft" size="sm" icon="terminal" onclick={() => ui && (ui.tab = "terminal")} data-answer>Answer in Terminal</Button>
       {/if}
+    </div>
+  {/if}
+  {#if moved}
+    <div class="banner">
+      <Banner tone="bad" icon="branch" data-moved>
+        <span><code>{moved.folder}</code> is on {#if moved.now}<code>{moved.now}</code>{:else}a detached HEAD{/if} now, not on
+          <code>{moved.branch}</code>. The agent gets nothing until you switch it back.</span>
+      </Banner>
     </div>
   {/if}
   {#if losses?.length}
@@ -403,15 +424,18 @@
       {/each}
       <span class="spacer"></span>
       {#if row.agentItem != null && row.kind === "pr"}
-        <Button variant="quiet" mark="agent" onclick={sendPrFeedback}
-          title="Send the PR's current review threads, review summaries and failing checks to the agent">Send PR feedback to agent</Button>
+        <Button variant="quiet" mark="agent" onclick={sendPrFeedback} disabled={!!agentAway}
+          title={agentAway ?? "Send the PR's current review threads, review summaries and failing checks to the agent"}>Send PR feedback to agent</Button>
       {/if}
     </div>
     <div class="pane">
       {#key id}
         {#if row.worktree}
           <!-- Stays mounted under the other tabs so the terminal keeps running in view. -->
-          <TerminalPanel {id} visible={tab === "terminal"} {status} path={row.worktree} />
+          <!-- Opened again once the worktree is back on its branch: only then does the agent start. -->
+          {#key moved == null}
+            <TerminalPanel {id} visible={tab === "terminal"} {status} path={row.worktree} paused={moved != null} />
+          {/key}
         {/if}
         {#if isTask && (tab === "overview" || tab === "comments")}
           <TaskOverview task={row} {links} {onselect} />
@@ -423,7 +447,7 @@
           {/if}
         {:else if tab === "review"}
           {#if row.worktree || fetched}
-            <ReviewView {id} bind:view={ui.review} onchanged={changed} canSendToAgent={row.agentItem != null} agentItem={row.agentItem ?? undefined}
+            <ReviewView {id} bind:view={ui.review} onchanged={changed} canSendToAgent={row.agentItem != null} {agentAway} agentItem={row.agentItem ?? undefined}
               agentStatus={row.agentItem == null ? undefined : (agents[String(row.agentItem)]?.status ?? (row.agentItem === row.id ? row.agent ?? undefined : undefined))}
               onterminal={showAgent} />
           {:else}

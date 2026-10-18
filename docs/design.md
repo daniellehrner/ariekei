@@ -78,6 +78,9 @@ told apart in grey-scale and with colour blindness:
   a click copies it) and ends with the agent's status at the right.
 - While the agent waits for permission, a strip under the header shows what it asks to run, with
   "Answer in Terminal". Below a 1200 px window the command wraps instead of being cut.
+- When the agent's worktree is on another branch than the item's (it may be the user's own
+  checkout), a red banner says so, the terminal is dimmed and inert, and every way to send the
+  agent work is disabled with that reason.
 - Lifecycle notes ("Created the worktree …") are one line and go after six seconds.
 - Done asks with a neutral (amber) confirm: it only cleans up what is safe. Discard is a quiet
   button and asks with a red confirm, listing what would be lost.

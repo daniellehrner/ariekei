@@ -181,7 +181,8 @@
   });
 </script>
 
-<svelte:window onkeydown={onKeydown} bind:innerWidth={width} />
+<!-- Coming back from another tool (e.g. a branch switched in an IDE) reads the rows again. -->
+<svelte:window onkeydown={onKeydown} onfocus={reload} bind:innerWidth={width} />
 
 {#if repo === null || connecting}
   <Connect onconnected={show} oncancel={repo ? () => (connecting = false) : undefined} />

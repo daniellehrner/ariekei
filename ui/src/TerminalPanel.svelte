@@ -22,7 +22,15 @@
     visible = true,
     status = null,
     path = "",
-  }: { id: number; visible?: boolean; status?: AgentStatus | null; path?: string } = $props();
+    paused = false,
+  }: {
+    id: number;
+    visible?: boolean;
+    status?: AgentStatus | null;
+    path?: string;
+    /** The worktree is on another branch: the agent is shown but takes no input. */
+    paused?: boolean;
+  } = $props();
 
   let host: HTMLElement;
   let error: string | null = $state(null);
@@ -122,7 +130,7 @@
   });
 </script>
 
-<div class="terminal" class:hidden={!visible} role="tabpanel" aria-label="Terminal">
+<div class="terminal" class:hidden={!visible} class:paused inert={paused} role="tabpanel" aria-label="Terminal">
   <div class="frame">
     <div class="bar">
       <StatusDot {status} size={12} />
@@ -138,6 +146,7 @@
 <style>
   .terminal { flex: 1; display: flex; flex-direction: column; height: 100%; min-height: 0; padding: var(--sp-4); box-sizing: border-box; }
   .terminal.hidden { display: none; }
+  .terminal.paused { opacity: 0.5; }
   .frame {
     flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
     border-radius: var(--r-lg); background: var(--term-bg); box-shadow: inset 0 0 0 1px var(--border);

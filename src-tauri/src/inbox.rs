@@ -35,6 +35,11 @@ pub struct Row {
     pub worktree: Option<String>,
     /// The item's local branch, once it has a worktree.
     pub branch: Option<String>,
+    /// The branch its worktree is on instead (`""`: a detached HEAD), when someone switched
+    /// it; the agent gets nothing until it is back (`workitem::moved_to`).
+    pub moved_to: Option<String>,
+    /// Its worktree was there before (e.g. the user's own checkout): cleanup keeps it.
+    pub adopted: bool,
     /// Why the row is where it is (for the UI), most urgent first.
     pub attention: Option<&'static str>,
     /// Why the finished item was not cleaned up, if it was not.
@@ -135,6 +140,8 @@ mod tests {
             ready_for_review: false,
             worktree: None,
             branch: None,
+            moved_to: None,
+            adopted: false,
             attention: None,
             cleanup_blockers: None,
             task_id: None,

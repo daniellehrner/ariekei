@@ -328,8 +328,9 @@ fn term_close(state: State<'_, AppState>, id: i64) {
 #[tauri::command]
 async fn agent_send(app: tauri::AppHandle, id: i64, text: String) -> Res<()> {
     blocking(app, move |s| {
-        s.terminals
-            .send_to_agent(&workitem::agent_of(s, id)?.to_string(), &text)
+        let agent = workitem::agent_of(s, id)?;
+        workitem::ensure_on_branch(s, agent)?;
+        s.terminals.send_to_agent(&agent.to_string(), &text)
     })
     .await
 }
@@ -338,9 +339,10 @@ async fn agent_send(app: tauri::AppHandle, id: i64, text: String) -> Res<()> {
 #[tauri::command]
 async fn send_pr_feedback(app: tauri::AppHandle, id: i64) -> Res<()> {
     blocking(app, move |s| {
+        let agent = workitem::agent_of(s, id)?;
+        workitem::ensure_on_branch(s, agent)?;
         let message = workitem::comments_message(s, id)?;
-        s.terminals
-            .send_to_agent(&workitem::agent_of(s, id)?.to_string(), &message)
+        s.terminals.send_to_agent(&agent.to_string(), &message)
     })
     .await
 }
