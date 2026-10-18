@@ -1,0 +1,67 @@
+---
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
+// An app screenshot in a window frame, light or dark with the visitor's OS theme. The PNGs in
+// src/assets/shots come from e2e/gallery.py (see site/README.md).
+import { getImage } from 'astro:assets';
+import type { ImageMetadata } from 'astro';
+
+interface Props {
+  name: string;
+  alt: string;
+  eager?: boolean;
+  sizes?: string;
+}
+const { name, alt, eager = false, sizes = '(min-width: 1160px) 1120px, 100vw' } = Astro.props;
+
+const files = import.meta.glob<{ default: ImageMetadata }>('../assets/shots/*/*.png', { eager: true });
+const file = (theme: string) => {
+  const f = files[`../assets/shots/${theme}/${name}.png`];
+  if (!f) throw new Error(`no ${theme} screenshot "${name}"`);
+  return f.default;
+};
+// Never wider than the screenshot itself.
+const variants = async (src: ImageMetadata, format: 'avif' | 'webp') => {
+  const widths = [...[720, 1080].filter((w) => w < src.width), src.width];
+  const images = await Promise.all(widths.map((width) => getImage({ src, width, format })));
+  return images.map((img, i) => `${img.src} ${widths[i]}w`).join(', ');
+};
+const light = file('light');
+const dark = file('dark');
+const fallback = await getImage({ src: light, format: 'webp' });
+---
+
+<figure class="shot">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" type="image/avif" srcset={await variants(dark, 'avif')} sizes={sizes} />
+    <source media="(prefers-color-scheme: dark)" type="image/webp" srcset={await variants(dark, 'webp')} sizes={sizes} />
+    <source type="image/avif" srcset={await variants(light, 'avif')} sizes={sizes} />
+    <source type="image/webp" srcset={await variants(light, 'webp')} sizes={sizes} />
+    <img
+      src={fallback.src}
+      alt={alt}
+      width={light.width}
+      height={light.height}
+      loading={eager ? 'eager' : 'lazy'}
+      fetchpriority={eager ? 'high' : 'auto'}
+      decoding="async"
+    />
+  </picture>
+</figure>
+
+<style>
+  .shot {
+    margin: 0;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-xl);
+    overflow: hidden;
+    box-shadow: var(--shadow-pop);
+    background: var(--surface-0);
+  }
+  img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+</style>

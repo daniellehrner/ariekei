@@ -26,7 +26,7 @@ jobs:
       - name: License headers
         if: runner.os == 'Linux'
         run: |
-          missing=$(git ls-files '*.rs' '*.ts' '*.js' '*.svelte' '*.py' '*.css' '*.html' \
+          missing=$(git ls-files '*.rs' '*.ts' '*.js' '*.mjs' '*.svelte' '*.astro' '*.py' '*.css' '*.html' \
             | xargs grep -L 'SPDX-License-Identifier: Apache-2.0' || true)
           if [ -n "$missing" ]; then
             echo "Missing the SPDX license header (see README, License):"
@@ -102,3 +102,23 @@ jobs:
           path: ${{ runner.temp }}/e2e
           include-hidden-files: true  # the fixtures' .git directories
           if-no-files-found: ignore
+
+  # The website in site/: the homepage and the docs (Astro + Starlight), with its link check.
+  site:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: site
+    env:
+      ASTRO_TELEMETRY_DISABLED: 1
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # the latest release, for the download links
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build

@@ -1,0 +1,49 @@
+---
+// Copyright contributors to Ariekei.
+// SPDX-License-Identifier: Apache-2.0
+
+// The primary download button. One button per platform is rendered; the page's script shows
+// the one for the visitor's OS. Without the script (or for an OS without a build) the generic
+// button, which scrolls to all downloads, stays.
+import { platformNames, type Platform, type Release } from '../lib/release';
+
+interface Props {
+  release: Release | null;
+}
+const { release } = Astro.props;
+const platforms: Platform[] = ['linux', 'macos', 'windows'];
+const first = (p: Platform) => release?.downloads.find((d) => d.platform === p);
+const version = release ? `v${release.version}` : '';
+---
+
+<div class="download">
+  <a class="button primary" href="#install" data-download="any">
+    {release ? 'Download' : 'Install'}{version && <span class="version">{version}</span>}
+  </a>
+  {
+    platforms.map((p) => {
+      const d = first(p);
+      return (
+        d && (
+          <a class="button primary" href={d.url} data-download={p} hidden>
+            Download for {platformNames[p]}
+            <span class="version">{version}</span>
+          </a>
+        )
+      );
+    })
+  }
+</div>
+
+<style>
+  .download {
+    display: contents;
+  }
+  .version {
+    margin-left: var(--sp-4);
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    font-weight: var(--fw-regular);
+    opacity: 0.8;
+  }
+</style>

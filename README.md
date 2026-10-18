@@ -122,9 +122,14 @@ design. Test-only environment variables:
    (`npm install` and `cargo check` update the lock files), and commit.
 2. `git tag v<version>` and push the tag; the workflow fails if the tag and the version differ.
 3. Check the draft release, edit its notes, publish it.
-4. Redeploy the website (`site/deploy.sh`), which picks up the new download links.
+4. Redeploy the website, which picks up the new download links (see below).
 
 The builds are not signed with a developer certificate yet (macOS gets an ad-hoc signature).
+
+## Website
+
+`site/` is the homepage and the docs from `docs/` (Astro + Starlight), deployed with
+`site/deploy.sh`. See [site/README.md](site/README.md).
 
 ## License
 

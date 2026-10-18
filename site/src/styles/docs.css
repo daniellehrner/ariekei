@@ -1,0 +1,60 @@
+/* Copyright contributors to Ariekei.
+   SPDX-License-Identifier: Apache-2.0 */
+
+/* Starlight in the app's colours and type. The values come from ui/src/tokens.css, which
+   switches with the OS theme; Starlight follows the OS too (no theme picker), so one mapping
+   serves both. Starlight's grays run from strongest (gray-1) to faintest (gray-6, black) in
+   both of its themes. Unlayered, so it wins over Starlight's own layer. */
+
+:root,
+::backdrop {
+  --sl-font: var(--font-ui);
+  --sl-font-mono: var(--font-mono);
+
+  --sl-color-white: var(--text);
+  --sl-color-gray-1: var(--text);
+  --sl-color-gray-2: var(--text);
+  --sl-color-gray-3: var(--text-muted);
+  --sl-color-gray-4: var(--text-faint);
+  --sl-color-gray-5: var(--border-strong);
+  --sl-color-gray-6: var(--border);
+  --sl-color-gray-7: var(--surface-1);
+  --sl-color-black: var(--surface-0);
+
+  --sl-color-accent-low: var(--you-bg);
+  --sl-color-accent: var(--you);
+  --sl-color-accent-high: var(--you-strong);
+
+  --sl-color-text: var(--text);
+  --sl-color-text-accent: var(--you);
+  --sl-color-text-invert: var(--text-on-accent);
+  --sl-color-bg: var(--surface-0);
+  --sl-color-bg-nav: var(--surface-0);
+  --sl-color-bg-sidebar: var(--surface-2);
+  --sl-color-bg-inline-code: var(--surface-1);
+  --sl-color-bg-accent: var(--you);
+  --sl-color-hairline-light: var(--border);
+  --sl-color-hairline: var(--border);
+  --sl-color-hairline-shade: var(--border-strong);
+
+  --sl-color-orange-low: var(--warn-bg);
+  --sl-color-orange: var(--warn);
+  --sl-color-orange-high: var(--warn);
+  --sl-color-green-low: var(--ok-bg);
+  --sl-color-green: var(--ok);
+  --sl-color-green-high: var(--ok);
+  --sl-color-blue-low: var(--you-bg);
+  --sl-color-blue: var(--you);
+  --sl-color-blue-high: var(--you-strong);
+  --sl-color-purple-low: var(--gh-bg);
+  --sl-color-purple: var(--gh);
+  --sl-color-purple-high: var(--gh-strong);
+  --sl-color-red-low: var(--bad-bg);
+  --sl-color-red: var(--bad);
+  --sl-color-red-high: var(--bad);
+}
+
+code, kbd, pre { font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0; }
+
+/* The site title is a name, not a link colour: blue means "yours" (docs/design.md). */
+.site-title { color: var(--text); }
