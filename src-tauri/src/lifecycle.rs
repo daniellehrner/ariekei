@@ -215,6 +215,12 @@ fn remove(
             removed.push(name);
         }
     }
+    remove_contexts(state, repo, item);
+    Ok(removed)
+}
+
+/// Deletes the context files Ariekei wrote for the item's agent.
+fn remove_contexts(state: &AppState, repo: &Repo, item: &WorkItem) {
     let mut contexts = vec![item.slug()];
     if !item.is_task() {
         for number in [Some(item.number), item.issue_number].into_iter().flatten() {
@@ -229,7 +235,47 @@ fn remove(
                 .join(format!("{}-{}-{name}.md", repo.owner, repo.name)),
         );
     }
-    Ok(removed)
+}
+
+/// The worktrees Ariekei made for repo `id` that removing it from Ariekei leaves on disk.
+pub fn repo_leftovers(state: &AppState, id: i64) -> Result<Vec<String>, String> {
+    Ok(state
+        .store
+        .items(id)?
+        .into_iter()
+        .filter(|item| item.worktree_created)
+        .filter_map(|item| item.worktree_path.filter(|p| p.exists()))
+        .map(|p| p.display().to_string())
+        .collect())
+}
+
+/// Forgets repo `id`: its work items, stars, review drafts and context files, after ending
+/// its idle agents. Nothing on disk is touched: the clone, its worktrees and branches, and
+/// the agents' Claude Code sessions stay. Refused while one of its agents is in a turn.
+pub fn remove_repo(state: &AppState, id: i64) -> Result<(), String> {
+    let repo = state.store.repo(id)?.ok_or("unknown repository")?;
+    let items = state.store.items(id)?;
+    let busy: Vec<String> = items
+        .iter()
+        .filter(|item| {
+            matches!(
+                state.terminals.status(&item.id.to_string()),
+                Some(AgentStatus::Working | AgentStatus::WaitingForPermission)
+            )
+        })
+        .map(|item| item.title().to_owned())
+        .collect();
+    if !busy.is_empty() {
+        return Err(format!(
+            "an agent is in the middle of a turn ({}); let it finish first",
+            busy.join(", ")
+        ));
+    }
+    for item in &items {
+        state.terminals.close(&item.id.to_string());
+        remove_contexts(state, &repo, item);
+    }
+    state.store.delete_repo(id)
 }
 
 /// Deletes a session transcript (`<id>.jsonl`) and its `<id>/` folder of subagent
@@ -590,6 +636,40 @@ mod tests {
             assert!(app.state.store.item(task).is_err(), "the task is deleted");
             assert!(!wt.exists() && !branch_exists(&app, "task-1-done-soon"));
             assert_eq!(app.item(20).task_id, None, "its PR stays, unlinked");
+        }
+
+        #[test]
+        fn removing_a_repo_forgets_its_items_and_leaves_the_disk_alone() {
+            let app = TestApp::new();
+            let task = create_task(&app.state, Some(app.repo.clone()), "Keep me", "", "").unwrap();
+            let wt = app.path("proj_task1");
+            let context = app
+                .state
+                .data_dir
+                .join("context")
+                .join(format!("{}-{}-task1.md", app.repo.owner, app.repo.name));
+            app.start_agent(task);
+            assert!(context.exists());
+            assert_eq!(
+                repo_leftovers(&app.state, app.repo.id).unwrap(),
+                [wt.display().to_string()]
+            );
+
+            app.state
+                .report(&task.to_string(), AgentStatus::Working, None);
+            let err = remove_repo(&app.state, app.repo.id).unwrap_err();
+            assert!(err.contains("Keep me"), "{err}");
+            assert!(app.state.store.item(task).is_ok());
+
+            app.state
+                .report(&task.to_string(), AgentStatus::Finished, None);
+            remove_repo(&app.state, app.repo.id).unwrap();
+            assert!(app.state.store.repo(app.repo.id).unwrap().is_none());
+            assert!(app.state.store.item(task).is_err(), "its items are gone");
+            assert_eq!(app.state.terminals.status(&task.to_string()), None);
+            assert!(!context.exists());
+            assert!(wt.exists() && branch_exists(&app, "task-1-keep-me"));
+            assert!(app.clone.exists());
         }
 
         #[test]

@@ -7,7 +7,7 @@ Covers: connecting a second repo from the repo menu, the poller keeping both Inb
 current, switching back (the window title follows), opening a repo in a new window, a
 repo shown in another window being focused instead of opened twice, the selected item
 remembered per repo, the open windows coming back after a restart, closing one of them,
-and an empty window (New window) picking a connected repo.
+an empty window (New window) picking a connected repo, and removing a repo from Ariekei.
 
 Run it with `python3 e2e/run.py <test-app> windows` (see run.py), which sets the environment.
 """
@@ -213,5 +213,21 @@ try:
     wait_repo(s, "other", 7)
     print("[empty window] now shows:", header(s), "| title:", s.s("GET", "/title"), "| open windows:", repo_ids()[1])
     equal("an empty window picks a connected repo", (header(s), repo_ids()[1]), ("owner/other", [ids["proj"], ids["other"]]))
+
+    # Removing a repo from Ariekei: not one open in another window; this window's own goes
+    # back to the Connect screen, and the clone stays.
+    menu(s)
+    offered = s.js("return [...document.querySelectorAll('.menu [data-remove-repo]')].map(b => Number(b.dataset.removeRepo))")
+    print("[remove] offered for:", offered)
+    equal("Remove is offered for this window's repo, not for one open elsewhere", offered, [ids["other"]])
+    s.js(f"document.querySelector(\".menu [data-remove-repo='{ids['other']}']\").click()")
+    print("[remove] asks:", s.text(s.wait(f".menu [data-removing='{ids['other']}']")).replace("\n", " "))
+    s.click(s.wait("[data-confirm-remove] button", text="Remove"))
+    s.wait(".connect [data-recent]", timeout=30)
+    recent = s.js("return [...document.querySelectorAll('.connect [data-recent]')].map(b => Number(b.dataset.recent))")
+    print("[remove] connect screen, recent:", recent, "| title:", s.s("GET", "/title"), "| repos:", repo_ids()[0],
+          "| clone kept:", os.path.isdir(other))
+    equal("the repo is gone, its clone is not", (recent, sorted(repo_ids()[0]), os.path.isdir(other)), ([ids["proj"]], ["proj"], True))
+    equal("the window is empty again", (s.s("GET", "/title"), repo_ids()[1]), ("Ariekei", [ids["proj"]]))
 finally:
     s.quit()

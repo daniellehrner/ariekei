@@ -64,6 +64,11 @@ impl Windows {
         });
     }
 
+    /// Window `label` shows no repo (the Connect screen).
+    fn unbind(&self, label: &str) {
+        self.with(label, |v| *v = View::default());
+    }
+
     /// Repos shown in some window: the ones the poller keeps current.
     pub fn open_repos(&self) -> Vec<i64> {
         self.views
@@ -155,6 +160,16 @@ pub fn show(app: &AppHandle, label: &str, repo: &Repo) -> Result<bool, String> {
     }
     state.poller.refresh();
     Ok(true)
+}
+
+/// Window `label` no longer shows a repo (it was removed): the Connect screen.
+pub fn show_none(app: &AppHandle, label: &str) {
+    let state = app.state::<AppState>();
+    state.windows.unbind(label);
+    state.windows.persist(&state.store);
+    if let Some(window) = app.get_webview_window(label) {
+        let _ = window.set_title(&title(None));
+    }
 }
 
 fn focus(app: &AppHandle, label: &str) {

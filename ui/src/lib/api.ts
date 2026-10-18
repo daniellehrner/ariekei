@@ -181,6 +181,10 @@ export const api = {
   repos: () => invoke<RepoEntry[]>("repos"),
   connectRepo: (path: string) => invoke<Shown>("connect_repo", { path }),
   switchRepo: (id: number) => invoke<Shown>("switch_repo", { id }),
+  /** The worktrees Ariekei made for repo `id` that removing it leaves on disk. */
+  repoLeftovers: (id: number) => invoke<string[]>("repo_leftovers", { id }),
+  /** Forgets repo `id` (its items, stars, drafts); nothing on disk is touched. */
+  removeRepo: (id: number) => invoke<void>("remove_repo", { id }),
   /** A new window for repo `id`, or an empty one (Connect screen) for null. */
   openWindow: (id: number | null) => invoke<void>("open_window", { id }),
   openItem: (id: number) => invoke<void>("open_item", { id }),

@@ -4,21 +4,25 @@
 <script lang="ts">
   import Icon from "./controls/Icon.svelte";
   import IconButton from "./controls/IconButton.svelte";
+  import InlineConfirm from "./controls/InlineConfirm.svelte";
   import Kbd from "./controls/Kbd.svelte";
   import { api, type Repo, type RepoEntry } from "./lib/api";
   import { shortPath } from "./lib/paths";
 
   // The repo name in the Inbox header: switch this window to another connected repo, open
-  // one in a new window, or connect another. A repo shown in another window is focused
-  // there instead. Arrow keys move, Enter picks, Esc closes.
+  // one in a new window, remove one from Ariekei, or connect another. A repo shown in another
+  // window is focused there instead. Arrow keys move, Enter picks, Esc closes.
   let {
     repo,
     onswitch,
     onconnect,
+    onremoved,
   }: {
     repo: Repo;
     onswitch: (repo: Repo) => void;
     onconnect: () => void;
+    /** This window's repo was removed: it shows the Connect screen. */
+    onremoved: () => void;
   } = $props();
 
   let open = $state(false);
@@ -28,10 +32,36 @@
   let menu: HTMLElement | undefined = $state();
   let trigger: HTMLButtonElement | undefined = $state();
 
+  // Removing a repo asks first, naming the worktrees it leaves on disk.
+  let removing = $state<{ id: number; leftovers: string[] } | null>(null);
+
+  async function askRemove(e: RepoEntry) {
+    error = null;
+    try {
+      removing = { id: e.id, leftovers: await api.repoLeftovers(e.id) };
+    } catch (err) {
+      error = String(err);
+    }
+  }
+
+  async function remove(e: RepoEntry) {
+    removing = null;
+    try {
+      await api.removeRepo(e.id);
+      if (e.here) {
+        open = false;
+        onremoved();
+      } else entries = await api.repos();
+    } catch (err) {
+      error = `Could not remove ${e.owner}/${e.name}: ${err}`;
+    }
+  }
+
   async function toggle(e: MouseEvent) {
     // Opened from the keyboard (Enter/Space: no pointer), the first entry gets the focus.
     const fromKeyboard = e.detail === 0;
     open = !open;
+    removing = null;
     if (!open) return;
     error = null;
     try {
@@ -71,17 +101,20 @@
     const list = items();
     const i = list.indexOf(document.activeElement as HTMLElement);
     const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
-    // → from a repo reaches its window button, ← goes back.
+    // → from a repo reaches its buttons (window, Remove), ← goes back.
     const entry = (document.activeElement as HTMLElement | null)?.closest(".entry");
     if (step) {
       e.preventDefault();
       list[(i + step + list.length) % list.length]?.focus();
     } else if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && entry) {
       e.preventDefault();
-      entry.querySelector<HTMLElement>(e.key === "ArrowRight" ? ".ib" : ".pick")?.focus();
+      const buttons = [...entry.querySelectorAll<HTMLElement>("button")];
+      const at = buttons.indexOf(document.activeElement as HTMLElement);
+      buttons[Math.max(0, Math.min(buttons.length - 1, at + (e.key === "ArrowRight" ? 1 : -1)))]?.focus();
     } else if (e.key === "Escape") {
       e.preventDefault();
-      close();
+      if (removing) removing = null;
+      else close();
     }
   }
 
@@ -113,7 +146,23 @@
             <IconButton icon="window-new" label="Open {e.owner}/{e.name} in a new window" title="Open in new window" tabindex={-1}
               onclick={() => newWindow(e.id)} data-new-window={e.id} />
           {/if}
+          {#if !e.elsewhere}
+            <span class="remove">
+              <IconButton icon="inbox-remove" label="Remove {e.owner}/{e.name} from Ariekei" title="Remove from Ariekei" tabindex={-1}
+                onclick={() => askRemove(e)} data-remove-repo={e.id} />
+            </span>
+          {/if}
         </div>
+        {#if removing?.id === e.id}
+          {@const left = removing.leftovers}
+          <div class="removing" data-removing={e.id}>
+            <p>
+              Its Inbox, stars and review drafts go; the clone{left.length ? " and these worktrees stay" : " stays"} on disk{left.length ? ":" : "."}
+            </p>
+            {#if left.length}<ul>{#each left as path}<li title={path}>{shortPath(path)}</li>{/each}</ul>{/if}
+            <InlineConfirm text="Remove {e.owner}/{e.name}?" confirm="Remove" onconfirm={() => remove(e)} oncancel={() => (removing = null)} data-confirm-remove />
+          </div>
+        {/if}
       {/each}
       <hr />
       <button class="action" role="menuitem" onclick={() => run(async () => onconnect())} data-connect-another>
@@ -162,6 +211,16 @@
     max-width: 100%; font-family: var(--font-mono); font-size: var(--fs-11); color: var(--text-muted);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  /* Remove is a hover/focus action, as in the Inbox's rows. */
+  .remove { display: flex; opacity: 0; }
+  .entry:hover .remove, .entry:focus-within .remove { opacity: 1; }
+  .removing {
+    display: flex; flex-direction: column; gap: var(--sp-3); margin: 0 var(--sp-2) var(--sp-2); padding: var(--sp-4);
+    border-radius: var(--r-md); background: var(--surface-hover); font-size: var(--fs-12); color: var(--text-muted);
+  }
+  .removing p, .removing ul { margin: 0; }
+  .removing ul { padding-left: var(--sp-6); font-family: var(--font-mono); font-size: var(--fs-11); }
+  .removing li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   hr { border: 0; height: 1px; margin: var(--sp-2) 0; background: var(--border); }
   .action {
     display: flex; align-items: center; gap: var(--sp-4); height: 30px; padding: 0 var(--sp-4);

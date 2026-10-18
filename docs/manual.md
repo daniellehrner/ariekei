@@ -499,6 +499,13 @@ Click the repository name at the top of the Inbox to open the repository menu:
 - **Connected repositories**: pick one to show it in this window. One open in another window
   shows "open in another window"; picking it switches to that window. The window button next
   to an entry opens it in a new window.
+- **Remove** (on hover or with →, next to an entry): removes the repository from Ariekei after
+  you confirm: its Inbox, stars and review drafts go, its idle agents are ended. Nothing on
+  disk is touched: the clone, the worktrees Ariekei made (the confirm lists them, to delete
+  yourself if you want) and the agents' Claude Code sessions stay. Not offered for a
+  repository open in another window, and refused while one of its agents is in a turn. If
+  this window showed it, the window goes back to the Connect screen; connecting the clone
+  again starts with a fresh Inbox.
 - **Connect another repository…**
 - **New window** (**Ctrl+Shift+N** / Cmd+Shift+N).
 

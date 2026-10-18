@@ -157,6 +157,28 @@ async fn switch_repo(app: tauri::AppHandle, window: tauri::Window, id: i64) -> R
     Ok(Shown { repo, here })
 }
 
+/// The worktrees Ariekei made for repo `id` that removing it leaves on disk.
+#[tauri::command]
+async fn repo_leftovers(app: tauri::AppHandle, id: i64) -> Res<Vec<String>> {
+    blocking(app, move |s| lifecycle::repo_leftovers(s, id)).await
+}
+
+/// Removes repo `id` from Ariekei (`lifecycle::remove_repo`). Not while another window shows
+/// it; this window, if it showed it, goes back to the Connect screen.
+#[tauri::command]
+async fn remove_repo(app: tauri::AppHandle, window: tauri::Window, id: i64) -> Res<()> {
+    let label = window.label().to_owned();
+    let shown_in = app.state::<AppState>().windows.window_of(id);
+    if shown_in.as_ref().is_some_and(|l| *l != label) {
+        return Err("it is open in another window; close that window first".into());
+    }
+    blocking(app.clone(), move |s| lifecycle::remove_repo(s, id)).await?;
+    if shown_in.is_some() {
+        windows::show_none(&app, &label);
+    }
+    Ok(())
+}
+
 /// Opens a new window for repo `id`, or an empty one (Connect screen) without it.
 #[tauri::command]
 async fn open_window(app: tauri::AppHandle, id: Option<i64>) -> Res<()> {
@@ -604,6 +626,8 @@ pub fn run() {
             repos,
             connect_repo,
             switch_repo,
+            repo_leftovers,
+            remove_repo,
             open_window,
             open_item,
             inbox,

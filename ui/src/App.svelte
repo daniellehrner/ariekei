@@ -145,6 +145,15 @@
     reload();
   }
 
+  // This window's repo was removed from Ariekei: back to the Connect screen.
+  function removed() {
+    repo = null;
+    document.title = "Ariekei";
+    rows = [];
+    selected = null;
+    pollError = null;
+  }
+
   // The work item view tells the backend which item is shown (set_active_item), which
   // also remembers it for the next launch.
   function select(id: number) {
@@ -190,7 +199,7 @@
   {#key repo.id}
   <div class="app">
     <Inbox {repo} {rows} {loaded} {selected} error={pollError} {collapsed} ontoggle={toggleInbox} onselect={select} onrefresh={refresh} {refreshing} onadded={reload}
-      onswitch={show} onconnect={() => (connecting = true)} bind:creating={creatingTask} />
+      onswitch={show} onconnect={() => (connecting = true)} onremoved={removed} bind:creating={creatingTask} />
     {#if current}
       <WorkItem row={current} {rows} repoId={repo.id} onchanged={reload} onselect={select} />
     {:else}

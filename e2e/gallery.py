@@ -18,7 +18,7 @@ D-Bus; to choose the theme, point D-Bus nowhere and set it in a GTK settings fil
     env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1600x1000x24" tauri-driver --port 4444 &
   E2E_WEBDRIVER=http://127.0.0.1:4444 python3 -I e2e/gallery.py <app> <work> [light|dark] [1440x900] [screen,...]
 
-Screens: connect, empty (nothing selected yet), overview, menu, comments, collapsed, waiting, terminal, review,
+Screens: connect, empty (nothing selected yet), overview, menu, repo-remove (its confirm), comments, collapsed, waiting, terminal, review,
 scope-menu, selection, drafts, submit, code-menu, ask-agent, shortcuts, review-hidden, notice-arriving,
 notices, inbox (every section, one item starred), browse, new-task (on a fork's branch),
 change-end (n past the last change), task (a task with the PR its agent opened).
@@ -193,10 +193,15 @@ try:
         s.type(s.wait("[data-task-form] textarea"), "Finish the opcodes the branch is missing.")
         shot(s, "new-task")
         s.js("document.querySelector('[data-task-form] button[type=button]').click()")
-    if need("menu"):
+    if need("menu", "repo-remove"):
         click(s, ".inbox [data-repo-menu]")
         s.wait(".menu [data-repo-id]")
         shot(s, "menu")
+        if need("repo-remove"):
+            hover(s, ".menu .entry")
+            click(s, ".menu [data-remove-repo]")
+            s.wait("[data-confirm-remove]")
+            shot(s, "repo-remove")
         s.js("document.body.click()")
     if need("comments"):
         tab(s, "Comments")

@@ -544,6 +544,14 @@ impl Store {
         self.update(id, "task_id = ?2", task_id)
     }
 
+    /// Forgets a connected repo with all its work items (and what hangs on them).
+    pub fn delete_repo(&self, id: i64) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM repos WHERE id = ?1", [id])
+            .map(|_| ())
+            .map_err(err)
+    }
+
     pub fn delete_item(&self, id: i64) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM work_items WHERE id = ?1", [id])

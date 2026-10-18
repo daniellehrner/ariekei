@@ -31,6 +31,7 @@
     onadded,
     onswitch,
     onconnect,
+    onremoved,
     creating = $bindable(false),
   }: {
     repo: Repo;
@@ -51,6 +52,8 @@
     onswitch: (repo: Repo) => void;
     /// Show the Connect screen (for another repo).
     onconnect: () => void;
+    /// This window's repo was removed from Ariekei.
+    onremoved: () => void;
     /// The New task form is open (Ctrl+N opens it too, see App).
     creating?: boolean;
   } = $props();
@@ -246,7 +249,7 @@
 {:else}
 <aside class="inbox" aria-label="Inbox">
   <header>
-    <RepoMenu {repo} {onswitch} {onconnect} />
+    <RepoMenu {repo} {onswitch} {onconnect} {onremoved} />
     <span class="new-task-button" bind:this={newTaskButton}>
       <IconButton icon="plus" label="New task — work with no PR or issue yet (Ctrl+N)" size={28} onclick={newTask}
         pressed={creating} aria-expanded={creating} data-new-task />
