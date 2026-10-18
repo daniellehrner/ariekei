@@ -181,7 +181,7 @@ try:
     s.click(s.wait(".connect form button"))
     s.wait(".inbox .row[data-number='44']", timeout=60)
     print("[inbox] sections:", sections(s))
-    equal("Inbox sections", sections(s), ["Assigned 1", "Approved 1", "Review requested 1", "My PRs 1", "Reviewed 1", "Open 0"])
+    equal("Inbox sections", sections(s), ["Assigned 1", "Approved 1", "Review requested 1", "My PRs 1", "Reviewed 1"])
     equal("each PR is in its section", {k: section_rows(s, k) for k in ["assigned", "approved", "requested", "mine", "reviewed"]},
           {"assigned": [45], "approved": [46], "requested": [44], "mine": [42], "reviewed": [47]})
 

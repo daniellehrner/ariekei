@@ -85,9 +85,9 @@ Each item is listed once, in the first section that fits:
 | **Review requested** | Pull requests that request your review |
 | **My PRs** | Your other open pull requests |
 | **Reviewed** | Pull requests you reviewed |
-| **Open** | Pull requests and issues you added yourself, with a **Browse…** row to add more |
+| **Open** | Pull requests and issues you added yourself (with **Browse**) |
 
-Empty sections are left out, except **Open**. Click a section's title to fold or unfold it.
+Empty sections are left out. Click a section's title to fold or unfold it.
 While you scroll, the title of the section you are in stays at the top.
 
 An issue you started working on stays in the Inbox even if it is unassigned later. A pull
@@ -140,8 +140,8 @@ refresh fails, a "Could not refresh from GitHub" line shows the error.
 ### Browse: adding PRs and issues
 
 **Browse** lists the repository's **open** pull requests and issues, so you can add any of
-them to the Inbox. Open it with **Ctrl+K** (Cmd+K on macOS), the **Browse PRs and issues…**
-field at the top of the Inbox, or the **Browse…** row at the end of the Open section.
+them to the Inbox. Open it with **Ctrl+K** (Cmd+K on macOS) or the **Browse PRs and issues…**
+field at the top of the Inbox.
 
 - Switch between **Pull requests** and **Issues** at the top.
 - Search with GitHub's search syntax: words, `#123`, `author:name`, `label:bug`, and so on.

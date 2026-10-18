@@ -51,8 +51,7 @@ told apart in grey-scale and with colour blindness:
 - **Sections**, in this order: Starred, Tasks, Assigned, Approved (the user's PRs ready to
   merge), Review requested, My PRs, Reviewed, Open. An item is listed once, in the first
   section that fits (`lib/inboxSections.ts`, from the backend's `role`); a task's PRs and issues
-  stay under the task. Empty sections are left out, except Open, which ends with a **Browse…**
-  row.
+  stay under the task. Empty sections are left out; an empty Inbox says how to fill it.
 - **Section headers** are light dividers (24 px, `label-caps`, the count in faint mono right
   after the label) and stay at the top while their section scrolls.
 - **Rows** have two lines. The dot slot is empty when there is no agent. Issues say `issue` on
@@ -62,7 +61,7 @@ told apart in grey-scale and with colour blindness:
 - **The star** is the user's own mark, filled in `--you`. In rows it is a hover/focus action
   with **Remove** (the `inbox-remove` icon, for items the user added); Starred already says
   which items are starred. The item header has the star after its title, always shown.
-- **Browse** (Ctrl+K, the Browse field at the top of the Inbox, Browse… in Open) is a raised
+- **Browse** (Ctrl+K, the Browse field at the top of the Inbox) is a raised
   dialog near the top (`--w-dialog`), as tall as its results: Pull requests | Issues, a search
   field, and per hit a fixed 128 px slot with **Add to Open**, or the neutral `In Inbox` pill,
   replaced on the pointer or keyboard row by **Open** (and **Remove** for items the user

@@ -316,7 +316,7 @@
       {#each SECTIONS as section (section.key)}
         {@const list = sections[section.key]}
         {@const open = !folded.includes(section.key)}
-        {#if list.length || section.key === "open"}
+        {#if list.length}
           <section data-section={section.key}>
             <button class="section-head" onclick={() => fold(section.key)} aria-expanded={open}>
               <span class="chev" class:folded={!open}><Icon name="chevron-down" size={12} /></span>
@@ -347,20 +347,14 @@
                     {/if}
                   {/if}
                 {/each}
-                {#if section.key === "open"}
-                  <li>
-                    <button class="browse-row" onclick={browse} data-browse-open-section>
-                      <Icon name="search" size={14} />
-                      <span>Browse…</span>
-                      <Kbd key="Ctrl K" />
-                    </button>
-                  </li>
-                {/if}
               </ul>
             {/if}
           </section>
         {/if}
       {/each}
+      {#if !rows.length}
+        <p class="empty" data-inbox-empty>Nothing here yet: browse PRs and issues above, or start a task with +.</p>
+      {/if}
     </nav>
   {/if}
 </aside>
@@ -453,14 +447,7 @@
   .more:hover { background: var(--surface-hover); color: var(--text); }
   .more:focus-visible { outline-offset: -2px; }
 
-  .browse-row {
-    display: flex; align-items: center; gap: var(--sp-3); height: var(--h-row); margin: 2px var(--sp-3) 0; padding: 0 var(--sp-4);
-    width: calc(100% - 12px); box-sizing: border-box; border: 0; border-radius: var(--r-md); background: transparent;
-    font-size: var(--fs-12); line-height: var(--lh-12); color: var(--text-muted); text-align: left;
-  }
-  .browse-row span { flex: 1; }
-  .browse-row:hover { background: var(--surface-hover); color: var(--text); }
-  .browse-row:focus-visible { outline-offset: -2px; }
+  .empty { margin: var(--sp-5) var(--sp-6); font-size: var(--fs-12); line-height: var(--lh-12); color: var(--text-muted); }
 
   .new-task {
     flex: none; display: flex; flex-direction: column; gap: var(--sp-4); margin: 0 var(--sp-4) var(--sp-4);

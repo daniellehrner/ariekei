@@ -169,8 +169,8 @@ s = Session(app)
 try:
     s.type(s.wait(".connect form input"), clone)
     s.click(s.wait(".connect form button"))
-    s.wait(".inbox [data-section='open']", timeout=60)
-    equal("Inbox sections before", sections(s), ["Open 0"])
+    s.wait(".inbox [data-inbox-empty]", timeout=60)
+    equal("Inbox sections before", sections(s), [])
 
     # --- New task ---
     # Ctrl+N, as a user would (+ in the Inbox header does the same).
@@ -193,7 +193,7 @@ try:
                lambda md: md and "Look at how the peer table is reset." in md and "`gh pr create`" in md)
     eventually("the task's agent is ready", lambda: agent(s, -1), lambda a: a in ("ready", "finished"), timeout=60)
     print("[task] inbox:", sections(s), listed(s))
-    equal("the task is listed under Tasks", sections(s), ["Tasks 1", "Open 0"])
+    equal("the task is listed under Tasks", sections(s), ["Tasks 1"])
 
     # --- the agent opens a PR and an issue: both are linked to the task ---
     open(os.path.join(wt, "a.txt"), "a").write("reset peers once\n")
@@ -203,7 +203,7 @@ try:
     ask(s, "Open an issue titled 'Peer table grows without bound'")
     eventually("the issue appears under the task", lambda: listed(s), lambda rows: [101, True] in rows, timeout=30)
     print("[linked] inbox:", sections(s), listed(s))
-    equal("linked items are not in their own sections", sections(s), ["Tasks 1", "Open 0"])
+    equal("linked items are not in their own sections", sections(s), ["Tasks 1"])
     s.js("[...document.querySelectorAll('.item [role=tab]')].find(t => t.textContent.trim() === 'Overview').click()")
     links = eventually("the task's Overview lists them", lambda: s.js("return [...document.querySelectorAll('[data-links] [data-link]')].map(b => b.dataset.link)"),
                        lambda v: v and sorted(v) == ["100", "101"])
@@ -349,7 +349,7 @@ try:
     branch_left = subprocess.run(["git", "-C", clone, "show-ref", "--verify", "--quiet", f"refs/heads/{branch2}"]).returncode == 0
     print("[done] worktree removed:", not os.path.exists(wt2), "| branch deleted:", not branch_left, "| inbox:", sections(s), listed(s))
     check("Done removes the task's worktree and branch", not os.path.exists(wt2) and not branch_left)
-    equal("what is left", sections(s), ["My PRs 1", "Open 0"])
+    equal("what is left", sections(s), ["My PRs 1"])
 
     # --- a task on a fork's branch: no title (named after the branch) ---
     s.click(s.wait("[data-new-task]"))

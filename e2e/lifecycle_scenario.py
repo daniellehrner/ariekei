@@ -131,7 +131,7 @@ try:
     s.click(s.wait(".connect form button"))
     s.wait(".inbox .row[data-number='5']", timeout=60)
     print("[inbox]", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"))
-    equal("Inbox sections", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"), ["Assigned 3", "My PRs 1", "Open 0"])
+    equal("Inbox sections", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"), ["Assigned 3", "My PRs 1"])
 
     # --- GitHub's rate limit used up: the Inbox says so; a refresh after the reset recovers ---
     limit_flag = os.path.join(gh_dir, "rate-limited")
