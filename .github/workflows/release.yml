@@ -1,0 +1,78 @@
+name: Release
+
+# Builds the installers and attaches them to a draft GitHub Release named after the app version
+# (src-tauri/tauri.conf.json). Publishing the draft is left to a person; see README, Release.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  bundle:
+    name: bundle (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported Ubuntu, so the AppImage and .deb run on older glibc too.
+          - os: ubuntu-22.04
+            args: ''
+          - os: macos-15
+            args: --target universal-apple-darwin
+          - os: windows-2025
+            args: ''
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Tag matches the app version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match the app version $version (src-tauri/tauri.conf.json)"
+            exit 1
+          fi
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev libxdo-dev
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: Ariekei v__VERSION__
+          releaseBody: |
+            The builds are not signed with a developer certificate yet. On macOS, when the first
+            launch is blocked, allow it in System Settings → Privacy & Security → Open Anyway; on
+            Windows, choose More info → Run anyway in the SmartScreen prompt.
+          releaseDraft: true
+          generateReleaseNotes: true
+          args: ${{ matrix.args }}

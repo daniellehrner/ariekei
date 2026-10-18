@@ -113,6 +113,19 @@ design. Test-only environment variables:
 | `ARIEKEI_PYTHON` | Interpreter for a `.py` given as `ARIEKEI_GH` or `ARIEKEI_CLAUDE` (default `python3`) |
 | `ARIEKEI_E2E_PORT` | Serve the e2e bridge on this port (test builds only) |
 
+## Release
+
+`.github/workflows/release.yml` builds the installers (AppImage, .deb and .rpm on Linux, a universal
+.dmg on macOS, .msi and setup.exe on Windows) and attaches them to a draft GitHub Release.
+
+1. Set the same version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`
+   (`npm install` and `cargo check` update the lock files), and commit.
+2. `git tag v<version>` and push the tag; the workflow fails if the tag and the version differ.
+3. Check the draft release, edit its notes, publish it.
+4. Redeploy the website (`site/deploy.sh`), which picks up the new download links.
+
+The builds are not signed with a developer certificate yet (macOS gets an ad-hoc signature).
+
 ## License
 
 Apache License 2.0, see [LICENSE](LICENSE). Every source file starts with an SPDX header:
