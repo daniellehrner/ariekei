@@ -257,6 +257,13 @@ has been waiting for 15 minutes is closed, unless the agent still runs processes
 resumes the conversation. Restarting Ariekei does the same: conversations continue where they
 were.
 
+Quitting Ariekei (closing its last window, or Quit from the app menu) ends every agent, and
+with it what the agents run in the background, such as dev servers or watchers; resuming does
+not start those again. So when an agent is in the middle of a turn or runs background
+processes, Ariekei asks first: **Quit Ariekei?** names each such agent, its worktree (the
+folder, then where it is) and each background command with its PID. **Cancel** (or Esc)
+keeps everything running; **Quit anyway** quits.
+
 ## 7. Reviewing changes
 
 The Review tab shows what changed, and collects comments for GitHub or the agent.

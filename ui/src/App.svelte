@@ -8,6 +8,7 @@
   import Connect from "./Connect.svelte";
   import Inbox from "./Inbox.svelte";
   import Notices from "./Notices.svelte";
+  import QuitConfirm from "./QuitConfirm.svelte";
   import Shortcuts from "./Shortcuts.svelte";
   import WorkItem from "./WorkItem.svelte";
   import AttentionPip, { URGENCY } from "./controls/AttentionPip.svelte";
@@ -246,6 +247,7 @@
 {/if}
 <Notices {selected} />
 <Shortcuts />
+<QuitConfirm />
 
 <style>
   .app { display: flex; height: 100vh; min-height: 0; overflow: hidden; }

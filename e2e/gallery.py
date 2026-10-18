@@ -21,7 +21,8 @@ D-Bus; to choose the theme, point D-Bus nowhere and set it in a GTK settings fil
 Screens: connect, empty (nothing selected yet), overview, menu, repo-remove (its confirm), comments, collapsed, waiting, terminal, review,
 scope-menu, selection, drafts, submit, code-menu, ask-agent, shortcuts, review-hidden, notice-arriving,
 notices, inbox (every section, one item starred), browse, new-task (on a fork's branch),
-change-end (n past the last change), task (a task with the PR its agent opened).
+change-end (n past the last change), task (a task with the PR its agent opened), quit (asked
+before quitting stops agents' work).
 """
 
 import json
@@ -322,6 +323,18 @@ try:
             print("[shot] notice-arriving:", "saved" if s.screenshot(os.path.join(shots, "notice-arriving.png")) else "skipped", flush=True)
         time.sleep(1)
         shot(s, "notices")
+    if need("quit"):
+        # As quit.rs asks when the last window closes while agents run.
+        s.js("""const rows = (await window.__TAURI_INTERNALS__.invoke('inbox')).filter((r) => r.worktree);
+          const at = (r) => ({ item: r.id, name: (r.kind === 'task' ? 'T' + -r.number : '#' + r.number) + ' ' + r.title,
+            repo: 'hyperledger/besu', worktree: r.worktree });
+          await window.__TAURI_INTERNALS__.invoke('plugin:event|emit', { event: 'confirm-quit', payload: [
+            { ...at(rows[0]), busy: false, processes: [{ pid: 48211, command: 'npm run dev -- --port 5173' },
+              { pid: 48377, command: './gradlew test --continuous' }] },
+            ...(rows[1] ? [{ ...at(rows[1]), busy: true, processes: [] }] : []) ] });""")
+        s.wait("[data-confirm-quit]", timeout=10)
+        shot(s, "quit")
+        s.click(s.wait("[data-cancel-quit]"))
 except Exception:
     print("[page]", s.js("return document.body.innerText.slice(0, 1500)"))
     raise

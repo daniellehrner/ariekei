@@ -9,7 +9,8 @@ use std::process::Command;
 pub struct Process {
     pub pid: u32,
     pub parent: u32,
-    pub name: String,
+    /// The command line (on Windows the name, when the command line cannot be read).
+    pub command: String,
 }
 
 /// The running processes, from `ps` (Unix) or `Win32_Process` (Windows).
@@ -26,7 +27,7 @@ fn list_command() -> Command {
     // One field per -o: BSD ps (macOS) takes everything after `=` as the header.
     let mut cmd = Command::new("ps");
     cmd.args([
-        "-A", "-o", "pid=", "-o", "ppid=", "-o", "stat=", "-o", "comm=",
+        "-A", "-o", "pid=", "-o", "ppid=", "-o", "stat=", "-o", "args=",
     ]);
     cmd
 }
@@ -40,13 +41,13 @@ fn list_command() -> Command {
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        "Get-CimInstance Win32_Process | ForEach-Object { '{0} {1} R {2}' -f $_.ProcessId, $_.ParentProcessId, $_.Name }",
+        "Get-CimInstance Win32_Process | ForEach-Object { '{0} {1} R {2}' -f $_.ProcessId, $_.ParentProcessId, ($(if ($_.CommandLine) { $_.CommandLine -replace '\\s+', ' ' } else { $_.Name })) }",
     ])
     .creation_flags(CREATE_NO_WINDOW);
     cmd
 }
 
-/// Lines of `pid ppid state name`; zombies (state Z, ended but not yet reaped) are left out.
+/// Lines of `pid ppid state command`; zombies (state Z, ended but not yet reaped) are left out.
 fn parse(text: &str) -> Vec<Process> {
     text.lines()
         .filter_map(|line| {
@@ -56,8 +57,12 @@ fn parse(text: &str) -> Vec<Process> {
             if fields.next()?.starts_with('Z') {
                 return None;
             }
-            let name = fields.collect::<Vec<_>>().join(" ");
-            Some(Process { pid, parent, name })
+            let command = fields.collect::<Vec<_>>().join(" ");
+            Some(Process {
+                pid,
+                parent,
+                command,
+            })
         })
         .collect()
 }
@@ -75,6 +80,43 @@ pub fn descendants(table: &[Process], root: u32) -> Vec<&Process> {
         }
     }
     found
+}
+
+/// What `root` started itself (the first process of each tree below it), e.g. one per
+/// background shell rather than the shell and everything it runs.
+pub fn started_by(table: &[Process], root: u32) -> Vec<&Process> {
+    let below = descendants(table, root);
+    below
+        .iter()
+        .copied()
+        .filter(|p| p.parent == root || !below.iter().any(|q| q.pid == p.parent))
+        .collect()
+}
+
+/// The command a user would recognize: Claude Code runs a Bash call as `bash -c -l "source
+/// <snapshot> && eval '<command>' …"`, so the quoted command when there is one.
+pub fn shown_command(command: &str) -> String {
+    let Some(start) = command.find("eval '") else {
+        return command.to_owned();
+    };
+    // A single-quoted shell word: `'\''` is a quote inside it.
+    let mut out = String::new();
+    let mut rest = &command[start + "eval '".len()..];
+    loop {
+        match rest.find('\'') {
+            None => return command.to_owned(),
+            Some(i) => {
+                out.push_str(&rest[..i]);
+                rest = &rest[i + 1..];
+                if let Some(after) = rest.strip_prefix("\\''") {
+                    out.push('\'');
+                    rest = after;
+                } else {
+                    return out;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -95,16 +137,41 @@ mod tests {
         );
         let names: Vec<&str> = descendants(&table, 100)
             .iter()
-            .map(|p| p.name.as_str())
+            .map(|p| p.command.as_str())
             .collect();
         assert_eq!(names, ["bash", "sleep"]);
         assert!(descendants(&table, 200).is_empty());
+        let started: Vec<u32> = started_by(&table, 100).iter().map(|p| p.pid).collect();
+        assert_eq!(started, [101], "the shell, not what it runs");
     }
 
     #[test]
-    fn names_may_contain_spaces() {
-        let table = parse("7 1 S /Applications/Some App.app/x\n");
-        assert_eq!(table[0].name, "/Applications/Some App.app/x");
+    fn commands_keep_their_spaces() {
+        let table = parse("7 1 S /Applications/Some App.app/x --flag\n");
+        assert_eq!(table[0].command, "/Applications/Some App.app/x --flag");
+    }
+
+    #[test]
+    fn shows_the_command_inside_claude_codes_shell() {
+        assert_eq!(
+            shown_command(
+                "/bin/bash -c -l source /home/me/.claude/shell-snapshots/snapshot-bash-1.sh && \
+                 eval 'npm run dev -- --port 5173' \\< /dev/null && pwd -P >| /tmp/claude-1-cwd"
+            ),
+            "npm run dev -- --port 5173"
+        );
+        assert_eq!(
+            shown_command("bash -c -l eval 'echo '\\''hi'\\'' && sleep 9' < /dev/null"),
+            "echo 'hi' && sleep 9"
+        );
+        assert_eq!(
+            shown_command("python3 -m http.server"),
+            "python3 -m http.server"
+        );
+        assert_eq!(
+            shown_command("sh -c eval 'unclosed"),
+            "sh -c eval 'unclosed"
+        );
     }
 
     #[test]
@@ -125,7 +192,7 @@ mod tests {
             let table = table().unwrap();
             let found: Vec<(u32, String)> = descendants(&table, child.id())
                 .iter()
-                .map(|p| (p.pid, p.name.clone()))
+                .map(|p| (p.pid, p.command.clone()))
                 .collect();
             if !found.is_empty() || start.elapsed() > Duration::from_secs(20) {
                 break found;

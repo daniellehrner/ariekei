@@ -194,6 +194,16 @@ impl TerminalManager {
             .ok_or_else(|| format!("no terminal for {key}"))
     }
 
+    /// Every running agent: its item key, process and status.
+    pub fn agents(&self) -> Vec<(String, Option<u32>, AgentStatus)> {
+        self.terms
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(k, t)| (k.clone(), t.pid, t.status.lock().unwrap().0))
+            .collect()
+    }
+
     /// The agent's status, or `None` when no terminal runs for the item.
     pub fn status(&self, key: &str) -> Option<AgentStatus> {
         self.get(key).ok().map(|t| t.status.lock().unwrap().0)
@@ -454,7 +464,7 @@ impl TerminalManager {
             } else {
                 let names: Vec<String> = running
                     .iter()
-                    .map(|p| format!("{} ({})", p.name, p.pid))
+                    .map(|p| format!("{} ({})", p.command, p.pid))
                     .collect();
                 tracing::debug!(
                     "idle terminal {key} kept open, running {}",

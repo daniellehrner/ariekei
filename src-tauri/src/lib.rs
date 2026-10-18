@@ -14,6 +14,7 @@ mod lifecycle;
 mod notify;
 mod poller;
 mod procs;
+mod quit;
 mod review_order;
 mod store;
 mod terminal;
@@ -42,6 +43,8 @@ pub struct AppState {
     windows: windows::Windows,
     /// What the backend tells the windows and the desktop.
     events: Arc<dyn events::Events>,
+    /// The user agreed to quit although it stops agents' work (`quit`).
+    quit_confirmed: std::sync::atomic::AtomicBool,
 }
 
 impl AppState {
@@ -59,6 +62,7 @@ impl AppState {
             data_dir,
             windows: windows::Windows::default(),
             events,
+            quit_confirmed: Default::default(),
         }
     }
 
@@ -161,6 +165,12 @@ async fn switch_repo(app: tauri::AppHandle, window: tauri::Window, id: i64) -> R
 #[tauri::command]
 async fn repo_leftovers(app: tauri::AppHandle, id: i64) -> Res<Vec<String>> {
     blocking(app, move |s| lifecycle::repo_leftovers(s, id)).await
+}
+
+/// Quits although that stops agents' work: the user confirmed it (`confirm-quit`).
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    quit::quit_now(&app)
 }
 
 /// Removes repo `id` from Ariekei (`lifecycle::remove_repo`). Not while another window shows
@@ -616,10 +626,17 @@ pub fn run() {
             e2e::start(app.handle());
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Destroyed = event {
-                windows::closed(window.app_handle(), window.label());
+        .on_window_event(|window, event| match event {
+            // Closing the last window quits: asked first if that stops agents' work.
+            tauri::WindowEvent::CloseRequested { api, .. }
+                if window.app_handle().webview_windows().len() == 1
+                    && quit::ask_first(window.app_handle()) =>
+            {
+                api.prevent_close();
+                quit::check(window.app_handle().clone(), window.label().to_owned());
             }
+            tauri::WindowEvent::Destroyed => windows::closed(window.app_handle(), window.label()),
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             repo,
@@ -628,6 +645,7 @@ pub fn run() {
             switch_repo,
             repo_leftovers,
             remove_repo,
+            quit_app,
             open_window,
             open_item,
             inbox,
@@ -673,11 +691,24 @@ pub fn run() {
         .expect("error while building Ariekei");
 
     app.run(|app, event| {
-        // Windows destroyed while quitting stay recorded, to come back on the next launch.
-        if let RunEvent::ExitRequested { .. } = event
+        if let RunEvent::ExitRequested { api, .. } = &event
             && let Some(state) = app.try_state::<AppState>()
         {
-            state.windows.exiting();
+            // Quit from the app menu (Cmd+Q): asked first in the focused window, if that
+            // stops agents' work, as closing the last window is.
+            let windows = app.webview_windows();
+            let asking = windows
+                .values()
+                .find(|w| w.is_focused().unwrap_or(false))
+                .or_else(|| windows.values().next())
+                .map(|w| w.label().to_owned());
+            if let Some(label) = asking.filter(|_| quit::ask_first(app)) {
+                api.prevent_exit();
+                quit::check(app.clone(), label);
+            } else {
+                // Windows destroyed while quitting stay recorded, to come back next launch.
+                state.windows.exiting();
+            }
         }
         if let RunEvent::Exit = event
             && let Some(state) = app.try_state::<AppState>()

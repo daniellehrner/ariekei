@@ -167,7 +167,7 @@ fn handle(
             let app = app.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_millis(100));
-                app.exit(0);
+                crate::quit::quit_now(&app);
             });
             Ok(json!({}))
         }

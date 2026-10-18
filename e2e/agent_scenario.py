@@ -9,8 +9,8 @@ a local "GitHub" repo with insteadOf), plus two work items inserted into Ariekei
 database as if the poller had found them. Covers: Inbox, Start working (worktree on the
 PR branch), the agent in the terminal (slash-command autocomplete, a committing turn),
 Review since the PR base, a second agent commit reviewed on its own (its commit scope),
-Inbox attention, idle shutdown (not while a background job runs), and resume after an app
-restart.
+Inbox attention, idle shutdown (not while a background job runs), resume after an app
+restart, and quitting while a background job runs (asked first: Cancel, then Quit anyway).
 
 The agent is e2e/fake_claude.py (ARIEKEI_CLAUDE): a small terminal agent that commits when
 asked and reports through the hooks like Claude Code. With ARIEKEI_CLAUDE unset the user's
@@ -21,13 +21,14 @@ ARIEKEI_IDLE_SECS=5, fake gh).
 
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from check import equal, eventually  # noqa: E402
+from check import check, equal, eventually  # noqa: E402
 from ui import open_inbox, select_row, wait_rows  # noqa: E402
 from wd import Session  # noqa: E402
 
@@ -274,5 +275,36 @@ try:
     tab(s, "Review")
     print("[restart] conversation resumed;", review_marker(s))
     s.screenshot(os.path.join(shots, "agent-restart.png"))
+
+    # Quitting (closing the last window) while a background job runs asks first, naming the
+    # agent, its worktree and the job; Cancel keeps everything, Quit anyway quits.
+    tab(s, "Terminal")
+    st = prompt(s, 42, "Run a 120 second job in the background")
+    equal("the background job's turn finishes", st, "finished")
+    close = ("const label = window.__TAURI_INTERNALS__.metadata.currentWindow.label;"
+             "setTimeout(() => window.__TAURI_INTERNALS__.invoke('plugin:window|close', { label }), 100)")
+    s.js(close)
+    asked = s.text(s.wait("[data-confirm-quit] [data-running]", timeout=30))
+    print("[quit] asks:", asked.replace("\n", " | "))
+    check("it names the agent, its worktree and the job",
+          "#42" in asked and "proj_pr42" in asked and "time.sleep(120)" in asked, asked)
+    job = int(re.search(r"PID (\d+)", asked).group(1))
+    s.click(s.wait("[data-cancel-quit]"))
+    s.wait_js("return !document.querySelector('[data-confirm-quit]')", timeout=10)
+    equal("Cancel keeps the agent", (row_info(s, 42) or {}).get("agent"), "finished")
+    s.js(close)
+    s.wait("[data-confirm-quit] [data-quit-anyway]", timeout=30)
+    # Deferred, so the script returns before the app goes away.
+    s.js("setTimeout(() => document.querySelector('[data-quit-anyway]').click(), 100)")
+    s.proc.wait(timeout=30)
+    print("[quit] Quit anyway: the app exited with", s.proc.returncode)
+    if os.name == "posix":
+        time.sleep(1)
+        try:
+            os.kill(job, 0)
+            alive = True
+        except OSError:
+            alive = False
+        check("the background job ended with its agent", not alive, job)
 finally:
     s.quit()

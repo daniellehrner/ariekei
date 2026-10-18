@@ -176,6 +176,19 @@ export interface FileDiff {
   hunks: Hunk[];
 }
 
+/** An agent whose work quitting would stop (quit.rs). */
+export interface Running {
+  item: number;
+  /** As the Inbox names it: "T1 …", "#42 …". */
+  name: string;
+  repo: string;
+  worktree: string | null;
+  /** In the middle of a turn. */
+  busy: boolean;
+  /** What it started that still runs, e.g. its background shells. */
+  processes: { pid: number; command: string }[];
+}
+
 export const api = {
   repo: () => invoke<Repo | null>("repo"),
   repos: () => invoke<RepoEntry[]>("repos"),
@@ -185,6 +198,8 @@ export const api = {
   repoLeftovers: (id: number) => invoke<string[]>("repo_leftovers", { id }),
   /** Forgets repo `id` (its items, stars, drafts); nothing on disk is touched. */
   removeRepo: (id: number) => invoke<void>("remove_repo", { id }),
+  /** Quits although agents' work stops (the user confirmed `confirm-quit`). */
+  quitApp: () => invoke<void>("quit_app"),
   /** A new window for repo `id`, or an empty one (Connect screen) for null. */
   openWindow: (id: number | null) => invoke<void>("open_window", { id }),
   openItem: (id: number) => invoke<void>("open_item", { id }),
