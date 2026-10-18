@@ -5,11 +5,8 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightLinksValidator from 'starlight-links-validator';
 
-// The site's domain, once chosen; deploy.sh sets it. Without it there is no sitemap.
-const domain = process.env.ARIEKEI_DOMAIN;
-
 export default defineConfig({
-  site: domain ? `https://${domain}` : undefined,
+  site: 'https://ariekei.com',
   // The site's own tsconfig for every file. Searched for, a file outside src/ (e.g. Vite's
   // entries) would get the app's ../tsconfig.json, whose base (@tsconfig/svelte) is not
   // installed with the site's packages (CI installs only those).

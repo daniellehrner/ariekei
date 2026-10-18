@@ -1,7 +1,6 @@
 # The Ariekei website: static files from site/deploy.sh (see site/README.md in the Ariekei repo).
 # Loaded by the server's /etc/caddy/Caddyfile through `import /etc/caddy/sites/*.caddy`.
-# deploy.sh replaces ARIEKEI_DOMAIN with the site's domain.
-ARIEKEI_DOMAIN {
+ariekei.com {
 	root * /var/www/ariekei
 	encode zstd gzip
 	file_server
