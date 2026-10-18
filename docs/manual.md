@@ -412,8 +412,13 @@ Ariekei uses the clone's remote for that repository, or adds one named after the
 `gh pr checkout` does), fetches the branch and checks it out in the task's worktree, tracking
 it, so a plain `git push` updates it. Without a title, the task is named after the branch. If
 a local branch of that name tracks something else, it is left alone and the worktree gets a
-`task-<n>-…` branch instead. If the branch cannot be fetched, no task is created. The review
-compares the branch with the default branch.
+`task-<n>-…` branch instead. The review compares the branch with the default branch.
+
+A branch that is not on GitHub yet but is in your clone works too (by its name alone, or as
+`owner:branch` for where it will go): the task uses your local branch as it is, with no fetch,
+and a plain `git push` creates it on that repository later (the agent is told it is local and
+pushes only when you ask). Once pushed, a PR opened for it is linked to the task. If the
+branch is neither on GitHub nor in your clone, no task is created.
 
 If the branch is already checked out, in another worktree or in your clone itself, the task
 works there instead of in a new worktree.

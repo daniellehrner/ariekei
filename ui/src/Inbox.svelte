@@ -281,7 +281,7 @@
       <label>
         <span class="field-label">Existing branch <span class="optional">— optional</span></span>
         <input class="mono" bind:value={taskBranch} placeholder="owner:branch"
-          title="Work on this branch instead of a new one, e.g. on a fork: owner:branch, owner/repo:branch, a GitHub branch URL or a branch name. A plain git push updates it." disabled={starting} onkeydown={onTaskKey} data-task-branch />
+          title="Work on this branch instead of a new one, e.g. on a fork: owner:branch, owner/repo:branch, a GitHub branch URL or a branch name. A plain git push updates it. A branch only in your clone works too: it is used as it is." disabled={starting} onkeydown={onTaskKey} data-task-branch />
       </label>
       <label>
         <span class="field-label">What to look into</span>

@@ -272,7 +272,8 @@ pub fn prepare_task(
 
 /// A worktree for task `T<n>` on an existing branch (e.g. on a fork): adds a remote for its
 /// repository if the clone has none, fetches the branch and checks it out in
-/// `<clone>_task<n>`, tracking it, so a plain `git push` updates it.
+/// `<clone>_task<n>`, tracking it, so a plain `git push` updates it. A branch that is not on
+/// GitHub but in the clone is used as it is (`on_local_branch`).
 pub fn prepare_task_on(
     repo: &Repo,
     n: i64,
@@ -292,20 +293,26 @@ pub fn prepare_task_on(
         &format!("git@github.com:{owner}/{name}.git"),
         &format!("https://github.com/{owner}/{name}.git"),
     )?;
-    let tracking = match fetch(&repo.path, &remote, branch) {
-        Ok(tracking) => tracking,
-        Err(e) => {
-            // E.g. a typo in the branch or the fork: leave no remote behind.
-            if added {
-                let _ = git(&repo.path, &["remote", "remove", &remote]);
-            }
-            return Err(format!("could not fetch {branch} from {owner}/{name}: {e}"));
-        }
-    };
     // The review compares with the default branch; not fatal if it can't be fetched.
     if let Err(e) = fetch(&repo.path, &repo.base_remote, default_branch) {
         tracing::warn!("could not fetch {default_branch}: {e}");
     }
+    let tracking = match fetch(&repo.path, &remote, branch) {
+        Ok(tracking) => tracking,
+        Err(e) => {
+            let local = git::branch_exists(&repo.path, branch);
+            // The repository is there, only the branch is not (yet): the remote stays, to
+            // push the local branch to. Else (e.g. a typo in the fork) no remote is left.
+            let keep = local && e.contains("couldn't find remote ref");
+            if added && !keep {
+                let _ = git(&repo.path, &["remote", "remove", &remote]);
+            }
+            if local {
+                return on_local_branch(repo, n, branch, (!added || keep).then_some(&remote));
+            }
+            return Err(format!("could not fetch {branch} from {owner}/{name}: {e}"));
+        }
+    };
     let own = task_branch(n, title);
     if let Some(w) = find_existing(&repo.path, &own, branch, &tracking, default_branch)? {
         return Ok(Prepared {
@@ -396,6 +403,61 @@ fn new_branch_worktree(
     Ok(Prepared {
         path,
         branch,
+        adopted: false,
+        note: None,
+    })
+}
+
+/// A worktree for task `T<n>` on `branch`, which is only in the clone (not on GitHub yet):
+/// the worktree that has it checked out (the clone itself, too), or a new `<clone>_task<n>`.
+/// The branch is left as it is; without an upstream it gets one on `push_to`, so a plain
+/// `git push` creates it there (and its PR can then be linked to the task).
+fn on_local_branch(
+    repo: &Repo,
+    n: i64,
+    branch: &str,
+    push_to: Option<&str>,
+) -> Result<Prepared, String> {
+    if let Some(remote) = push_to.filter(|_| git::upstream(&repo.path, branch).is_none()) {
+        git(
+            &repo.path,
+            &["config", &format!("branch.{branch}.remote"), remote],
+        )?;
+        git(
+            &repo.path,
+            &[
+                "config",
+                &format!("branch.{branch}.merge"),
+                &format!("refs/heads/{branch}"),
+            ],
+        )?;
+    }
+    if let Some(w) = git::worktrees(&repo.path)?
+        .into_iter()
+        .find(|w| w.path.exists() && w.branch.as_deref() == Some(branch))
+    {
+        return Ok(Prepared {
+            path: w.path,
+            branch: branch.to_owned(),
+            adopted: true,
+            note: None,
+        });
+    }
+    let path = sibling(repo, &format!("task{n}"));
+    if path.exists() {
+        return Err(format!(
+            "{} already exists; move it away to start the task",
+            path.display()
+        ));
+    }
+    let path_arg = path.to_string_lossy().into_owned();
+    git(
+        &repo.path,
+        &["worktree", "add", "--quiet", &path_arg, branch],
+    )?;
+    Ok(Prepared {
+        path,
+        branch: branch.to_owned(),
         adopted: false,
         note: None,
     })

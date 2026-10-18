@@ -129,7 +129,7 @@ pub fn render_issue(
 }
 
 /// Markdown for the agent of a task (no PR or issue yet). `notes`: what the user wants
-/// looked into.
+/// looked into; `pushed`: the existing branch `head` is on GitHub (else only in the clone).
 pub fn render_task(
     name: &str,
     title: &str,
@@ -137,11 +137,18 @@ pub fn render_task(
     branch: &str,
     base: &str,
     head: Option<&BranchRef>,
+    pushed: bool,
 ) -> String {
     let mut md = String::new();
     let _ = writeln!(md, "# Work item: task {name}: {title}");
     let _ = writeln!(md);
     let on = match head {
+        Some(h) if !pushed => format!(
+            "on `{branch}`, an existing branch that is only local: it is not on GitHub yet. \
+             Push it only when the user asks (a plain `git push` creates it as `{}` of \
+             `{}/{}`); the review compares it with `{base}`",
+            h.branch, h.owner, h.repo
+        ),
         Some(h) => format!(
             "on `{branch}`, the existing branch `{}` of `{}/{}` (a plain `git push` updates \
              it; the review compares it with `{base}`)",
@@ -245,12 +252,13 @@ mod tests {
             "task-2-flaky-sync",
             "main",
             None,
+            false,
         );
         assert!(md.starts_with("# Work item: task T2: Flaky sync"));
         assert!(md.contains("branch `task-2-flaky-sync` (from `main`)"));
         assert!(md.contains("`gh pr create`"));
         assert!(md.contains("## What to look into\n\nPeers drop."));
-        assert!(!render_task("T2", "x", " ", "b", "main", None).contains("## What"));
+        assert!(!render_task("T2", "x", " ", "b", "main", None, false).contains("## What"));
     }
 
     #[test]
@@ -260,11 +268,16 @@ mod tests {
             repo: "besu".into(),
             branch: "feat/evm".into(),
         };
-        let md = render_task("T3", "feat/evm", "", "feat/evm", "main", Some(&head));
+        let md = render_task("T3", "feat/evm", "", "feat/evm", "main", Some(&head), true);
         assert!(
             md.contains(
                 "the existing branch `feat/evm` of `friend/besu` (a plain `git push` updates it"
             ),
+            "{md}"
+        );
+        let md = render_task("T3", "feat/evm", "", "feat/evm", "main", Some(&head), false);
+        assert!(
+            md.contains("it is not on GitHub yet. Push it only when the user asks (a plain `git push` creates it as `feat/evm` of `friend/besu`)"),
             "{md}"
         );
     }

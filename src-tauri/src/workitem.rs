@@ -448,6 +448,12 @@ fn write_task_context(data_dir: &Path, repo: &Repo, item: &WorkItem) -> Result<P
         item.branch.as_deref().unwrap_or_default(),
         &default_branch(repo)?,
         task_head(item).as_ref(),
+        item.branch.as_deref().is_some_and(|b| {
+            crate::lifecycle::pushed_head(repo, b)
+                .ok()
+                .flatten()
+                .is_some()
+        }),
     );
     let dir = data_dir.join("context");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -1373,6 +1379,73 @@ mod tests {
         );
         assert!(app.clone.join("mine.txt").exists());
         assert_eq!(git(&app.clone, &["branch", "--show-current"]), "feat/evm");
+    }
+
+    #[test]
+    fn a_task_on_a_branch_that_is_only_local_uses_it_as_it_is() {
+        let app = TestApp::new();
+        git(&app.clone, &["branch", "perf/local", "main"]);
+        git(&app.clone, &["checkout", "-q", "perf/local"]);
+        write(&app.clone.join("p.txt"), "faster\n");
+        commit(&app.clone, "Hot and cold", "me");
+        git(&app.clone, &["checkout", "-q", "main"]);
+
+        // The branch name alone: not on GitHub, so the clone's branch, in a new worktree.
+        let id = create_task(&app.state, Some(app.repo.clone()), "", "", "perf/local").unwrap();
+        let (path, branch, _, _) = checkout(&app, id);
+        assert_eq!(branch, "perf/local");
+        assert_eq!(git(&path, &["log", "-1", "--format=%s"]), "Hot and cold");
+        assert_eq!(
+            git(&app.clone, &["config", "branch.perf/local.remote"]),
+            "origin",
+            "a plain push creates it on GitHub"
+        );
+        let item = app.state.store.item(id).unwrap();
+        let context = std::fs::read_to_string(
+            write_task_context(&app.state.data_dir, &app.repo, &item).unwrap(),
+        )
+        .unwrap();
+        assert!(context.contains("it is not on GitHub yet"), "{context}");
+
+        // Pushed, it is on GitHub like any other branch.
+        git(&path, &["push", "-q"]);
+        let context = std::fs::read_to_string(
+            write_task_context(&app.state.data_dir, &app.repo, &item).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            context.contains("a plain `git push` updates it"),
+            "{context}"
+        );
+    }
+
+    #[test]
+    fn a_local_branch_named_for_a_fork_keeps_the_forks_remote_and_its_checkout() {
+        let app = TestApp::new();
+        app.fork("friend", "feature-x");
+        git(&app.clone, &["checkout", "-q", "-b", "perf/mine"]);
+        let id = create_task(
+            &app.state,
+            Some(app.repo.clone()),
+            "",
+            "",
+            "friend:perf/mine",
+        )
+        .unwrap();
+        let item = app.state.store.item(id).unwrap();
+        assert_eq!(
+            (
+                std::fs::canonicalize(item.worktree_path.unwrap()).unwrap(),
+                item.worktree_created
+            ),
+            (std::fs::canonicalize(&app.clone).unwrap(), false),
+            "the clone has it checked out"
+        );
+        assert_eq!(
+            git(&app.clone, &["config", "branch.perf/mine.remote"]),
+            "friend",
+            "the fork's remote stays, to push to"
+        );
     }
 
     #[test]

@@ -422,7 +422,7 @@ fn follow_pr(state: &AppState, repo: &Repo, item: &WorkItem) -> Result<bool, Str
 
 /// Where the local `branch` is pushed, if it is: the owner of its remote's GitHub repo and
 /// the branch's name there (its upstream, which the remote has).
-fn pushed_head(repo: &Repo, branch: &str) -> Result<Option<(String, String)>, String> {
+pub fn pushed_head(repo: &Repo, branch: &str) -> Result<Option<(String, String)>, String> {
     let config = |key: String| git::git_str(&repo.path, &["config", "--get", &key]);
     let (Ok(remote), Ok(merge)) = (
         config(format!("branch.{branch}.remote")),
