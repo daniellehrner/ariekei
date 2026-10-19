@@ -48,6 +48,13 @@ const marks = {
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <script is:inline>
+      // The theme chosen with the switch (shared with the docs' picker), before the page paints.
+      try {
+        const theme = localStorage.getItem('starlight-theme');
+        if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+      } catch {}
+    </script>
   </head>
   <body>
     <header class="top">
@@ -57,6 +64,17 @@ const marks = {
           <a href={manual}>Manual</a>
           <a href={releasesPage}>Releases</a>
           <a href={repo}>GitHub</a>
+          <div class="theme" role="group" aria-label="Theme" hidden>
+            <button type="button" data-theme-choice="auto" aria-label="System theme" title="System theme">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7.5h-11zM1 13.5h14"></path></svg>
+            </button>
+            <button type="button" data-theme-choice="light" aria-label="Light theme" title="Light theme">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="3"></circle><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"></path></svg>
+            </button>
+            <button type="button" data-theme-choice="dark" aria-label="Dark theme" title="Dark theme">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7z"></path></svg>
+            </button>
+          </div>
           <a class="button small" href="#install">Download</a>
         </div>
       </nav>
@@ -378,6 +396,43 @@ const marks = {
     </footer>
 
     <script is:inline>
+      // The theme switch: system, light or dark, kept in localStorage under Starlight's key so the
+      // docs' picker and this one share it ('' is system). A forced theme also picks the
+      // screenshots' sources (data-dark in Shot.astro), which otherwise follow the OS.
+      (() => {
+        const key = 'starlight-theme';
+        const load = () => {
+          try {
+            const theme = localStorage.getItem(key);
+            return theme === 'light' || theme === 'dark' ? theme : 'auto';
+          } catch {
+            return 'auto';
+          }
+        };
+        const apply = (theme) => {
+          const root = document.documentElement;
+          if (theme === 'auto') delete root.dataset.theme;
+          else root.dataset.theme = theme;
+          const media = theme === 'dark' ? 'all' : theme === 'light' ? 'not all' : '(prefers-color-scheme: dark)';
+          for (const source of document.querySelectorAll('source[data-dark]')) source.media = media;
+          for (const button of document.querySelectorAll('[data-theme-choice]')) {
+            button.setAttribute('aria-pressed', String(button.dataset.themeChoice === theme));
+          }
+        };
+        const box = document.querySelector('.theme');
+        box.hidden = false;
+        box.addEventListener('click', (e) => {
+          const button = e.target.closest('[data-theme-choice]');
+          if (!button) return;
+          const theme = button.dataset.themeChoice;
+          try {
+            localStorage.setItem(key, theme === 'auto' ? '' : theme);
+          } catch {}
+          apply(theme);
+        });
+        apply(load());
+      })();
+
       // Show the download button for the visitor's OS (see DownloadButton.astro), and then the
       // link to the other platforms.
       (() => {

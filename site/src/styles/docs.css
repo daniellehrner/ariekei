@@ -2,9 +2,10 @@
    SPDX-License-Identifier: Apache-2.0 */
 
 /* Starlight in the app's colours and type. The values come from ui/src/tokens.css, which
-   switches with the OS theme; Starlight follows the OS too (no theme picker), so one mapping
-   serves both. Starlight's grays run from strongest (gray-1) to faintest (gray-6, black) in
-   both of its themes. Unlayered, so it wins over Starlight's own layer. */
+   switches with the OS theme or with Starlight's theme picker (see themeAttribute in
+   astro.config.mjs), so one mapping serves both. Starlight's grays run from strongest
+   (gray-1) to faintest (gray-6, black) in both of its themes. Unlayered, so it wins over
+   Starlight's own layer. */
 
 :root,
 ::backdrop {

@@ -12,7 +12,8 @@ npm run check
 ```
 
 - **Homepage:** `src/pages/index.astro`, styled by `src/styles/home.css` with the app's own
-  tokens (`../ui/src/tokens.css`), so it follows the OS theme like the app.
+  tokens (`../ui/src/tokens.css`), so it follows the OS theme like the app. The theme switch in
+  the header overrides that and is remembered in the browser, shared with the docs' own picker.
 - **Docs:** `docs/manual.md`, `pull-requests.md`, `review.md` and `lifecycle.md` stay the source.
   `scripts/sync-docs.mjs` copies them into `src/content/docs/docs/` (git-ignored) before every
   `dev`, `build` and `check`: the `# Title` becomes frontmatter and links between them become

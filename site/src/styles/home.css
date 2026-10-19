@@ -2,7 +2,8 @@
    SPDX-License-Identifier: Apache-2.0 */
 
 /* The homepage, after the "Website — ariekei.com" design. Colours come from ui/src/tokens.css,
-   the app's own tokens, so the page follows the OS theme like the app. The rules of
+   the app's own tokens, so the page follows the OS theme like the app, or the theme switch
+   (data-theme on <html>; see themeAttribute in astro.config.mjs). The rules of
    docs/design.md apply: colour means a voice (agent copper circle, you blue square, GitHub
    violet diamond), the rest is grey. Headings and text are Instrument Sans; code and small
    labels JetBrains Mono. */
@@ -120,6 +121,22 @@ svg { flex: none; }
 .links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; font-size: 15px; font-weight: var(--fw-medium); }
 .links a:not(.button) { text-decoration: none; color: var(--text-muted); }
 .links a:not(.button):hover { color: var(--you); }
+.theme { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-lg); box-shadow: inset 0 0 0 1px var(--border); }
+.theme[hidden] { display: none; }
+.theme button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-md);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.theme button:hover { color: var(--text); }
+.theme button[aria-pressed="true"] { background: var(--card); color: var(--text); box-shadow: 0 0 0 1px var(--border-strong); }
 
 /* Hero */
 .hero { padding-top: clamp(56px, 9vw, 112px); }
