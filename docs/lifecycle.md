@@ -87,12 +87,12 @@ PRs and issues, or be thrown away.
   something changed; `--force` only for initialized submodules, which git always refuses and
   whose changes `git status` already showed; `git worktree prune` if the folder was deleted by
   hand) and its branch if Ariekei created that too (`branch_created`: a reused local branch is
-  kept); its Claude session transcript (and subagent transcripts), last, so a refused removal
-  leaves the agent resumable; `refs/ariekei/pull/<N>/head`; the context file; the Inbox entry
-  (hidden; opening the PR again from search brings it back, and so does a poll that finds it
-  reopened or with a new reason: a review request or an assignment it did not have when last
-  found). Worktrees Ariekei adopted are
-  only detached. Ignored files go with the worktree.
+  kept); its Claude session transcripts, also those of conversations before a `/clear` (and
+  subagent transcripts), last, so a refused removal leaves the agent resumable;
+  `refs/ariekei/pull/<N>/head`; the context file; the Inbox entry (hidden; opening the PR again
+  from search brings it back, and so does a poll that finds it reopened or with a new reason: a
+  review request or an assignment it did not have when last found). Worktrees Ariekei adopted
+  are only detached. Ignored files go with the worktree.
 - Only GitHub's own state triggers automatic cleanup: a PR that merely dropped out of a search
   is never treated as finished. The poll's searches read all pages of results (up to 10); when
   one stops short, items of its kind that it did not find stay as they were.

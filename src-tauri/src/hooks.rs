@@ -5,7 +5,8 @@
 //!
 //! Every `claude` that Ariekei starts gets `--settings <claude-hooks.json>`, which adds
 //! `http` hooks (merged with the user's and the project's own hooks) that POST each event
-//! to a localhost endpoint. Events carry the session id, which identifies the work item.
+//! to a localhost endpoint. Events name the terminal they come from (a header filled in
+//! from the agent's environment), else their session id identifies the work item.
 //! A task's agent opening a PR or an issue (`gh pr create`, …) links it to the task.
 
 use serde::{Deserialize, Serialize};
@@ -45,7 +46,19 @@ pub struct HookEvent {
     pub tool_response: Option<serde_json::Value>,
     #[serde(default)]
     pub error: Option<serde_json::Value>,
+    /// Why a session ended (SessionEnd): `clear`, `resume`, `logout`, `prompt_input_exit`, …
+    #[serde(default)]
+    pub reason: Option<String>,
+    /// The terminal the event came from (its `TERMINAL_ENV`, sent as `TERMINAL_HEADER`).
+    #[serde(skip)]
+    pub terminal: Option<String>,
 }
+
+/// The variable in each agent's environment that names its terminal; the hooks send it
+/// back in a header, so events find their terminal whichever conversation it is in
+/// (`/clear` and `/resume` change the session id).
+pub const TERMINAL_ENV: &str = "ARIEKEI_TERMINAL";
+const TERMINAL_HEADER: &str = "X-Ariekei-Terminal";
 
 /// Events registered in the hooks settings file. Not SessionStart: it ignores `http`
 /// hooks (only `command` hooks run), so `ready` comes from the terminal's first output.
@@ -75,7 +88,11 @@ pub fn status_for(event: &HookEvent) -> Option<(AgentStatus, Option<String>)> {
         },
         "Stop" => (Finished, None),
         "StopFailure" => (Error, event.error.as_ref().map(|e| e.to_string())),
-        "SessionEnd" => (Stopped, None),
+        // `/clear` and `/resume` end a conversation, not the process: a new one waits.
+        "SessionEnd" => match event.reason.as_deref() {
+            Some("clear" | "resume") => (Ready, None),
+            _ => (Stopped, None),
+        },
         _ => return None,
     })
 }
@@ -202,9 +219,16 @@ pub fn link_to_task(state: &crate::AppState, links: &TaskLinks) {
     state.events.inbox_changed(links.repo);
 }
 
-/// Hooks settings for `claude --settings`: one http hook per event, posting to `url`.
+/// Hooks settings for `claude --settings`: one http hook per event, posting to `url` with
+/// the agent's terminal in a header.
 fn settings_json(url: &str) -> serde_json::Value {
-    let hook = serde_json::json!([{ "hooks": [{ "type": "http", "url": url, "timeout": 5 }] }]);
+    let hook = serde_json::json!([{ "hooks": [{
+        "type": "http",
+        "url": url,
+        "timeout": 5,
+        "headers": { TERMINAL_HEADER: format!("${TERMINAL_ENV}") },
+        "allowedEnvVars": [TERMINAL_ENV],
+    }] }]);
     let hooks: serde_json::Map<String, serde_json::Value> = EVENTS
         .iter()
         .map(|e| (e.to_string(), hook.clone()))
@@ -266,15 +290,20 @@ fn handle(mut stream: TcpStream, expected_path: &str) -> std::io::Result<Option<
     let (method, path) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
 
     let mut content_length = 0usize;
+    let mut terminal = None;
     loop {
         let mut line = String::new();
         if reader.read_line(&mut line)? == 0 || line == "\r\n" || line == "\n" {
             break;
         }
-        if let Some((name, value)) = line.split_once(':')
-            && name.trim().eq_ignore_ascii_case("content-length")
-        {
-            content_length = value.trim().parse().unwrap_or(0);
+        if let Some((name, value)) = line.split_once(':') {
+            let (name, value) = (name.trim(), value.trim());
+            if name.eq_ignore_ascii_case("content-length") {
+                content_length = value.parse().unwrap_or(0);
+            } else if name.eq_ignore_ascii_case(TERMINAL_HEADER) && !value.is_empty() {
+                // Empty where Claude Code may not fill it in (`httpHookAllowedEnvVars`).
+                terminal = Some(value.to_owned());
+            }
         }
     }
     // Hook payloads are small; refuse anything absurd rather than buffering it.
@@ -294,7 +323,9 @@ fn handle(mut stream: TcpStream, expected_path: &str) -> std::io::Result<Option<
     if !accepted {
         return Ok(None);
     }
-    Ok(serde_json::from_slice(&body).ok())
+    Ok(serde_json::from_slice(&body)
+        .ok()
+        .map(|event| HookEvent { terminal, ..event }))
 }
 
 /// Routes a hook event to its work item and updates the item's status. What a task's agent
@@ -314,10 +345,29 @@ pub fn dispatch(app: &AppHandle, event: HookEvent) {
 /// the event's terminal, and returns what a task's agent opened on GitHub, to be linked
 /// (`link_to_task`).
 pub fn record(state: &crate::AppState, event: &HookEvent) -> Option<TaskLinks> {
-    // Hooks of sessions Ariekei did not start (or already closed) are ignored.
-    let key = state.terminals.key_for_session(&event.session_id)?;
+    // Hooks of terminals Ariekei did not start (or already closed) are ignored.
+    let key = state
+        .terminals
+        .key_for(event.terminal.as_deref(), &event.session_id)?;
+    let id: Option<i64> = key.parse().ok();
+    // A new conversation in the terminal. After `/clear` it is the item's from now on (the
+    // one to resume); one picked with `/resume` may be anyone's, so the item keeps its own.
+    if let Some(ended) = state.terminals.follow(&key, &event.session_id)
+        && ended.as_deref() == Some("clear")
+        && let Some(id) = id
+        && let Err(e) = state.store.switch_session(id, &event.session_id)
+    {
+        tracing::warn!("failed to record the new session: {e}");
+    }
+    if event.hook_event_name == "SessionEnd" {
+        state.terminals.session_ended(&key, event.reason.clone());
+    }
     if event.hook_event_name == "UserPromptSubmit"
-        && let Ok(id) = key.parse()
+        && let Some(id) = id
+        && state
+            .store
+            .item(id)
+            .is_ok_and(|i| i.session_id.as_deref() == Some(event.session_id.as_str()))
         && let Err(e) = state
             .store
             .mark_session_started(id, event.transcript_path.as_deref())
@@ -651,6 +701,84 @@ mod tests {
                 Some(AgentStatus::Working),
                 "PostToolUse said working"
             );
+        }
+
+        #[test]
+        fn the_terminal_is_followed_into_a_new_conversation() {
+            let app = TestApp::new();
+            let task = create_task(&app.state, Some(app.repo.clone()), "Clear", "", "").unwrap();
+            app.start_agent(task);
+            let key = task.to_string();
+            let first = app.state.store.item(task).unwrap().session_id.unwrap();
+            let token = app.state.terminals.token(&key).unwrap();
+            let from_terminal = |session: &str, name: &str, extra: serde_json::Value| {
+                let event = HookEvent {
+                    terminal: Some(token.clone()),
+                    ..hook(session, name, extra)
+                };
+                record(&app.state, &event);
+            };
+            let status = || app.state.terminals.status(&key);
+            from_terminal(
+                &first,
+                "UserPromptSubmit",
+                json!({"transcript_path": "/t1.jsonl"}),
+            );
+
+            // `/clear` ends the conversation, not the agent; the next one is the item's.
+            from_terminal(&first, "SessionEnd", json!({"reason": "clear"}));
+            assert_eq!(status(), Some(AgentStatus::Ready));
+            from_terminal(
+                "second",
+                "UserPromptSubmit",
+                json!({"transcript_path": "/t2.jsonl"}),
+            );
+            assert_eq!(status(), Some(AgentStatus::Working));
+            let item = app.state.store.item(task).unwrap();
+            assert_eq!(
+                (
+                    item.session_id.as_deref(),
+                    item.session_started,
+                    item.transcript_path.as_deref(),
+                    item.past_transcripts
+                ),
+                (
+                    Some("second"),
+                    true,
+                    Some(Path::new("/t2.jsonl")),
+                    vec![PathBuf::from("/t1.jsonl")]
+                )
+            );
+            from_terminal("second", "Stop", json!({}));
+            assert_eq!(status(), Some(AgentStatus::Finished));
+
+            // A conversation picked with `/resume` is followed, but the item keeps its own.
+            from_terminal("second", "SessionEnd", json!({"reason": "resume"}));
+            from_terminal(
+                "someone's",
+                "UserPromptSubmit",
+                json!({"transcript_path": "/t3.jsonl"}),
+            );
+            assert_eq!(status(), Some(AgentStatus::Working));
+            let item = app.state.store.item(task).unwrap();
+            assert_eq!(
+                (item.session_id.as_deref(), item.transcript_path.as_deref()),
+                (Some("second"), Some(Path::new("/t2.jsonl")))
+            );
+
+            // Without the header, an event finds its terminal by its current session only.
+            record(&app.state, &hook("second", "Stop", json!({})));
+            assert_eq!(status(), Some(AgentStatus::Working));
+            record(&app.state, &hook("someone's", "Stop", json!({})));
+            assert_eq!(status(), Some(AgentStatus::Finished));
+
+            // Quitting ends the process.
+            from_terminal(
+                "someone's",
+                "SessionEnd",
+                json!({"reason": "prompt_input_exit"}),
+            );
+            assert_eq!(status(), Some(AgentStatus::Stopped));
         }
 
         #[test]

@@ -14,7 +14,10 @@ A minimal terminal agent that reports through the hooks of `--settings` like Cla
 - "Run a N second job in the background" starts a process that sleeps N seconds, as a
   background Bash call does (a child of the agent), and finishes the turn;
 - a line containing "ask" asks permission for a Bash command and waits;
+- `/clear` ends the conversation (SessionEnd, reason "clear") and goes on in a new one, with a
+  new session id;
 - anything else finishes the turn at once.
+Hook requests carry the hook's `headers`, with the `allowedEnvVars` filled in, as Claude Code's do.
 Turns are kept in a transcript ($FAKE_CLAUDE_DIR, default <tmp>/ariekei-fake-claude), which
 `--resume <session>` prints again. Works in a Unix PTY and in a Windows ConPTY.
 """
@@ -36,6 +39,7 @@ import sys  # noqa: E402
 import tempfile  # noqa: E402
 import threading  # noqa: E402
 import urllib.request  # noqa: E402
+import uuid  # noqa: E402
 
 PROMPT = "\x1b[38;5;173m❯\x1b[0m "
 
@@ -117,41 +121,49 @@ def out(text=""):
 
 def interactive(argv):
     settings = json.load(open(argv[argv.index("--settings") + 1]))
-    url = settings["hooks"]["Stop"][0]["hooks"][0]["url"]
+    config = settings["hooks"]["Stop"][0]["hooks"][0]
+    url = config["url"]
+    # Header values with $VAR filled in from the environment, for the variables allowed.
+    allowed = config.get("allowedEnvVars", [])
+    headers = {k: re.sub(r"\$\{?(\w+)\}?", lambda m: os.environ.get(m.group(1), "") if m.group(1) in allowed else "", v)
+               for k, v in config.get("headers", {}).items()}
     resume = "--resume" in argv
-    session = argv[argv.index("--resume" if resume else "--session-id") + 1]
     store = os.environ.get("FAKE_CLAUDE_DIR") or os.path.join(tempfile.gettempdir(), "ariekei-fake-claude")
     os.makedirs(store, exist_ok=True)
-    transcript = os.path.join(store, f"{session}.txt")
+    # The conversation: `/clear` starts a new one, with a new session id and transcript.
+    conv = {"session": argv[argv.index("--resume" if resume else "--session-id") + 1]}
+
+    def transcript():
+        return os.path.join(store, f"{conv['session']}.txt")
 
     def hook(name, **fields):
-        body = json.dumps({"hook_event_name": name, "session_id": session, "cwd": os.getcwd(),
-                           "transcript_path": transcript, **fields}).encode()
+        body = json.dumps({"hook_event_name": name, "session_id": conv["session"], "cwd": os.getcwd(),
+                           "transcript_path": transcript(), **fields}).encode()
         try:
-            req = urllib.request.Request(url, body, {"Content-Type": "application/json"})
+            req = urllib.request.Request(url, body, {"Content-Type": "application/json", **headers})
             urllib.request.urlopen(req, timeout=5).read()
         except OSError:
             pass  # the app is gone or not listening; the TUI goes on
 
     def say(text):
         out(text + "\n")
-        with open(transcript, "a", encoding="utf-8") as f:
+        with open(transcript(), "a", encoding="utf-8") as f:
             f.write(text + "\n")
 
     keys = Keys()
     try:
         out("\x1b[1mfake claude\x1b[0m\n")
-        if resume and os.path.exists(transcript):
-            out(open(transcript, encoding="utf-8").read())
+        if resume and os.path.exists(transcript()):
+            out(open(transcript(), encoding="utf-8").read())
             with open(os.path.join(store, "fake-claude.log"), "a", encoding="utf-8") as log:
-                log.write(f"{time.strftime('%H:%M:%S')} resumed {session}, printed the transcript\n")
+                log.write(f"{time.strftime('%H:%M:%S')} resumed {conv['session']}, printed the transcript\n")
         line = ""
         while True:
             out("\r\x1b[2K" + PROMPT + line + "\x1b7\n\x1b[2K  " +
                 ("/code-review   Review the change" if line.startswith("/") else "? for shortcuts") + "\x1b8")
             c = keys.read()
             if c in ("\x03", "\x04"):
-                hook("SessionEnd")
+                hook("SessionEnd", reason="prompt_input_exit")
                 return
             if c == "\b":
                 line = line[:-1]
@@ -160,7 +172,11 @@ def interactive(argv):
             elif c == "\r":
                 text, line = line.strip(), ""
                 out("\x1b7\n\x1b[2K\x1b8\n")
-                if text:
+                if text == "/clear":
+                    hook("SessionEnd", reason="clear")
+                    conv["session"] = str(uuid.uuid4())
+                    out("\x1b[2J\x1b[H(no content)\n")
+                elif text:
                     turn(text, say, hook, keys)
             elif c >= " ":
                 line += c

@@ -116,6 +116,11 @@ ALTER TABLE work_items DROP COLUMN reviewed_sha;
 -- local branch it only reused (e.g. the user's main) is kept. Older rows keep the old rule.
 ALTER TABLE work_items ADD COLUMN branch_created INTEGER NOT NULL DEFAULT 1;
 "#,
+    r#"
+-- Transcripts of the item's earlier conversations (JSON array of paths), e.g. before a
+-- `/clear` in its terminal; cleanup deletes them with the current one.
+ALTER TABLE work_items ADD COLUMN past_transcripts TEXT;
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -156,6 +161,8 @@ pub struct WorkItem {
     /// For a PR or issue a task's agent opened: the task.
     pub task_id: Option<i64>,
     pub starred: bool,
+    /// Transcripts of the item's earlier conversations (see `switch_session`).
+    pub past_transcripts: Vec<PathBuf>,
 }
 
 impl WorkItem {
@@ -233,7 +240,8 @@ fn err(e: rusqlite::Error) -> String {
 
 const ITEM_COLUMNS: &str = "id, repo_id, number, snapshot, open, worktree_path, branch, session_id, \
      session_started, transcript_path, last_seen, ui_state, role, tracked, kind, \
-     issue_number, worktree_created, hidden, cleanup_blockers, task_id, starred, branch_created";
+     issue_number, worktree_created, hidden, cleanup_blockers, task_id, starred, branch_created, \
+     past_transcripts";
 
 fn item_from_row(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
     let json = |s: Option<String>| s.and_then(|s| serde_json::from_str(&s).ok());
@@ -262,6 +270,10 @@ fn item_from_row(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
         task_id: r.get(19)?,
         starred: r.get(20)?,
         branch_created: r.get(21)?,
+        past_transcripts: r
+            .get::<_, Option<String>>(22)?
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default(),
     })
 }
 
@@ -674,7 +686,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE work_items SET worktree_path = NULL, branch = NULL, worktree_created = 0, session_id = NULL,
-             session_started = 0, transcript_path = NULL, cleanup_blockers = NULL,
+             session_started = 0, transcript_path = NULL, past_transcripts = NULL, cleanup_blockers = NULL,
              hidden = 1 WHERE id = ?1",
             [id],
         )
@@ -688,6 +700,28 @@ impl Store {
         conn.execute(
             "UPDATE work_items SET session_id = ?2, session_started = 0, transcript_path = NULL WHERE id = ?1",
             params![id, session_id],
+        )
+        .map(|_| ())
+        .map_err(err)
+    }
+
+    /// The item's agent went on in a new conversation, `session_id` (after `/clear`): it is
+    /// the one to resume from now on, and the transcript of the one before is kept with the
+    /// item's past ones, for cleanup.
+    pub fn switch_session(&self, id: i64, session_id: &str) -> Result<(), String> {
+        let item = self.item(id)?;
+        let mut past = item.past_transcripts;
+        if let Some(transcript) = item.transcript_path
+            && !past.contains(&transcript)
+        {
+            past.push(transcript);
+        }
+        let past = serde_json::to_string(&past).unwrap_or_default();
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE work_items SET session_id = ?2, session_started = 0, transcript_path = NULL,
+             past_transcripts = ?3 WHERE id = ?1",
+            params![id, session_id, past],
         )
         .map(|_| ())
         .map_err(err)
@@ -888,6 +922,29 @@ mod tests {
         assert_eq!(item.session_id.as_deref(), Some("s-1"));
         assert!(item.session_started);
         assert_eq!(item.transcript_path.as_deref(), Some(Path::new("/t.jsonl")));
+
+        // `/clear`: a new conversation; the old transcript stays the item's, for cleanup.
+        store.switch_session(id, "s-2").unwrap();
+        let item = store.item(id).unwrap();
+        assert_eq!(
+            (
+                item.session_id.as_deref(),
+                item.session_started,
+                item.transcript_path
+            ),
+            (Some("s-2"), false, None)
+        );
+        assert_eq!(item.past_transcripts, [PathBuf::from("/t.jsonl")]);
+        store
+            .mark_session_started(id, Some(Path::new("/t2.jsonl")))
+            .unwrap();
+        store.switch_session(id, "s-3").unwrap();
+        assert_eq!(
+            store.item(id).unwrap().past_transcripts,
+            [PathBuf::from("/t.jsonl"), PathBuf::from("/t2.jsonl")]
+        );
+        store.mark_cleaned(id).unwrap();
+        assert!(store.item(id).unwrap().past_transcripts.is_empty());
     }
 
     #[test]

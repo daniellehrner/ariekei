@@ -81,7 +81,12 @@ impl Output {
 }
 
 struct Term {
-    session_id: String,
+    /// Names the terminal in its hook events (`hooks::TERMINAL_ENV`).
+    token: String,
+    /// The conversation it is in: the one it started with, until `/clear` or `/resume`.
+    session_id: Mutex<String>,
+    /// Why its last conversation ended (SessionEnd), until the next one shows up.
+    ended: Mutex<Option<String>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
@@ -177,12 +182,43 @@ impl TerminalManager {
         manager
     }
 
-    pub fn key_for_session(&self, session_id: &str) -> Option<String> {
+    /// The item whose terminal sent a hook event: the one `token` names, or (when the event
+    /// does not name one) the one in conversation `session_id`.
+    pub fn key_for(&self, token: Option<&str>, session_id: &str) -> Option<String> {
         let terms = self.terms.lock().unwrap();
         terms
             .iter()
-            .find(|(_, t)| t.session_id == session_id)
+            .find(|(_, t)| match token {
+                Some(token) => t.token == token,
+                None => *t.session_id.lock().unwrap() == session_id,
+            })
             .map(|(k, _)| k.clone())
+    }
+
+    /// Notes that the item's terminal is in conversation `session_id`. When that is a new one
+    /// (after `/clear` or `/resume`), returns why the one before ended, if known.
+    pub fn follow(&self, key: &str, session_id: &str) -> Option<Option<String>> {
+        let term = self.get(key).ok()?;
+        let mut current = term.session_id.lock().unwrap();
+        if *current == session_id {
+            return None;
+        }
+        tracing::info!("agent {key} went on in session {session_id}");
+        *current = session_id.to_owned();
+        Some(term.ended.lock().unwrap().take())
+    }
+
+    /// The token that names the item's terminal in its hook events.
+    #[cfg(test)]
+    pub fn token(&self, key: &str) -> Option<String> {
+        self.get(key).ok().map(|t| t.token.clone())
+    }
+
+    /// The conversation in the item's terminal ended, for `reason` (SessionEnd).
+    pub fn session_ended(&self, key: &str, reason: Option<String>) {
+        if let Ok(term) = self.get(key) {
+            *term.ended.lock().unwrap() = reason;
+        }
     }
 
     fn get(&self, key: &str) -> Result<Arc<Term>, String> {
@@ -263,7 +299,7 @@ impl TerminalManager {
             drop(out);
             let _ = term.master.lock().unwrap().resize(size);
             return Ok(Opened {
-                session_id: term.session_id.clone(),
+                session_id: term.session_id.lock().unwrap().clone(),
                 resumed: false,
                 reattached: true,
             });
@@ -287,6 +323,8 @@ impl TerminalManager {
         for var in PARENT_SESSION_ENV {
             cmd.env_remove(var);
         }
+        let token = uuid::Uuid::new_v4().simple().to_string();
+        cmd.env(crate::hooks::TERMINAL_ENV, &token);
         let mut child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
         drop(pair.slave);
         tracing::info!(
@@ -301,7 +339,9 @@ impl TerminalManager {
 
         let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
         let term = Arc::new(Term {
-            session_id: plan.session_id.clone(),
+            token,
+            session_id: Mutex::new(plan.session_id.clone()),
+            ended: Mutex::default(),
             writer: Mutex::new(pair.master.take_writer().map_err(|e| e.to_string())?),
             killer: Mutex::new(child.clone_killer()),
             pid: child.process_id(),

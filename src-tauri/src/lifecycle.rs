@@ -252,9 +252,9 @@ fn remove(
             ));
         }
     }
-    if let Some(transcript) = item.transcript_path.as_deref()
-        && remove_transcript(transcript)
-    {
+    // The current conversation and those before it (e.g. before a `/clear`).
+    let transcripts = item.transcript_path.iter().chain(&item.past_transcripts);
+    if transcripts.filter(|t| remove_transcript(t)).count() > 0 {
         removed.push("the Claude session transcript".to_owned());
     }
     if !item.is_task() {
@@ -603,6 +603,7 @@ mod tests {
             cleanup_blockers: None,
             task_id: None,
             starred: false,
+            past_transcripts: vec![],
         }
     }
 
@@ -799,9 +800,20 @@ mod tests {
             );
 
             std::fs::remove_file(wt.join("x.txt")).unwrap();
+            // Its conversation, and the one before a `/clear`.
+            let transcripts = [app.path("t1.jsonl"), app.path("t2.jsonl")];
+            for t in &transcripts {
+                write(t, "{}\n");
+            }
+            app.state.store.set_session(task, "s1").unwrap();
+            let started = |t: &Path| app.state.store.mark_session_started(task, Some(t));
+            started(&transcripts[0]).unwrap();
+            app.state.store.switch_session(task, "s2").unwrap();
+            started(&transcripts[1]).unwrap();
             let Cleanup::Cleaned { removed } = clean_up(&app.state, task).unwrap() else {
                 panic!("nothing is lost now");
             };
+            assert!(transcripts.iter().all(|t| !t.exists()), "{removed:?}");
             assert!(
                 removed.iter().any(|r| r.contains("proj_task1")),
                 "{removed:?}"

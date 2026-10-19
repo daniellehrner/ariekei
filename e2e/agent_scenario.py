@@ -276,6 +276,23 @@ try:
     print("[restart] conversation resumed;", review_marker(s))
     s.screenshot(os.path.join(shots, "agent-restart.png"))
 
+    # `/clear` goes on in a new conversation (a new session id): the agent is not stopped, its
+    # hooks still arrive, and the new conversation is the one to resume.
+    tab(s, "Terminal")
+    db = sqlite3.connect(os.path.join(data, "ariekei.db"))
+    before = db.execute("SELECT session_id, transcript_path FROM work_items WHERE id = ?", (item_id,)).fetchone()
+    keys(s, "/clear")
+    keys(s, ENTER)
+    wait_screen(s, key, "(no content)", timeout=15)
+    time.sleep(1)
+    equal("/clear does not stop the agent", (row_info(s, 42) or {}).get("agent"), "ready")
+    st = prompt(s, 42, "Hello after clearing")
+    after = db.execute("SELECT session_id, transcript_path, past_transcripts FROM work_items WHERE id = ?", (item_id,)).fetchone()
+    db.close()
+    print("[clear]", st, "| session", before[0][:8], "->", (after[0] or "")[:8])
+    equal("the turn after /clear is seen", st, "finished")
+    check("the new conversation is the item's", after[0] != before[0] and after[1] and before[1] in json.loads(after[2] or "[]"), after)
+
     # Quitting (closing the last window) while a background job runs asks first, naming the
     # agent, its worktree and the job; Cancel keeps everything, Quit anyway quits.
     tab(s, "Terminal")

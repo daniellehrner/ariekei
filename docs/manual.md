@@ -218,6 +218,10 @@ The Terminal tab is your installed `claude`, running in the item's worktree. Eve
 know from Claude Code works there, including slash commands. Keys typed in the terminal belong
 to Claude Code, not to Ariekei.
 
+After `/clear` the status follows the new conversation, and it is the one Ariekei resumes from
+then on (Done deletes both). A conversation you pick with `/resume` is followed while the
+terminal runs, but the item keeps its own one to resume.
+
 The first time Claude Code sees a repository, it asks whether to trust it, with "No, exit"
 preselected. Choose to trust it to continue.
 
@@ -507,8 +511,8 @@ Cleanup also waits for an agent in the middle of a turn, e.g. one that merged it
 is still wrapping up: the item is cleaned up on the first poll after the turn ends, and
 **Done** is refused until then.
 
-Cleanup removes the agent process and its Claude Code session transcript, the worktree and its
-branch **if Ariekei created them** (worktrees Ariekei adopted are only detached, and so is one
+Cleanup removes the agent process and its Claude Code session transcripts (also those of
+conversations before a `/clear`), the worktree and its branch **if Ariekei created them** (worktrees Ariekei adopted are only detached, and so is one
 another item works in too; a local branch Ariekei only reused, such as your `main`, is kept),
 Ariekei's ref for the PR head, its context file, and the Inbox entry. Adding the PR or issue
 again with Browse brings it back while it is open. It also comes back by itself when it is
