@@ -373,6 +373,9 @@ pub fn record(state: &crate::AppState, event: &HookEvent) -> Option<TaskLinks> {
     if event.hook_event_name == "SessionEnd" {
         state.terminals.session_ended(&key, event.reason.clone());
     }
+    if event.hook_event_name == "UserPromptSubmit" {
+        state.terminals.prompt_submitted(&key);
+    }
     if event.hook_event_name == "UserPromptSubmit"
         && let Some(id) = id
         && state

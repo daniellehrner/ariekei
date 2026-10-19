@@ -356,7 +356,8 @@ After sending, the agent's Terminal opens, where the answer appears; the Review 
 place. For a PR that a task works on, the question goes to the task's agent and the task's
 Terminal opens. While the agent waits for permission nothing can be sent, since the text would
 answer its prompt: the box says so, with **Answer in Terminal**, and you can write the question
-meanwhile. While the agent works, it reads the question when its turn ends.
+meanwhile. While the agent works, it reads the question when its turn ends. If the agent does not
+take the question (a dialog open in its Terminal, say), the box stays open with it.
 
 ### Commenting
 
@@ -370,7 +371,8 @@ Everything of your review is in the dock under the diff.
 4. Send them:
    - **Send to agent** (items with an agent) delivers all drafts to the agent as one message.
      While the agent waits for permission it is held back, since the text would answer its
-     prompt.
+     prompt. The drafts go once Claude Code has taken the message; if it does not (a dialog
+     open in its Terminal, say), they stay and Ariekei says so.
    - **Submit to GitHub…** opens a panel above it with an optional **Summary** and the event
      **Comment**, **Approve** or **Request changes** (only **Comment** on your own PR). The
      form tells you which drafts become line comments (lines in the PR's diff at its head

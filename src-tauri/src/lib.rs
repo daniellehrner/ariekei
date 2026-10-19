@@ -360,13 +360,17 @@ fn term_close(state: State<'_, AppState>, id: i64) {
     state.terminals.close(&id.to_string())
 }
 
+/// How long an idle agent has to accept a message sent to it (`send_to_agent`).
+const AGENT_TAKES: Duration = Duration::from_secs(10);
+
 /// Sends `text` to the item's agent as one message (e.g. review feedback).
 #[tauri::command]
 async fn agent_send(app: tauri::AppHandle, id: i64, text: String) -> Res<()> {
     blocking(app, move |s| {
         let agent = workitem::agent_of(s, id)?;
         workitem::ensure_on_branch(s, agent)?;
-        s.terminals.send_to_agent(&agent.to_string(), &text)
+        s.terminals
+            .send_to_agent(&agent.to_string(), &text, AGENT_TAKES)
     })
     .await
 }
@@ -378,7 +382,8 @@ async fn send_pr_feedback(app: tauri::AppHandle, id: i64) -> Res<()> {
         let agent = workitem::agent_of(s, id)?;
         workitem::ensure_on_branch(s, agent)?;
         let message = workitem::comments_message(s, id)?;
-        s.terminals.send_to_agent(&agent.to_string(), &message)
+        s.terminals
+            .send_to_agent(&agent.to_string(), &message, AGENT_TAKES)
     })
     .await
 }

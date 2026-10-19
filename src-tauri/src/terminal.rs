@@ -17,7 +17,7 @@ use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 use tauri::ipc::{Channel, InvokeResponseBody};
 
@@ -106,6 +106,8 @@ struct Term {
     last_output: Mutex<Instant>,
     /// The agent finished a turn since the user last opened the item's review.
     unreviewed: AtomicBool,
+    /// How many prompts the agent took (UserPromptSubmit), and a signal for each.
+    prompts: (Mutex<u64>, Condvar),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -424,6 +426,7 @@ impl TerminalManager {
             detail: Mutex::default(),
             last_output: Mutex::new(Instant::now()),
             unreviewed: AtomicBool::new(false),
+            prompts: Default::default(),
         });
         // Registered before output starts, so the first hook finds the item.
         self.terms
@@ -527,12 +530,42 @@ impl TerminalManager {
             .map_err(|e| e.to_string())
     }
 
-    /// Types `text` into the agent's prompt as one paste and submits it.
-    pub fn send_to_agent(&self, key: &str, text: &str) -> Result<(), String> {
+    /// Types `text` into the agent's prompt as one paste and submits it. Unless the agent is
+    /// in a turn (then Claude Code queues it for later), it must take the message within
+    /// `wait` (UserPromptSubmit), or this fails, so what was sent can be kept: at a dialog
+    /// (the trust prompt, a question) or in a menu Enter does something else instead.
+    pub fn send_to_agent(&self, key: &str, text: &str, wait: Duration) -> Result<(), String> {
+        let term = self.get(key)?;
+        let status = term.status.lock().unwrap().0;
+        if status == AgentStatus::WaitingForPermission {
+            return Err("the agent is waiting for your answer; answer it in its Terminal".into());
+        }
+        let before = *term.prompts.0.lock().unwrap();
         self.write(key, format!("\x1b[200~{text}\x1b[201~").as_bytes())?;
         // Give the TUI a moment to finish handling the paste before Enter arrives.
         std::thread::sleep(Duration::from_millis(80));
-        self.write(key, b"\r")
+        self.write(key, b"\r")?;
+        if status == AgentStatus::Working {
+            return Ok(());
+        }
+        let (prompts, taken) = &term.prompts;
+        let (prompts, _) = taken
+            .wait_timeout_while(prompts.lock().unwrap(), wait, |n| *n == before)
+            .unwrap();
+        if *prompts == before {
+            return Err(
+                "the agent did not take it; see its Terminal (a dialog may be open there)".into(),
+            );
+        }
+        Ok(())
+    }
+
+    /// The agent in the item's terminal took a prompt (UserPromptSubmit).
+    pub fn prompt_submitted(&self, key: &str) {
+        if let Ok(term) = self.get(key) {
+            *term.prompts.0.lock().unwrap() += 1;
+            term.prompts.1.notify_all();
+        }
     }
 
     /// Ends the item's `claude` process; its conversation stays resumable.
@@ -695,7 +728,7 @@ mod tests {
             app.start_agent(task);
             app.state
                 .terminals
-                .send_to_agent(&key, "Exit with code 3")
+                .write(&key, b"Exit with code 3\r")
                 .unwrap();
             app.wait_for(|| app.state.terminals.status(&key).is_none());
             app.wait_for(|| !app.events.notices().is_empty());
@@ -710,9 +743,40 @@ mod tests {
             let err = app
                 .state
                 .terminals
-                .send_to_agent(&key, "hello")
+                .send_to_agent(&key, "hello", Duration::ZERO)
                 .unwrap_err();
             assert!(err.contains("not running"), "{err}");
+        }
+
+        #[test]
+        fn a_message_counts_as_sent_once_the_agent_takes_it() {
+            let app = TestApp::new();
+            let task = create_task(&app.state, Some(app.repo.clone()), "Send", "", "").unwrap();
+            app.start_agent(task);
+            let key = task.to_string();
+            let terms = &app.state.terminals;
+            let wait = Duration::from_millis(300);
+
+            // No UserPromptSubmit: e.g. a dialog took the Enter. (The test's hooks go nowhere.)
+            let err = terms.send_to_agent(&key, "first", wait).unwrap_err();
+            assert!(err.contains("did not take it"), "{err}");
+
+            std::thread::scope(|s| {
+                s.spawn(|| {
+                    std::thread::sleep(Duration::from_millis(150));
+                    terms.prompt_submitted(&key);
+                });
+                terms
+                    .send_to_agent(&key, "second", Duration::from_secs(5))
+                    .unwrap();
+            });
+
+            // In a turn Claude Code queues it for later; waiting, it would answer the prompt.
+            terms.report(&key, AgentStatus::Working, None);
+            terms.send_to_agent(&key, "third", wait).unwrap();
+            terms.report(&key, AgentStatus::WaitingForPermission, None);
+            let err = terms.send_to_agent(&key, "fourth", wait).unwrap_err();
+            assert!(err.contains("waiting for your answer"), "{err}");
         }
 
         #[test]

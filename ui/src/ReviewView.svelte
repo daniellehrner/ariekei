@@ -562,14 +562,21 @@
     }
   }
 
+  // The drafts go once the agent took them (an open dialog can take the Enter instead); that
+  // can take a few seconds, and drafts added meanwhile stay.
+  let sendingToAgent = $state(false);
   async function sendToAgent() {
-    if (!view.comments.length || agentWaits || agentAway) return;
+    if (!view.comments.length || agentWaits || agentAway || sendingToAgent) return;
+    const sent = view.comments;
+    sendingToAgent = true;
     try {
-      await api.agentSend(id, feedbackMessage(view.comments));
-      say(`Sent ${view.comments.length} comment${view.comments.length > 1 ? "s" : ""} to the agent.`);
-      view.comments = [];
+      await api.agentSend(id, feedbackMessage(sent));
+      say(`Sent ${sent.length} comment${sent.length > 1 ? "s" : ""} to the agent.`);
+      view.comments = view.comments.filter((c) => !sent.includes(c));
     } catch (e) {
       error = `Could not send to the agent: ${e}`;
+    } finally {
+      sendingToAgent = false;
     }
   }
 
@@ -869,7 +876,7 @@
             {:else if canSendToAgent && agentWaits}
               <span class="waits">The agent is waiting for your permission — answer it before sending.</span>
             {/if}
-            {#if canSendToAgent}<Button size="sm" variant="agent" mark="agent" onclick={sendToAgent} disabled={agentWaits || !!agentAway} data-send-agent>Send to agent</Button>{/if}
+            {#if canSendToAgent}<Button size="sm" variant="agent" mark="agent" onclick={sendToAgent} disabled={agentWaits || !!agentAway} loading={sendingToAgent} data-send-agent>Send to agent</Button>{/if}
             {#if review?.prHead}
               <span class="submit-anchor">
                 <Button size="sm" mark="gh" onclick={openSubmit} aria-expanded={submitting} data-open-submit>Submit to GitHub…</Button>
