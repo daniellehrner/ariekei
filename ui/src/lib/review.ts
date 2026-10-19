@@ -80,3 +80,11 @@ export function rangeOf(review: ReviewState, scope: string): [string, string | n
   if (scope === "all") return [review.base, head];
   return [`${scope}^`, scope];
 }
+
+/** What a fetch from GitHub changed in the review shown: the PR's head (its new commits), or
+ *  what it is compared with. A worktree's head is local (the agent's commits are not news). */
+export function whatMoved(shown: ReviewState, next: ReviewState): "head" | "base" | null {
+  if (next.mode === "ref" && next.head !== shown.head) return "head";
+  if (next.base !== shown.base || next.baseRef !== shown.baseRef) return "base";
+  return null;
+}

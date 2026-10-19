@@ -40,6 +40,7 @@
   import Mark from "./controls/Mark.svelte";
   import Pill from "./controls/Pill.svelte";
   import Segmented from "./controls/Segmented.svelte";
+  import Spinner from "./controls/Spinner.svelte";
   import Toggle from "./controls/Toggle.svelte";
   import { api, type ReviewState } from "./lib/api";
   import { ariekeiHighlight, ariekeiTheme } from "./lib/codemirrorTheme";
@@ -54,7 +55,7 @@
   import { languageFor } from "./lib/languages";
   import { layout } from "./lib/layout.svelte";
   import type { Area } from "./lib/popover";
-  import { flatten, neighbourFile, nextChange, rangeOf, scopeOf, sections, type ReviewFile } from "./lib/review";
+  import { flatten, neighbourFile, nextChange, rangeOf, scopeOf, sections, whatMoved, type ReviewFile } from "./lib/review";
   import { askMessage, classify, feedbackMessage, refLines, reviewBody, type CodeRef, type LineComment, type Ranges } from "./lib/reviewComments";
 
   let {
@@ -66,6 +67,7 @@
     agentItem,
     agentStatus,
     onterminal,
+    polls = 0,
   }: {
     id: number;
     view: ReviewViewState;
@@ -79,9 +81,16 @@
     agentStatus?: string;
     /// Shows the agent's terminal (where its answer appears); after asking it about code.
     onterminal?: () => void;
+    /// Counts the polls of the item's repo: after each, GitHub may have newer (see `check`).
+    polls?: number;
   } = $props();
 
   let review = $state<ReviewState | null>(null);
+  // GitHub has newer than what shows (`check` found it): its new commits, or a moved base.
+  // The diff stays as it is until the user reloads.
+  let newer = $state<"head" | "base" | null>(null);
+  // Nothing shows yet, and the fetch it waits for runs.
+  let fetching = $state(false);
   let files: ReviewFile[] = $state([]);
   let error: string | null = $state(null);
   // n / p go from change to change, and on into the next (previous) file at the last (first)
@@ -196,14 +205,53 @@
   const shownRev = $derived(range ? (range[1] ?? (review?.dirty ? null : review?.head ?? null)) : null);
   const editable = $derived(range?.[1] === null);
 
+  // What the clone has, at once; then `check` asks GitHub in the background.
   async function load(refresh = false) {
     error = null;
+    if (refresh) newer = null;
     try {
       review = await api.reviewState(id, refresh);
     } catch (e) {
-      error = String(e);
+      if (refresh) {
+        error = String(e);
+        return;
+      }
+      // Nothing to show yet (e.g. the PR head is not fetched): fetched first.
+      fetching = true;
+      try {
+        review = await api.reviewState(id, true);
+      } catch (e) {
+        error = String(e);
+      } finally {
+        fetching = false;
+      }
+      return;
+    }
+    if (!refresh) check();
+  }
+
+  // Whether GitHub has newer than what shows: fetched in the background (the backend goes to
+  // GitHub only when a poll saw a new head, or the base was not fetched lately). Offline, the
+  // review as it was fetched will do.
+  let checking = false;
+  async function check() {
+    const shown = review;
+    if (!shown || checking) return;
+    checking = true;
+    try {
+      if (!(await api.reviewFetch(id))) return;
+      const next = await api.reviewState(id);
+      if (review === shown) newer = whatMoved(shown, next) ?? newer;
+    } catch (e) {
+      console.warn(`review: could not check GitHub for newer: ${e}`);
+    } finally {
+      checking = false;
     }
   }
+  $effect(() => {
+    void polls;
+    untrack(check);
+  });
 
   async function loadFiles() {
     if (!range) return;
@@ -760,6 +808,16 @@
       {#if errorTerminal && onterminal}<Button size="sm" variant="quiet" icon="terminal" onclick={onterminal}>Open Terminal</Button>{/if}
       {#if errorReload}<Button size="sm" variant="quiet" icon="refresh" onclick={reload} data-error-reload>Reload</Button>{/if}
       <IconButton icon="x" label="Dismiss" size={22} onclick={() => { error = null; errorTerminal = false; errorReload = false; }} /></div>
+  {/if}
+  {#if fetching}
+    <div class="note" role="status" data-fetching><Spinner /><span class="grow">Fetching from GitHub…</span></div>
+  {/if}
+  {#if newer && review}
+    <div class="note gh" role="status" data-newer={newer}>
+      <span class="lead"><Mark who="gh" /></span>
+      <span class="grow">{newer === "head" ? "The PR has new commits on GitHub." : `${review.baseRef} moved on GitHub.`}</span>
+      <Button size="sm" variant="quiet" icon="refresh" onclick={reload} data-newer-reload>Reload</Button>
+    </div>
   {/if}
   {#if notice}
     <div class="note" class:gh={!!noticeUrl} role="status" data-notice>

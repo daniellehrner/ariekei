@@ -453,10 +453,10 @@ async fn pr_conversation(app: tauri::AppHandle, id: i64) -> Res<github::Conversa
     blocking(app, move |s| workitem::conversation(s, id)).await
 }
 
-/// Fetches the PR head into the clone for reviewing without a worktree.
+/// The conversation as it was last loaded, shown while `pr_conversation` loads.
 #[tauri::command]
-async fn fetch_pr(app: tauri::AppHandle, id: i64) -> Res<String> {
-    blocking(app, move |s| workitem::fetch_pr(s, id)).await
+fn cached_conversation(state: State<'_, AppState>, id: i64) -> Res<Option<serde_json::Value>> {
+    workitem::cached_conversation(&state, id)
 }
 
 #[tauri::command]
@@ -536,6 +536,15 @@ async fn review_state(
 ) -> Res<workitem::ReviewState> {
     blocking(app, move |s| {
         workitem::review_state(s, id, refresh.unwrap_or(false))
+    })
+    .await
+}
+
+/// Fetches what the review compares if GitHub may have newer; true if that moved it.
+#[tauri::command]
+async fn review_fetch(app: tauri::AppHandle, id: i64, force: Option<bool>) -> Res<bool> {
+    blocking(app, move |s| {
+        workitem::review_fetch(s, id, force.unwrap_or(false))
     })
     .await
 }
@@ -717,6 +726,7 @@ pub fn run() {
             agent_send,
             send_pr_feedback,
             review_state,
+            review_fetch,
             review_files,
             review_file,
             save_file,
@@ -726,7 +736,7 @@ pub fn run() {
             set_starred,
             create_task,
             pr_conversation,
-            fetch_pr,
+            cached_conversation,
             comment_ranges,
             submit_review,
             reply_comment,

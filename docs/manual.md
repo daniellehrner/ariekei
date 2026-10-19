@@ -193,6 +193,11 @@ on the tab you last used for it.
 Each item remembers its tab, review scope, selected file and draft comments, so you can switch
 between items freely.
 
+An item shows at once what Ariekei loaded before: Overview and Comments show the PR or issue as
+GitHub last gave it, and replace that by themselves once GitHub answers (and after every poll).
+The Review shows what your clone has, and asks GitHub in the background (see
+[the review bar](#7-reviewing-changes)).
+
 ### Starting work on a pull request
 
 **Start working** on a PR creates `../<clone>_pr<N>` next to your clone, on the PR's branch and
@@ -207,8 +212,8 @@ branch): git checks a branch out in one place only, so the agent works where the
 A reused branch is fast-forwarded to the PR head; if it has commits of its own it is left as it
 is and Ariekei tells you. See [Your own checkout](#your-own-checkout) for what changes then.
 
-You do not need a worktree to review someone else's PR: opening any PR fetches its head
-read-only, and the Review tab works on that.
+You do not need a worktree to review someone else's PR: its Review tab fetches the PR head
+read-only (the first time, and whenever the PR has new commits), and works on that.
 
 ## 6. Working with the agent
 
@@ -293,9 +298,12 @@ One row above the diff:
 - The **scope** menu: **All changes vs `<base>`** (from the merge base to the head, like
   GitHub's Files tab), or **a single commit**, to review a change in small steps. Each commit
   shows how many files it changes. **↑** / **↓**, **Enter** and **Esc** work in the menu.
-  The review fetches the base branch as it is on GitHub when it opens (with a worktree, on
-  **↻ Reload** too), so a PR rebased onto a newer base, or retargeted to another branch, shows
-  only its own changes.
+  The review opens on what your clone has, then checks GitHub in the background: for the PR
+  head when a poll saw new commits, and for the base branch at most every 10 minutes. When that
+  brings something new, a bar says **The PR has new commits on GitHub** or **`<base>` moved on
+  GitHub**, and the diff stays as it is until you press its **Reload** (or **↻ Reload**, which
+  always fetches both). So a PR rebased onto a newer base, or retargeted to another branch, shows
+  only its own changes, and nothing changes under you while you read.
   If the head has no commit in common with the base, the review says so.
 - The head commit and the number of commits, and a warning for uncommitted changes. Hover for
   where the diff comes from: the **Worktree** (includes uncommitted changes) or the **PR head**
@@ -637,9 +645,10 @@ activity, a grey bar for lifecycle news.
 
 ## 16. Where your data lives
 
-- Ariekei's state (work items, stars, view state, drafts) is in an SQLite database
-  `ariekei.db` in the app data directory. One Ariekei runs on it at a time: starting Ariekei
-  again brings the running one's window to the front.
+- Ariekei's state (work items, stars, view state, drafts, and each item's conversation as
+  GitHub last gave it) is in an SQLite database `ariekei.db` in the app data directory. One
+  Ariekei runs on it at a time: starting Ariekei again brings the running one's window to the
+  front.
 - Worktrees are created next to your clone (`../<clone>_pr<N>`, `_issue<N>`, `_task<n>`).
 - Branches and Ariekei's refs live in your clone: `refs/ariekei/pull/<N>/head` holds the PR
   head fetched for read-only review.

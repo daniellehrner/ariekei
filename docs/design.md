@@ -93,6 +93,8 @@ told apart in grey-scale and with colour blindness:
   file count), the head commit and commit count, file navigation when the file panel is hidden,
   Save file while editing, the Whitespace and Unified toggles, then Reload, the file panel and
   the shortcuts.
+- **Newer on GitHub** is a GitHub-tinted note under the review bar (`Mark` gh, the text, a quiet
+  Reload): the diff never changes by itself while it is read.
 - **The file panel** (`--w-panel`) holds only the files: Review order | Tree, groups with 24 px
   headers, and your `Mark` on files with drafts.
 - **The dock** under the diff is the one home of your review: the hint, the line composer (with

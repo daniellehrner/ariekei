@@ -483,6 +483,9 @@ try:
     commit(upstream, "address review")
     git(upstream, "update-ref", "refs/pull/43/head", "feature/y")
     git(upstream, "checkout", "-q", "main")
+    data = json.load(open(os.path.join(gh_dir, "data.json")))
+    next(pr for pr in data["prs"] if pr["number"] == 43)["head_sha"] = git(upstream, "rev-parse", "feature/y")
+    json.dump(data, open(os.path.join(gh_dir, "data.json"), "w"))
 
     # A notice about another item, as the backend sends one while the window is focused
     # (notify.rs): clicking it opens that item, and it goes away.
@@ -503,8 +506,18 @@ try:
     select_row(s, 43)
     s.wait(".item header .title", timeout=30, text="#43")
     tab(s, "Review")
-    eventually("the push shows up in the review", lambda: s.js("return document.querySelector('.review .marker')?.textContent ?? ''"),
-               lambda v: "2 commits" in v, timeout=30)
+    # The review opens on what the clone has; once a poll sees the push, it offers it, and the
+    # diff stays as it is until the user reloads.
+    marker = lambda: s.js("return document.querySelector('.review .marker')?.textContent ?? ''")
+    eventually("the review opens on what it fetched before", marker, lambda v: "1 commit" in v, timeout=30)
+    s.js("document.querySelector('[data-refresh]').click()")
+    s.wait("[data-newer='head']", timeout=30)
+    s.screenshot(os.path.join(shots, "r5-newer.png"))
+    print("[newer] bar:", s.js("return document.querySelector('[data-newer]').textContent.trim()"), "| marker:", marker().strip())
+    check("the diff waits for Reload", "1 commit" in marker())
+    s.click(s.wait("[data-newer-reload]"))
+    eventually("Reload shows the push", marker, lambda v: "2 commits" in v, timeout=30)
+    check("and the bar goes", not s.find("[data-newer]"))
 
     # --- own PR (PR #42): GitHub does not let you approve it ---
     select_row(s, 42)

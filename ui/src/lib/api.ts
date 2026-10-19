@@ -223,8 +223,10 @@ export const api = {
   termResize: (id: number, cols: number, rows: number) => invoke<void>("term_resize", { id, cols, rows }),
   agentSend: (id: number, text: string) => invoke<void>("agent_send", { id, text }),
   sendPrFeedback: (id: number) => invoke<void>("send_pr_feedback", { id }),
-  /** `refresh`: as it is now (Reload), fetching its base even if it was fetched lately. */
+  /** As the clone has it; `refresh`: fetched from GitHub first (Reload, or nothing to show). */
   reviewState: (id: number, refresh = false) => invoke<ReviewState>("review_state", { id, refresh }),
+  /** Fetches what the review compares if GitHub may have newer; true if that moved it. */
+  reviewFetch: (id: number, force = false) => invoke<boolean>("review_fetch", { id, force }),
   reviewFiles: (id: number, from: string, to: string | null, ignoreWs: boolean) =>
     invoke<ReviewFile[]>("review_files", { id, from, to, ignoreWs }),
   reviewFile: (id: number, from: string, to: string | null, path: string, ignoreWs: boolean) =>
@@ -235,7 +237,8 @@ export const api = {
   setStarred: (id: number, starred: boolean) => invoke<void>("set_starred", { id, starred }),
   createTask: (title: string, notes: string, branch: string) => invoke<number>("create_task", { title, notes, branch }),
   conversation: (id: number) => invoke<Conversation>("pr_conversation", { id }),
-  fetchPr: (id: number) => invoke<string>("fetch_pr", { id }),
+  /** The conversation as it was last loaded: shown while `conversation` loads. */
+  cachedConversation: (id: number) => invoke<Conversation | null>("cached_conversation", { id }),
   // `commit`: the PR head the review shows, which the drafts' lines are from (GitHub's may be
   // newer by now).
   commentRanges: (id: number, paths: string[], commit: string) =>

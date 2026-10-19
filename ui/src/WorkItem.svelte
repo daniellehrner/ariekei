@@ -48,9 +48,9 @@
   let ui = $state<ItemUi | null>(null);
   let conv = $state<Conversation | null>(null);
   let convError: string | null = $state(null);
-  // Without a worktree the review reads the PR head fetched into the clone.
-  let fetched = $state(false);
   let preparing = $state(false);
+  // Polls of this repo since the item opened: the review checks GitHub for newer after each.
+  let polls = $state(0);
   // Times the user started the agent again after it exited (a new terminal view each time).
   let restarts = $state(0);
   let error: string | null = $state(null);
@@ -113,15 +113,6 @@
     }
   }
 
-  async function fetchHead(current: number) {
-    try {
-      await api.fetchPr(current);
-      if (current === id) fetched = true;
-    } catch (e) {
-      if (current === id) error = `Could not fetch the PR head: ${e}`;
-    }
-  }
-
   // Load everything for the item whenever another item is shown. Only `id` is tracked:
   // `row` is a new object after every Inbox reload, which must not reset the view.
   $effect(() => {
@@ -133,7 +124,6 @@
     ui = null;
     conv = null;
     convError = error = notice = null;
-    fetched = false;
     blockers = null;
     confirmDone = false;
     losses = null;
@@ -153,15 +143,22 @@
     });
     api.markSeen(current).then(onchanged);
     api.setActiveItem(current);
+    // As it was last loaded, at once; the current one replaces it when GitHub answers.
+    if (!isTask) {
+      api.cachedConversation(current).then((c) => {
+        if (current === id && c && !conv) conv = c;
+      }, () => {});
+    }
     loadConversation(current);
-    if (!row.worktree && row.kind === "pr") fetchHead(current);
   }
 
   // GitHub changes (including the user's own comments) arrive with the next poll.
   onMount(() => {
     // Every window hears every repo's polls; only this repo's matter here.
     const unlisten = listen<number>("inbox-changed", (e) => {
-      if (e.payload === repoId) loadConversation(id);
+      if (e.payload !== repoId) return;
+      loadConversation(id);
+      polls++;
     });
     return () => unlisten.then((f) => f());
   });
@@ -450,13 +447,9 @@
             <p class="hint">{convError ? `Could not load the ${row.kind === "pr" ? "pull request" : "issue"} from GitHub: ${convError}` : "Loading…"}</p>
           {/if}
         {:else if tab === "review"}
-          {#if row.worktree || fetched}
-            <ReviewView {id} bind:view={ui.review} onchanged={changed} canSendToAgent={row.agentItem != null} {agentAway} agentItem={row.agentItem ?? undefined}
-              agentStatus={row.agentItem == null ? undefined : (agents[String(row.agentItem)]?.status ?? (row.agentItem === row.id ? row.agent ?? undefined : undefined))}
-              onterminal={showAgent} />
-          {:else}
-            <p class="hint"><Icon name="lock" size={14} />Read-only · Fetching the PR head…</p>
-          {/if}
+          <ReviewView {id} bind:view={ui.review} onchanged={changed} canSendToAgent={row.agentItem != null} {agentAway} agentItem={row.agentItem ?? undefined}
+            agentStatus={row.agentItem == null ? undefined : (agents[String(row.agentItem)]?.status ?? (row.agentItem === row.id ? row.agent ?? undefined : undefined))}
+            onterminal={showAgent} {polls} />
         {/if}
       {/key}
     </div>

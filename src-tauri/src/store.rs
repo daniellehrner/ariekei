@@ -121,6 +121,11 @@ ALTER TABLE work_items ADD COLUMN branch_created INTEGER NOT NULL DEFAULT 1;
 -- `/clear` in its terminal; cleanup deletes them with the current one.
 ALTER TABLE work_items ADD COLUMN past_transcripts TEXT;
 "#,
+    r#"
+-- The item's conversation as GitHub last gave it (JSON): shown at once when the item opens,
+-- while the current one loads.
+ALTER TABLE work_items ADD COLUMN conversation TEXT;
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -748,6 +753,27 @@ impl Store {
 
     pub fn set_ui_state(&self, id: i64, state: &serde_json::Value) -> Result<(), String> {
         self.update(id, "ui_state = ?2", state.to_string())
+    }
+
+    /// The item's conversation as it was last loaded (see `set_conversation`).
+    pub fn conversation(&self, id: i64) -> Result<Option<serde_json::Value>, String> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT conversation FROM work_items WHERE id = ?1",
+            [id],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(err)
+        .map(|s| s.flatten().and_then(|s| serde_json::from_str(&s).ok()))
+    }
+
+    pub fn set_conversation(
+        &self,
+        id: i64,
+        conversation: &serde_json::Value,
+    ) -> Result<(), String> {
+        self.update(id, "conversation = ?2", conversation.to_string())
     }
 }
 

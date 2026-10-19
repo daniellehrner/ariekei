@@ -773,10 +773,23 @@ pub fn conversation(state: &AppState, id: i64) -> Result<github::Conversation, S
     if item.is_task() {
         return Err("a task has no conversation on GitHub".into());
     }
-    if item.kind == "issue" {
-        return github::issue_conversation(&repo.owner, &repo.name, item.number).map(|(c, _)| c);
+    let conv = if item.kind == "issue" {
+        github::issue_conversation(&repo.owner, &repo.name, item.number).map(|(c, _)| c)?
+    } else {
+        github::conversation(&repo.owner, &repo.name, item.number)?
+    };
+    // Kept for the next time the item opens (`cached_conversation`).
+    match serde_json::to_value(&conv) {
+        Ok(json) => state.store.set_conversation(id, &json)?,
+        Err(e) => tracing::warn!("item {id}: could not keep its conversation: {e}"),
     }
-    github::conversation(&repo.owner, &repo.name, item.number)
+    Ok(conv)
+}
+
+/// The item's conversation as GitHub last gave it, if it was loaded before: the item shows it
+/// at once while `conversation` loads the current one.
+pub fn cached_conversation(state: &AppState, id: i64) -> Result<Option<serde_json::Value>, String> {
+    state.store.conversation(id)
 }
 
 // --- review -------------------------------------------------------------------------
@@ -791,14 +804,6 @@ fn review_dir(item: &WorkItem, repo: &Repo) -> PathBuf {
 }
 
 use crate::worktree::pull_ref;
-
-/// Fetches the PR head and its base branch into the main clone, for reviewing without a
-/// worktree. Returns the head commit.
-pub fn fetch_pr(state: &AppState, id: i64) -> Result<String, String> {
-    let (item, repo) = item_repo(state, id)?;
-    let pr = summary(&item)?;
-    worktree::fetch_pr_head(&repo.path, &repo.base_remote, item.number, &pr.base_ref)
-}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -874,23 +879,25 @@ fn review(state: &AppState, id: i64) -> Result<Review, String> {
     })
 }
 
-/// Fetches the branch a worktree's review compares with, as it is now (when the review loads,
-/// not for each file). It was fetched when the worktree was made, and a `git pull` there need
-/// not update it (for a fork's PR it fetches the fork): a PR rebased onto a newer base would
-/// show the base's new commits as its own, and a retargeted one (a stacked PR whose parent
-/// merged) be compared with a branch it no longer targets. Without a worktree, `fetch_pr`
-/// fetches it with the head.
+/// Fetches what the review of item `id` compares, when GitHub may have newer, and says whether
+/// that moved it. Without a worktree that is the PR head (into `refs/ariekei/pull/<N>/head`)
+/// and its base; with one, the base branch only: it was fetched when the worktree was made, and
+/// a `git pull` there need not update it (for a fork's PR it fetches the fork), so a PR rebased
+/// onto a newer base would show the base's new commits as its own, and a retargeted one (a
+/// stacked PR whose parent merged) be compared with a branch it no longer targets.
 ///
-/// It is a round trip to GitHub, and the Review tab loads whenever it is shown: so only when
-/// the item's base was not fetched in the last `BASE_FETCH_EVERY` (or it is another branch
-/// now), or `refresh` (the user's Reload).
-fn fetch_base(state: &AppState, id: i64, refresh: bool) -> Result<(), String> {
+/// The review shows what the clone has at once and calls this in the background (whenever the
+/// tab is shown, and after each poll): so it goes to GitHub only when the poll saw a head the
+/// clone lacks, when the base was not fetched in the last `BASE_FETCH_EVERY` (or it is another
+/// branch now), or `force` (the user's Reload).
+pub fn review_fetch(state: &AppState, id: i64, force: bool) -> Result<bool, String> {
     // When each (clone, item, base branch) was fetched.
     type Fetched = HashMap<(PathBuf, i64, String), Instant>;
     static FETCHED: Mutex<Option<Fetched>> = Mutex::new(None);
     let (item, repo) = item_repo(state, id)?;
-    if !item.worktree_path.as_ref().is_some_and(|p| p.exists()) {
-        return Ok(());
+    let worktree = item.worktree_path.as_ref().is_some_and(|p| p.exists());
+    if !worktree && item.kind != "pr" {
+        return Ok(false);
     }
     let base = base_ref_of(&item, &repo)?;
     let key = (repo.path.clone(), id, base.clone());
@@ -900,27 +907,44 @@ fn fetch_base(state: &AppState, id: i64, refresh: bool) -> Result<(), String> {
         .get_or_insert_with(HashMap::new)
         .get(&key)
         .is_some_and(|at| at.elapsed() < BASE_FETCH_EVERY);
-    if recent && !refresh {
-        return Ok(());
+    let at = |r: &str| git::git_str(&repo.path, &["rev-parse", "--verify", "--quiet", r]).ok();
+    let head = (!worktree).then(|| pull_ref(item.number));
+    let tracking = format!("refs/remotes/{}/{base}", repo.base_remote);
+    let before = (head.as_deref().and_then(at), at(&tracking));
+    let new_head = match &head {
+        Some(_) => Some(summary(&item)?.head_sha).filter(|h| before.0.as_ref() != Some(h)),
+        None => None,
+    };
+    if recent && new_head.is_none() && !force {
+        return Ok(false);
     }
-    worktree::fetch(&repo.path, &repo.base_remote, &base)?;
+    if worktree {
+        worktree::fetch(&repo.path, &repo.base_remote, &base)?;
+    } else {
+        worktree::fetch_pr_head(&repo.path, &repo.base_remote, item.number, &base)?;
+    }
     FETCHED
         .lock()
         .unwrap()
         .get_or_insert_with(HashMap::new)
         .insert(key, Instant::now());
-    Ok(())
+    Ok((head.as_deref().and_then(at), at(&tracking)) != before)
 }
 
-/// How long a worktree review's base counts as fresh (see `fetch_base`).
+/// How long a review's base counts as fresh (see `review_fetch`).
 const BASE_FETCH_EVERY: Duration = Duration::from_secs(10 * 60);
 
-/// The review of item `id`; `refresh`: the user asked for it as it is now (Reload).
+/// The review of item `id` as the clone has it; `refresh`: as GitHub has it now, fetched first
+/// (the user's Reload, or nothing to show yet).
 pub fn review_state(state: &AppState, id: i64, refresh: bool) -> Result<ReviewState, String> {
-    // Not fatal (e.g. offline): the base as it was fetched before will do.
-    let fetched = fetch_base(state, id, refresh);
+    // Not fatal (e.g. offline): what was fetched before will do.
+    let fetched = if refresh {
+        review_fetch(state, id, true).map(|_| ())
+    } else {
+        Ok(())
+    };
     if let Err(e) = &fetched {
-        tracing::warn!("review of item {id}: could not fetch its base: {e}");
+        tracing::warn!("review of item {id}: could not fetch: {e}");
     }
     let r = review(state, id).map_err(|e| match &fetched {
         Err(f) => format!("{e} ({f})"),
@@ -1220,13 +1244,13 @@ mod tests {
         );
         app.poll().unwrap();
         let id = app.item(5).id;
-        fetch_pr(&app.state, id).unwrap();
+        assert!(review_fetch(&app.state, id, false).unwrap());
         let seen = review_state(&app.state, id, false).unwrap().pr_head;
 
         // The author pushes again while the review is open, and the poll sees it.
         push(&[2, 15]);
         app.poll().unwrap();
-        fetch_pr(&app.state, id).unwrap();
+        assert!(review_fetch(&app.state, id, false).unwrap());
         assert_ne!(summary(&app.item(5)).unwrap().head_sha, seen);
 
         let paths = ["f.txt".to_owned()];
@@ -1245,6 +1269,52 @@ mod tests {
         submit_review(&app.state, id, "COMMENT", "", &[comment], &seen).unwrap();
         let posted = app.writes().pop().unwrap();
         assert_eq!(posted["body"]["commit_id"], seen.as_str());
+    }
+
+    #[test]
+    fn a_review_without_a_worktree_fetches_only_what_github_has_new() {
+        let app = TestApp::new();
+        let push = |content: &str| {
+            app.push_to("feat", &[("f.txt", content)], "bob");
+            git(&app.upstream, &["update-ref", "refs/pull/5/head", "feat"]);
+        };
+        push("one\n");
+        app.add_pr(json!({"number": 5, "title": "Feat", "head_ref": "feat", "author": "bob", "requested": true}));
+        app.poll().unwrap();
+        let id = app.item(5).id;
+        // Nothing to show yet: the review fetches first.
+        let err = review_state(&app.state, id, false).unwrap_err();
+        assert!(err.contains("not fetched yet"), "{err}");
+        let first = review_state(&app.state, id, true).unwrap().head;
+        assert!(
+            !review_fetch(&app.state, id, false).unwrap(),
+            "the clone has the head"
+        );
+
+        // The author pushes, and the poll sees it: the review still shows what it showed, and
+        // the fetch after it says there is newer.
+        push("two\n");
+        app.poll().unwrap();
+        assert_eq!(review_state(&app.state, id, false).unwrap().head, first);
+        assert!(review_fetch(&app.state, id, false).unwrap());
+        assert_eq!(
+            review_state(&app.state, id, false).unwrap().head,
+            git(&app.upstream, &["rev-parse", "feat"])
+        );
+    }
+
+    #[test]
+    fn a_conversation_loaded_once_shows_at_once_next_time() {
+        let app = TestApp::new();
+        app.add_pr(json!({"number": 5, "title": "Feat", "head_ref": "main", "author": "bob", "requested": true}));
+        app.poll().unwrap();
+        let id = app.item(5).id;
+        assert_eq!(cached_conversation(&app.state, id).unwrap(), None);
+        let conv = conversation(&app.state, id).unwrap();
+        assert_eq!(
+            cached_conversation(&app.state, id).unwrap(),
+            Some(serde_json::to_value(&conv).unwrap())
+        );
     }
 
     #[test]
@@ -1297,6 +1367,11 @@ mod tests {
         git(&wt, &["fetch", "-q", "origin", "feat"]);
         git(&wt, &["reset", "-q", "--hard", "origin/feat"]);
 
+        // Shown as the clone has it, main's new commit as if it were the PR's; the fetch
+        // after it says the base moved.
+        let stale = review_state(&app.state, id, false).unwrap();
+        assert_eq!(stale.commits.len(), 2);
+        assert!(review_fetch(&app.state, id, false).unwrap());
         let state = review_state(&app.state, id, false).unwrap();
         assert_eq!(
             state
@@ -1309,20 +1384,25 @@ mod tests {
         );
         assert_eq!(state.base, git(up, &["rev-parse", "main"]));
 
-        // Shown again soon after: no fetch (the tab loads whenever it is shown), unless the
+        // Shown again soon after: no fetch (the tab checks whenever it is shown), unless the
         // user asks for it as it is now.
         app.push_to("main", &[("n.txt", "dave's\n")], "dave");
         let main_now = git(up, &["rev-parse", "main"]);
         let fetched = || git(&app.clone, &["rev-parse", "origin/main"]);
+        assert!(!review_fetch(&app.state, id, false).unwrap());
         review_state(&app.state, id, false).unwrap();
         assert_ne!(fetched(), main_now);
         review_state(&app.state, id, true).unwrap();
         assert_eq!(fetched(), main_now);
+        assert!(
+            !review_fetch(&app.state, id, true).unwrap(),
+            "nothing new since"
+        );
 
         // A base that cannot be fetched (deleted): the review says so instead of showing nothing.
         app.set("prs", 6, json!({"base_ref": "gone"}));
         app.poll().unwrap();
-        let err = review_state(&app.state, id, false).unwrap_err();
+        let err = review_state(&app.state, id, true).unwrap_err();
         assert!(err.contains("origin/gone is not fetched"), "{err}");
         assert!(
             err.contains("could not fetch") || err.contains("failed"),

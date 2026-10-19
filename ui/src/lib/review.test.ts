@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ReviewState } from "./api.ts";
-import { flatten, neighbourFile, nextChange, rangeOf, scopeOf, sections, type ReviewFile } from "./review.ts";
+import { flatten, neighbourFile, nextChange, rangeOf, scopeOf, sections, whatMoved, type ReviewFile } from "./review.ts";
 
 const f = (path: string, group: ReviewFile["group"]): ReviewFile => ({ path, status: "M", group, whitespaceOnly: false });
 const files = [f("src/a.rs", "source"), f("src/b.rs", "source"), f("tests/t.rs", "tests"), f("Cargo.lock", "generated")];
@@ -58,4 +58,15 @@ test("a scope's diff range", () => {
   assert.deepEqual(rangeOf(state(), "all"), ["B", "H"]);
   assert.deepEqual(rangeOf(state({ mode: "worktree" }), "all"), ["B", null], "worktree mode diffs the working tree");
   assert.deepEqual(rangeOf(state(), "C1"), ["C1^", "C1"]);
+});
+
+test("what a fetch from GitHub changed in the review shown", () => {
+  assert.equal(whatMoved(state(), state()), null);
+  assert.equal(whatMoved(state(), state({ head: "H2" })), "head", "the PR has new commits");
+  assert.equal(whatMoved(state(), state({ head: "H2", base: "B2" })), "head");
+  assert.equal(whatMoved(state(), state({ base: "B2" })), "base");
+  assert.equal(whatMoved(state(), state({ baseRef: "next" })), "base", "retargeted");
+  const wt = state({ mode: "worktree" });
+  assert.equal(whatMoved(wt, state({ mode: "worktree", head: "H2" })), null, "the agent's own commit");
+  assert.equal(whatMoved(wt, state({ mode: "worktree", base: "B2" })), "base");
 });
