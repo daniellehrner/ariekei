@@ -118,6 +118,8 @@
   // Sending to the agent failed: the error offers its terminal.
   let errorTerminal = $state(false);
   let host: HTMLElement | undefined = $state();
+  // The horizontal scrollbars, right below the diff (lib/hscroll.ts).
+  let bars: HTMLElement | undefined = $state();
   let main: HTMLElement | undefined = $state();
   // The diff shown: a side-by-side MergeView, or one editor with the unified merge view.
   let merge: MergeView | null = null;
@@ -251,7 +253,7 @@
     }
     host.textContent = "";
     if (onlyWhitespace) return land();
-    const common: Extension[] = [basicSetup, ...lang, ariekeiTheme, syntaxHighlighting(ariekeiHighlight), hscroll];
+    const common: Extension[] = [basicSetup, ...lang, ariekeiTheme, syntaxHighlighting(ariekeiHighlight), hscroll(bars!)];
     const onUpdate = EditorView.updateListener.of((u) => {
       if (u.docChanged) {
         editedPath = path;
@@ -812,6 +814,7 @@
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <div class="diff" bind:this={host} tabindex="0" role="region" oncontextmenu={onContextMenu}
         aria-label="Diff of {view.file ?? 'no file'}. Shortcuts: ] and [ files, n and p changes (on into the next or previous file), u unified, w whitespace, a ask the agent about the selection, c comment on it, ? help. Right-click code to ask the agent about it."></div>
+      <div class="hbars" bind:this={bars}></div>
       {#if edge}
         <!-- By the change itself (or at that end of the diff when it is off screen). -->
         <div class="edge" style:top={edgeAt ? `${edgeAt.top}px` : edge < 0 ? `${(host?.offsetTop ?? 0) + 12}px` : undefined}
@@ -1053,10 +1056,11 @@
   .diff:focus-within { box-shadow: inset 0 0 0 1px var(--focus-soft); }
   .diff :global(.cm-editor) { font-size: var(--fs-code); }
   .diff :global(.cm-editor.cm-focused) { outline: none; }
-  /* Side by side, the panes must not be scroll containers: the diff is, and the editors'
-     bottom panels (the pinned scrollbar, hscroll.ts) stick to it. */
-  .diff :global(.cm-mergeView) { overflow: visible; }
-  .diff :global(.cm-mergeViewEditor) { overflow: visible; min-width: 0; }
+  /* One bar per editor (hscroll.ts), each under its pane: all in one grid cell, placed by
+     their margin. No bar shown, no height. */
+  .hbars { flex: none; display: grid; background: var(--surface-editor); }
+  .hbars :global(.ak-hscroll) { grid-area: 1 / 1; min-height: 12px; overflow-x: auto; overflow-y: hidden; }
+  .hbars :global(.ak-hscroll > div) { height: 1px; }
   .ws-only { position: absolute; top: 120px; left: var(--sp-9); display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-3); }
   .ws-only strong { font-weight: var(--fw-semibold); }
 

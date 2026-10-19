@@ -135,10 +135,14 @@ impl TestApp {
             idle_after: Duration::from_secs(3600),
             quiet_after: Duration::from_secs(3600),
             claude_dir: Some(root.path().join("claude-config")),
-            env: vec![(
-                "FAKE_CLAUDE_DIR".into(),
-                root.path().join("claude").to_string_lossy().into_owned(),
-            )],
+            env: vec![
+                (
+                    "FAKE_CLAUDE_DIR".into(),
+                    root.path().join("claude").to_string_lossy().into_owned(),
+                ),
+                // As e2e/run.py: on Windows Python would not print the prompt's ❯ otherwise.
+                ("PYTHONIOENCODING".into(), "utf-8".into()),
+            ],
         };
         let store = crate::store::Store::in_memory();
         let repo = store
@@ -378,12 +382,18 @@ impl TestApp {
         });
         // Its prompt is up, so what is typed now reaches it. (A Windows ConPTY writes some
         // output of its own before the agent has even started.)
-        self.wait_for(|| {
-            self.state
-                .terminals
-                .scrollback(&id.to_string())
-                .contains('❯')
-        });
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let shown = self.state.terminals.scrollback(&id.to_string());
+            if shown.contains('❯') {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the agent showed no prompt; its terminal: {shown:?}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
 
     /// Waits (up to 20 s) until `done` holds. A timeout names the caller's line.

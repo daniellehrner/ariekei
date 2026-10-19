@@ -1,49 +1,73 @@
 // Copyright contributors to Ariekei.
 // SPDX-License-Identifier: Apache-2.0
 
-// A horizontal scrollbar pinned to the bottom of the visible diff. The editor is as tall as its
-// document (the diff around it scrolls), so its own scrollbar sits below the last line, out of
-// sight. This one is a bottom panel, which CodeMirror keeps sticky in view and leaves room for
-// when it scrolls a change into view. It hides when the lines fit.
+// A horizontal scrollbar for each editor, in a strip below the diff (`host`). The editor is as
+// tall as its document (the diff around it scrolls), so its own scrollbar sits below the last
+// line, out of sight; a bar inside the diff would have to stick to its bottom, which WKWebView
+// does not do for CodeMirror's panels. Each bar spans its editor (side by side, its pane) and
+// scrolls with it; the strip has no height when every line fits.
 
 import { type Extension } from "@codemirror/state";
-import { EditorView, showPanel, type Panel, type ViewUpdate } from "@codemirror/view";
+import { EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 
-function panel(view: EditorView): Panel {
-  const dom = document.createElement("div");
-  dom.className = "ak-hscroll";
-  dom.hidden = true;
-  const inner = dom.appendChild(document.createElement("div"));
-  const scroller = view.scrollDOM;
+class Bar {
+  dom = document.createElement("div");
+  inner = document.createElement("div");
 
-  const fromBar = () => {
-    if (scroller.scrollLeft !== dom.scrollLeft) scroller.scrollLeft = dom.scrollLeft;
+  constructor(readonly view: EditorView, readonly host: HTMLElement) {
+    this.dom.className = "ak-hscroll";
+    this.dom.hidden = true;
+    this.dom.appendChild(this.inner);
+    host.appendChild(this.dom);
+    this.dom.addEventListener("scroll", this.fromBar);
+    view.scrollDOM.addEventListener("scroll", this.fromScroller);
+    this.measure();
+  }
+
+  fromBar = () => {
+    const scroller = this.view.scrollDOM;
+    if (scroller.scrollLeft !== this.dom.scrollLeft) scroller.scrollLeft = this.dom.scrollLeft;
   };
-  const fromScroller = () => {
-    if (dom.scrollLeft !== scroller.scrollLeft) dom.scrollLeft = scroller.scrollLeft;
+
+  fromScroller = () => {
+    const scroller = this.view.scrollDOM;
+    if (this.dom.scrollLeft !== scroller.scrollLeft) this.dom.scrollLeft = scroller.scrollLeft;
   };
+
   // CodeMirror draws the lines in view only, and widens the content as wider ones come in.
-  const measure = () =>
-    view.requestMeasure({
-      read: () => ({ width: scroller.scrollWidth, overflows: scroller.scrollWidth > scroller.clientWidth + 1 }),
-      write: ({ width, overflows }) => {
-        inner.style.width = `${width}px`;
-        dom.hidden = !overflows;
-        fromScroller();
+  measure() {
+    this.view.requestMeasure({
+      key: this,
+      read: () => {
+        const scroller = this.view.scrollDOM;
+        return {
+          left: scroller.getBoundingClientRect().left - this.host.getBoundingClientRect().left,
+          width: scroller.clientWidth,
+          content: scroller.scrollWidth,
+          overflows: scroller.scrollWidth > scroller.clientWidth + 1,
+        };
+      },
+      write: ({ left, width, content, overflows }) => {
+        this.dom.style.marginLeft = `${left}px`;
+        this.dom.style.width = `${width}px`;
+        this.inner.style.width = `${content}px`;
+        this.dom.hidden = !overflows;
+        this.fromScroller();
       },
     });
+  }
 
-  dom.addEventListener("scroll", fromBar);
-  scroller.addEventListener("scroll", fromScroller);
-  return {
-    dom,
-    top: false,
-    mount: measure,
-    update(u: ViewUpdate) {
-      if (u.geometryChanged || u.viewportChanged || u.docChanged) measure();
-    },
-    destroy: () => scroller.removeEventListener("scroll", fromScroller),
-  };
+  update(u: ViewUpdate) {
+    if (u.geometryChanged || u.viewportChanged || u.docChanged) this.measure();
+  }
+
+  destroy() {
+    this.view.scrollDOM.removeEventListener("scroll", this.fromScroller);
+    this.dom.remove();
+  }
 }
 
-export const hscroll: Extension = showPanel.of(panel);
+/** Bars for the editors it is given to, in `host` (a strip right below the diff). */
+export function hscroll(host: HTMLElement): Extension {
+  return ViewPlugin.define((view) => new Bar(view, host));
+}
