@@ -29,56 +29,65 @@ fn busy(state: &AppState, id: i64) -> bool {
     )
 }
 
-/// Why the item cannot be cleaned up without losing something; empty if it can. A worktree
-/// Ariekei adopted (e.g. the user's own checkout) is kept, so what is in it is not lost.
-pub fn blockers(repo: &Repo, item: &WorkItem) -> Vec<String> {
+/// Why the item cannot be cleaned up without losing something; empty if it can: uncommitted
+/// changes in its worktree, and commits at its HEAD or on its branch (deleted with it) that no
+/// remote has or had. `prs` are the PRs whose heads GitHub keeps (the item's own, a task's
+/// linked ones): they are fetched first, so a squash-merged PR whose branch is gone is safe.
+/// A worktree Ariekei adopted (e.g. the user's own checkout) is kept, so what is in it is not
+/// lost.
+pub fn blockers(repo: &Repo, item: &WorkItem, prs: &[i64]) -> Vec<String> {
     let mut found = vec![];
-    let Some(dir) = item
-        .worktree_path
-        .as_deref()
-        .filter(|p| item.worktree_created && p.exists())
-    else {
+    if !item.worktree_created {
         return found;
-    };
-    match git::git_str(dir, &["status", "--porcelain"]) {
-        Ok(status) if !status.is_empty() => {
-            let files: Vec<&str> = status.lines().map(|l| l.get(3..).unwrap_or(l)).collect();
-            let more = if files.len() > 5 {
-                format!(" and {} more", files.len() - 5)
-            } else {
-                String::new()
-            };
-            found.push(format!(
-                "{} uncommitted change{}: {}{more}",
-                files.len(),
-                if files.len() == 1 { "" } else { "s" },
-                files[..files.len().min(5)].join(", ")
-            ));
+    }
+    let dir = item.worktree_path.as_deref().filter(|p| p.exists());
+    let own_branch = item.branch.as_deref().filter(|b| !b.is_empty());
+    let deleted_branch =
+        own_branch.filter(|b| item.branch_created && git::branch_exists(&repo.path, b));
+    if let Some(dir) = dir {
+        match git::git_str(dir, &["status", "--porcelain"]) {
+            Ok(status) if !status.is_empty() => {
+                let files: Vec<&str> = status.lines().map(|l| l.get(3..).unwrap_or(l)).collect();
+                let more = if files.len() > 5 {
+                    format!(" and {} more", files.len() - 5)
+                } else {
+                    String::new()
+                };
+                found.push(format!(
+                    "{} uncommitted change{}: {}{more}",
+                    files.len(),
+                    if files.len() == 1 { "" } else { "s" },
+                    files[..files.len().min(5)].join(", ")
+                ));
+            }
+            Ok(_) => {}
+            Err(e) => found.push(format!("Could not check for uncommitted changes: {e}")),
         }
-        Ok(_) => {}
-        Err(e) => found.push(format!("Could not check for uncommitted changes: {e}")),
     }
-    // Commits are safe when a remote branch or GitHub's copy of a PR head has them, or the
-    // upstream had them once: a reviewed PR whose author rebased it since is not your work.
-    if item.kind == "pr" {
-        let _ = worktree::fetch_pr_head(
-            &repo.path,
-            &repo.base_remote,
-            item.number,
-            &summary_base(item),
-        );
+    // HEAD may be detached or on another branch than the one deleted with the worktree.
+    let mut tips = vec![];
+    if dir.is_some() {
+        tips.push("HEAD".to_owned());
     }
-    let fetched = git::upstream_history(dir);
-    let mut args = vec![
-        "log",
-        "--format=%h %s",
-        "HEAD",
-        "--not",
-        "--remotes",
-        "--glob=refs/ariekei/pull/*",
-    ];
+    if let Some(branch) = deleted_branch {
+        tips.push(format!("refs/heads/{branch}"));
+    }
+    if tips.is_empty() {
+        return found;
+    }
+    if let Err(e) = worktree::fetch_pull_heads(&repo.path, &repo.base_remote, prs) {
+        tracing::warn!("{}: could not fetch its PR heads: {e}", item.short_name());
+    }
+    // Commits are safe when a remote branch or GitHub's copy of a PR head has them, or a
+    // remote had them once: a reviewed PR whose author rebased it since is not your work.
+    let fetched = own_branch
+        .map(|b| git::from_remotes(&repo.path, b))
+        .unwrap_or_default();
+    let mut args = vec!["log", "--format=%h %s"];
+    args.extend(tips.iter().map(String::as_str));
+    args.extend(["--not", "--remotes", "--glob=refs/ariekei/pull/*"]);
     args.extend(fetched.iter().map(String::as_str));
-    match git::git_str(dir, &args) {
+    match git::git_str(dir.unwrap_or(&repo.path), &args) {
         Ok(log) if !log.is_empty() => {
             let commits: Vec<&str> = log.lines().collect();
             found.push(format!(
@@ -94,11 +103,21 @@ pub fn blockers(repo: &Repo, item: &WorkItem) -> Vec<String> {
     found
 }
 
-fn summary_base(item: &WorkItem) -> String {
-    item.snapshot["baseRef"]
-        .as_str()
-        .unwrap_or("main")
-        .to_owned()
+/// The PRs whose heads GitHub keeps for the item's commits: a PR's own, a task's linked ones.
+fn pull_heads(state: &AppState, item: &WorkItem) -> Result<Vec<i64>, String> {
+    if item.kind == "pr" {
+        return Ok(vec![item.number]);
+    }
+    if !item.is_task() {
+        return Ok(vec![]);
+    }
+    Ok(state
+        .store
+        .items(item.repo_id)?
+        .into_iter()
+        .filter(|i| i.task_id == Some(item.id) && i.kind == "pr")
+        .map(|i| i.number)
+        .collect())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -110,9 +129,9 @@ pub enum Cleanup {
     Blocked { blockers: Vec<String> },
 }
 
-/// Cleans up item `id` if nothing would be lost; otherwise records and returns why not.
-/// A task is deleted afterwards (its PRs and issues stay, unlinked). Refused while its agent
-/// is in the middle of a turn.
+/// Cleans up item `id` if nothing would be lost; otherwise records and returns why not (also
+/// when git refuses to remove the worktree, e.g. a locked one). A task is deleted afterwards
+/// (its PRs and issues stay, unlinked). Refused while its agent is in the middle of a turn.
 pub fn clean_up(state: &AppState, id: i64) -> Result<Cleanup, String> {
     if busy(state, id) {
         return Err(
@@ -124,12 +143,19 @@ pub fn clean_up(state: &AppState, id: i64) -> Result<Cleanup, String> {
         .store
         .repo(item.repo_id)?
         .ok_or("repository not found")?;
-    let found = blockers(&repo, &item);
+    let found = blockers(&repo, &item, &pull_heads(state, &item)?);
     if !found.is_empty() {
         state.store.set_cleanup_blockers(id, Some(&found))?;
         return Ok(Cleanup::Blocked { blockers: found });
     }
-    let removed = remove(state, &repo, &item, false)?;
+    let removed = match remove(state, &repo, &item, false) {
+        Ok(removed) => removed,
+        Err(e) => {
+            let found = vec![e];
+            state.store.set_cleanup_blockers(id, Some(&found))?;
+            return Ok(Cleanup::Blocked { blockers: found });
+        }
+    };
     if item.is_task() {
         state.store.delete_item(id)?;
     } else {
@@ -146,7 +172,7 @@ pub fn discard_losses(state: &AppState, id: i64) -> Result<Vec<String>, String> 
         .store
         .repo(item.repo_id)?
         .ok_or("repository not found")?;
-    Ok(blockers(&repo, &item))
+    Ok(blockers(&repo, &item, &pull_heads(state, &item)?))
 }
 
 /// Deletes task `id` with its worktree and branch even if that loses work (the user
@@ -170,8 +196,9 @@ pub fn discard(state: &AppState, id: i64) -> Result<Cleanup, String> {
     Ok(Cleanup::Cleaned { removed })
 }
 
-/// Removes the item's agent, transcript, worktree and branch (if Ariekei created them),
-/// refs and context files; `force`: even with uncommitted changes.
+/// Removes the item's agent, worktree and branch (if Ariekei created them and no other item
+/// works there), transcript, refs and context files; `force`: even with uncommitted changes.
+/// The transcript goes last: if git refuses to remove the worktree, the agent can resume.
 fn remove(
     state: &AppState,
     repo: &Repo,
@@ -184,35 +211,51 @@ fn remove(
         state.terminals.close(&key);
         removed.push("the agent process".to_owned());
     }
+    if let Some(dir) = item.worktree_path.as_deref() {
+        let sharing: Vec<String> = state
+            .store
+            .items(item.repo_id)?
+            .into_iter()
+            .filter(|i| i.id != item.id && i.worktree_path.as_deref() == Some(dir))
+            .map(|i| i.label())
+            .collect();
+        if !sharing.is_empty() {
+            removed.push(format!(
+                "Ariekei's link to {} ({} works there too)",
+                dir.display(),
+                sharing.join(", ")
+            ));
+        } else if item.worktree_created {
+            if dir.exists() {
+                remove_worktree(&repo.path, dir, force)?;
+                removed.push(format!("the worktree {}", dir.display()));
+            } else {
+                // Deleted outside git: forget it, so its branch is free again.
+                git(&repo.path, &["worktree", "prune"])?;
+                removed.push(format!("the worktree {} (already gone)", dir.display()));
+            }
+            if let Some(branch) = item
+                .branch
+                .as_deref()
+                .filter(|b| item.branch_created && !b.is_empty())
+            {
+                // Its commits are on GitHub (checked above, unless discarding), so deleting the
+                // branch loses nothing.
+                if git(&repo.path, &["branch", "-D", branch]).is_ok() {
+                    removed.push(format!("the branch {branch}"));
+                }
+            }
+        } else {
+            removed.push(format!(
+                "Ariekei's link to {} (your worktree is kept)",
+                dir.display()
+            ));
+        }
+    }
     if let Some(transcript) = item.transcript_path.as_deref()
         && remove_transcript(transcript)
     {
         removed.push("the Claude session transcript".to_owned());
-    }
-    if let (Some(dir), true) = (
-        item.worktree_path.as_deref().filter(|p| p.exists()),
-        item.worktree_created,
-    ) {
-        // Without --force (unless discarding): git refuses if the worktree has changes after all.
-        let dir_arg = dir.to_string_lossy();
-        let mut args = vec!["worktree", "remove", dir_arg.as_ref()];
-        if force {
-            args.push("--force");
-        }
-        git(&repo.path, &args)?;
-        removed.push(format!("the worktree {}", dir.display()));
-        if let Some(branch) = item.branch.as_deref().filter(|b| !b.is_empty()) {
-            // Its commits are on GitHub (checked above, unless discarding), so deleting the
-            // branch loses nothing.
-            if git(&repo.path, &["branch", "-D", branch]).is_ok() {
-                removed.push(format!("the branch {branch}"));
-            }
-        }
-    } else if let Some(dir) = item.worktree_path.as_deref() {
-        removed.push(format!(
-            "Ariekei's link to {} (your worktree is kept)",
-            dir.display()
-        ));
     }
     if !item.is_task() {
         let name = worktree::pull_ref(item.number);
@@ -224,6 +267,27 @@ fn remove(
     }
     remove_contexts(state, repo, item);
     Ok(removed)
+}
+
+/// `git worktree remove`, without --force unless `force` (discarding): git refuses if the
+/// worktree has changes after all. Git also refuses any worktree with an initialized
+/// submodule, clean or not; a changed submodule shows in `git status` (checked before), so
+/// such a worktree is removed with --force. A locked one is refused.
+fn remove_worktree(clone: &Path, dir: &Path, force: bool) -> Result<(), String> {
+    let dir_arg = dir.to_string_lossy();
+    let mut args = vec!["worktree", "remove", dir_arg.as_ref()];
+    if force {
+        args.push("--force");
+    }
+    match git(clone, &args) {
+        Ok(_) => Ok(()),
+        Err(e) if !force && e.contains("submodule") => {
+            args.push("--force");
+            git(clone, &args).map(|_| ())
+        }
+        Err(e) => Err(e),
+    }
+    .map_err(|e| format!("Could not remove the worktree {}: {e}", dir.display()))
 }
 
 /// Deletes the context files Ariekei wrote for the item's agent.
@@ -329,7 +393,15 @@ pub fn after_poll(state: &AppState, repo: &Repo) -> Result<(), String> {
             continue;
         }
         let had_blockers = item.cleanup_blockers.is_some();
-        match clean_up(state, item.id)? {
+        // One item's failure must not stop the others' cleanup.
+        let cleanup = match clean_up(state, item.id) {
+            Ok(cleanup) => cleanup,
+            Err(e) => {
+                tracing::warn!("{}: cleanup: {e}", item.short_name());
+                continue;
+            }
+        };
+        match cleanup {
             Cleanup::Cleaned { removed } if !removed.is_empty() => crate::notify::lifecycle(
                 state,
                 &item.id.to_string(),
@@ -516,6 +588,7 @@ mod tests {
             kind: "issue".into(),
             issue_number: None,
             worktree_created: true,
+            branch_created: true,
             hidden: false,
             cleanup_blockers: None,
             task_id: None,
@@ -544,19 +617,19 @@ mod tests {
         let it = item(&clone);
 
         assert!(
-            blockers(&repo, &it).is_empty(),
+            blockers(&repo, &it, &[]).is_empty(),
             "a clean clone at origin/main loses nothing"
         );
 
         std::fs::write(clone.join("new.txt"), "x").unwrap();
-        let b = blockers(&repo, &it);
+        let b = blockers(&repo, &it, &[]);
         assert!(
             b.len() == 1 && b[0].starts_with("1 uncommitted change: new.txt"),
             "{b:?}"
         );
 
         commit(&clone, "local work");
-        let b = blockers(&repo, &it);
+        let b = blockers(&repo, &it, &[]);
         assert!(
             b.len() == 1
                 && b[0].contains("1 commit is not on GitHub")
@@ -566,7 +639,10 @@ mod tests {
 
         git(&clone, &["push", "-q", "origin", "HEAD:refs/heads/feature"]).unwrap();
         git(&clone, &["fetch", "-q", "origin"]).unwrap();
-        assert!(blockers(&repo, &it).is_empty(), "pushed commits are safe");
+        assert!(
+            blockers(&repo, &it, &[]).is_empty(),
+            "pushed commits are safe"
+        );
     }
 
     #[test]
@@ -599,19 +675,62 @@ mod tests {
         commit(up, "second version");
         git(&clone, &["fetch", "-q", "origin"]).unwrap();
         assert!(
-            blockers(&repo, &it).is_empty(),
+            blockers(&repo, &it, &[]).is_empty(),
             "the first version was on GitHub"
+        );
+        // Merged and its branch deleted on GitHub, pruned here: the branch's own reflog still
+        // says where it came from.
+        git(up, &["checkout", "-q", "main"]).unwrap();
+        git(up, &["branch", "-q", "-D", "feature"]).unwrap();
+        git(&clone, &["fetch", "-q", "--prune", "origin"]).unwrap();
+        assert!(
+            blockers(&repo, &it, &[]).is_empty(),
+            "still safe after a prune"
         );
 
         std::fs::write(clone.join("mine.txt"), "x").unwrap();
         commit(&clone, "my own work");
-        let b = blockers(&repo, &it);
+        let b = blockers(&repo, &it, &[]);
         assert!(
             b.len() == 1
                 && b[0].starts_with("1 commit is not on GitHub")
                 && b[0].contains("my own work"),
             "{b:?}"
         );
+    }
+
+    #[test]
+    fn a_pushed_commit_a_force_push_dropped_is_not_on_github() {
+        let upstream = git_repo();
+        let up = upstream.path();
+        git(up, &["checkout", "-q", "-b", "feature"]).unwrap();
+        std::fs::write(up.join("f.txt"), "first\n").unwrap();
+        commit(up, "first version");
+        git(up, &["checkout", "-q", "main"]).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let clone = root.path().join("c");
+        git(root.path(), &["clone", "-q", &up.to_string_lossy(), "c"]).unwrap();
+        git(&clone, &["checkout", "-q", "feature"]).unwrap();
+        let repo = Repo {
+            id: 1,
+            path: clone.clone(),
+            owner: "o".into(),
+            name: "c".into(),
+            base_remote: "origin".into(),
+            viewer: "me".into(),
+        };
+        // The user pushes a fix to the PR; its author force-pushes over it.
+        std::fs::write(clone.join("fix.txt"), "x").unwrap();
+        commit(&clone, "my fix");
+        git(&clone, &["push", "-q", "origin", "feature"]).unwrap();
+        git(up, &["checkout", "-q", "feature"]).unwrap();
+        git(up, &["reset", "-q", "--hard", "HEAD~1"]).unwrap();
+        std::fs::write(up.join("f.txt"), "rebased\n").unwrap();
+        commit(up, "the author's rebase");
+        git(up, &["checkout", "-q", "main"]).unwrap();
+        git(&clone, &["fetch", "-q", "origin"]).unwrap();
+        let b = blockers(&repo, &item(&clone), &[]);
+        assert!(b.len() == 1 && b[0].contains("my fix"), "{b:?}");
     }
 
     #[test]
@@ -819,6 +938,157 @@ mod tests {
                 .report(&id.to_string(), AgentStatus::Finished, None);
             app.poll().unwrap();
             assert!(!wt.exists() && app.state.store.item(id).unwrap().hidden);
+        }
+
+        #[test]
+        fn cleanup_keeps_a_branch_with_unpushed_work_when_head_is_elsewhere() {
+            let app = TestApp::new();
+            let (id, wt) = app.pr_with_worktree(10, "feature/x");
+            write(&wt.join("a.txt"), "fixed\n");
+            commit(&wt, "unpushed fix", "me");
+            git(&wt, &["checkout", "-q", "--detach", "HEAD~1"]);
+            app.set("prs", 10, json!({"state": "MERGED"}));
+            app.poll().unwrap();
+            let item = app.state.store.item(id).unwrap();
+            let blockers = item.cleanup_blockers.unwrap_or_default();
+            assert!(
+                blockers.iter().any(|b| b.contains("unpushed fix")),
+                "{blockers:?}"
+            );
+            assert!(wt.exists() && branch_exists(&app, "feature/x"));
+        }
+
+        #[test]
+        fn a_worktree_git_will_not_remove_blocks_only_its_own_cleanup() {
+            let app = TestApp::new();
+            let (locked, locked_wt) = app.pr_with_worktree(10, "feature/x");
+            let (other, other_wt) = app.pr_with_worktree(11, "feature/y");
+            git(
+                &app.clone,
+                &["worktree", "lock", &locked_wt.to_string_lossy()],
+            );
+            app.set("prs", 10, json!({"state": "MERGED"}));
+            app.set("prs", 11, json!({"state": "MERGED"}));
+            app.poll().unwrap();
+            let blockers = app
+                .state
+                .store
+                .item(locked)
+                .unwrap()
+                .cleanup_blockers
+                .unwrap_or_default();
+            assert!(
+                blockers
+                    .iter()
+                    .any(|b| b.starts_with("Could not remove the worktree")),
+                "{blockers:?}"
+            );
+            assert!(locked_wt.exists());
+            assert!(!other_wt.exists() && app.state.store.item(other).unwrap().hidden);
+        }
+
+        #[test]
+        fn a_worktree_with_a_submodule_is_cleaned_up() {
+            let app = TestApp::new();
+            let (id, wt) = app.pr_with_worktree(10, "feature/x");
+            let lib = crate::git::tests::repo();
+            git(
+                &wt,
+                &[
+                    "-c",
+                    "protocol.file.allow=always",
+                    "submodule",
+                    "add",
+                    "-q",
+                    &lib.path().to_string_lossy(),
+                    "lib",
+                ],
+            );
+            commit(&wt, "add lib", "me");
+            git(&wt, &["push", "-q"]);
+            app.set("prs", 10, json!({"state": "MERGED"}));
+            app.poll().unwrap();
+            let item = app.state.store.item(id).unwrap();
+            assert!(!wt.exists() && item.hidden, "{:?}", item.cleanup_blockers);
+        }
+
+        #[test]
+        fn a_worktree_two_items_share_stays_for_the_other() {
+            let app = TestApp::new();
+            let (pr, wt) = app.pr_with_worktree(102, "feature-x");
+            let task =
+                create_task(&app.state, Some(app.repo.clone()), "", "", "feature-x").unwrap();
+            let task_wt = app.state.store.item(task).unwrap().worktree_path.unwrap();
+            assert_eq!(
+                std::fs::canonicalize(&task_wt).unwrap(),
+                std::fs::canonicalize(&wt).unwrap()
+            );
+            let Cleanup::Cleaned { removed } = clean_up(&app.state, pr).unwrap() else {
+                panic!("nothing would be lost");
+            };
+            assert!(
+                removed.iter().any(|r| r.contains("works there too")),
+                "{removed:?}"
+            );
+            assert!(wt.exists() && branch_exists(&app, "feature-x"));
+        }
+
+        #[test]
+        fn a_worktree_folder_deleted_by_hand_is_made_again_or_cleaned_up() {
+            let app = TestApp::new();
+            let (pr, wt) = app.pr_with_worktree(10, "feature/x");
+            std::fs::remove_dir_all(&wt).unwrap();
+            let again = prepare(&app.state, pr).unwrap();
+            assert!(again.path.exists() && !again.adopted, "{again:?}");
+
+            let task = create_task(&app.state, Some(app.repo.clone()), "Gone", "", "").unwrap();
+            let task_wt = app.path("proj_task1");
+            std::fs::remove_dir_all(&task_wt).unwrap();
+            let Cleanup::Cleaned { removed } = clean_up(&app.state, task).unwrap() else {
+                panic!("nothing would be lost");
+            };
+            assert!(
+                removed.iter().any(|r| r.contains("already gone")),
+                "{removed:?}"
+            );
+            assert!(!branch_exists(&app, "task-1-gone"));
+        }
+
+        #[test]
+        fn done_keeps_a_local_branch_ariekei_only_reused() {
+            let app = TestApp::new();
+            git(&app.clone, &["checkout", "-q", "-b", "elsewhere"]);
+            let task = create_task(&app.state, Some(app.repo.clone()), "", "", "main").unwrap();
+            assert!(app.path("proj_task1").exists());
+            let Cleanup::Cleaned { .. } = clean_up(&app.state, task).unwrap() else {
+                panic!("nothing would be lost");
+            };
+            assert!(!app.path("proj_task1").exists() && branch_exists(&app, "main"));
+        }
+
+        #[test]
+        fn a_task_whose_pr_was_squash_merged_and_pruned_loses_nothing() {
+            let app = TestApp::new();
+            let task = create_task(&app.state, Some(app.repo.clone()), "Squash", "", "").unwrap();
+            let wt = app.path("proj_task1");
+            write(&wt.join("a.txt"), "done\n");
+            commit(&wt, "the work", "me");
+            git(&wt, &["push", "-q"]);
+            let branch = "task-1-squash";
+            app.add_pr(json!({"number": 20, "title": "Squash", "head_ref": branch}));
+            link_created(&app.state, task, "pr", 20).unwrap();
+            // GitHub keeps the PR head; the branch is deleted after the squash merge.
+            let head = git(&app.upstream, &["rev-parse", branch]);
+            git(
+                &app.upstream,
+                &["update-ref", "refs/pull/20/head", head.trim()],
+            );
+            git(&app.upstream, &["branch", "-q", "-D", branch]);
+            git(&app.clone, &["fetch", "-q", "--prune", "origin"]);
+            app.set("prs", 20, json!({"state": "MERGED"}));
+            app.poll().unwrap();
+            let cleanup = clean_up(&app.state, task).unwrap();
+            assert!(matches!(cleanup, Cleanup::Cleaned { .. }), "{cleanup:?}");
         }
 
         #[test]

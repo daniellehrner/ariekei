@@ -151,31 +151,69 @@ pub fn branch_exists(repo: &Path, branch: &str) -> bool {
     .is_ok()
 }
 
-/// Where the upstream of the branch checked out at `cwd` has been, as its reflog remembers
-/// (the newest 500; empty without an upstream or reflog). Commits there came from the
-/// remote, also those a force-push (e.g. a rebased PR) took off it since.
-pub fn upstream_history(cwd: &Path) -> Vec<String> {
-    let Ok(upstream) = git_str(cwd, &["rev-parse", "--symbolic-full-name", "@{upstream}"]) else {
-        return vec![];
+/// Commits a remote had for `branch` once, as the reflogs remember (their newest 500
+/// entries): where its upstream was fetched to, and where the branch was set from a remote
+/// branch (created from it, fast-forwarded or reset to it, pulled). They came from GitHub,
+/// even if a force-push (e.g. a rebased PR) or a pruned branch took them off it since. The
+/// user's own pushes don't count: a force-push may have dropped them.
+pub fn from_remotes(repo: &Path, branch: &str) -> Vec<String> {
+    let reflog = |name: &str| {
+        git_str(
+            repo,
+            &["reflog", "show", "-n", "500", "--format=%H %gs", name, "--"],
+        )
+        .unwrap_or_default()
     };
-    let mut seen = std::collections::HashSet::new();
-    git_str(
-        cwd,
+    let remotes: Vec<String> = remotes(repo)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    let is_remote = |name: &str| {
+        name.starts_with("refs/remotes/")
+            || remotes.iter().any(|r| {
+                name.strip_prefix(r.as_str())
+                    .is_some_and(|rest| rest.starts_with('/'))
+            })
+    };
+    let mut found = vec![];
+    let upstream = git_str(
+        repo,
         &[
-            "reflog",
-            "show",
-            "-n",
-            "500",
-            "--format=%H",
-            &upstream,
-            "--",
+            "for-each-ref",
+            "--format=%(upstream)",
+            &format!("refs/heads/{branch}"),
         ],
     )
-    .unwrap_or_default()
-    .lines()
-    .filter(|h| seen.insert(h.to_string()))
-    .map(str::to_owned)
-    .collect()
+    .unwrap_or_default();
+    if !upstream.is_empty() {
+        for line in reflog(&upstream).lines() {
+            if let Some((hash, why)) = line.split_once(' ')
+                && !why.starts_with("update by push")
+            {
+                found.push(hash.to_owned());
+            }
+        }
+    }
+    for line in reflog(&format!("refs/heads/{branch}")).lines() {
+        let Some((hash, why)) = line.split_once(' ') else {
+            continue;
+        };
+        let from = why
+            .strip_prefix("branch: Created from ")
+            .or_else(|| why.strip_prefix("reset: moving to "))
+            .or_else(|| {
+                why.strip_prefix("merge ")
+                    .and_then(|m| m.strip_suffix(": Fast-forward"))
+            });
+        let pulled = why.starts_with("pull") && why.to_lowercase().ends_with(": fast-forward");
+        if pulled || from.is_some_and(is_remote) {
+            found.push(hash.to_owned());
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    found.retain(|h| seen.insert(h.clone()));
+    found
 }
 
 pub fn commit_exists(repo: &Path, rev: &str) -> bool {

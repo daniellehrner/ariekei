@@ -476,9 +476,12 @@ Cleanup is **refused while anything would be lost**. The reasons are shown on th
 finished item says "Cleanup blocked" in the Inbox:
 
 - uncommitted changes, including untracked files;
-- commits that are neither on a remote branch nor in GitHub's copy of the PR head (so
-  squash-merged PRs with deleted branches are recognised as safe), and were never on the
-  branch's upstream either (so a PR you only reviewed, whose author rebased it since, is safe).
+- commits, in the worktree or on the branch that goes with it, that are neither on a remote
+  branch nor in GitHub's copy of the PR head (for a task: of its PRs), and that Ariekei never
+  fetched from GitHub either. So a squash-merged PR whose branch was deleted is safe, and so is
+  the old version of a PR you only reviewed whose author rebased it since, even after
+  `git fetch --prune`. A commit of yours that a force-push dropped is not;
+- git refusing to remove the worktree (e.g. one you locked with `git worktree lock`).
 
 Commit and push, or discard the changes, then press **Done** again.
 
@@ -487,9 +490,14 @@ is still wrapping up: the item is cleaned up on the first poll after the turn en
 **Done** is refused until then.
 
 Cleanup removes the agent process and its Claude Code session transcript, the worktree and its
-branch **if Ariekei created them** (worktrees Ariekei adopted are only detached), Ariekei's ref
-for the PR head, its context file, and the Inbox entry. Adding the PR or issue again with
-Browse brings it back while it is open.
+branch **if Ariekei created them** (worktrees Ariekei adopted are only detached, and so is one
+another item works in too; a local branch Ariekei only reused, such as your `main`, is kept),
+Ariekei's ref for the PR head, its context file, and the Inbox entry. Adding the PR or issue
+again with Browse brings it back while it is open.
+
+Ignored files in the worktree (build output, but also a `.env` or `CLAUDE.local.md`) are
+deleted with it. A worktree folder you deleted yourself is fine: Ariekei forgets it, and
+**Start working** makes it again.
 
 ## 12. Notifications
 

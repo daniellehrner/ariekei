@@ -66,17 +66,28 @@ PRs and issues, or be thrown away.
 - Refused while anything would be lost, with the reasons shown on the item and in the Inbox
   ("finished, cleanup blocked"):
   - uncommitted changes, including untracked files (listed);
-  - commits that are neither on a remote branch nor in GitHub's copy of the PR head
-    (`refs/pull/<N>/head`, fetched before the check, so squash-merged PRs with deleted
-    branches are recognised), nor in the reflog of the branch's upstream (the newest 500
-    entries: the old version of a PR whose author rebased and force-pushed it).
+  - commits at the worktree's HEAD or on the branch deleted with it (HEAD may be detached or
+    elsewhere) that are neither on a remote branch nor in GitHub's copy of a PR head
+    (`refs/pull/<N>/head` of the PR, or of a task's linked PRs, fetched before the check, so
+    squash-merged PRs with deleted branches are recognised), nor came from a remote by the
+    reflogs (`git::from_remotes`, newest 500 entries each): the upstream's except "update by
+    push", and the branch's own "Created from", fast-forward, reset and pull entries naming a
+    remote branch. That covers the old version of a PR whose author rebased it, also after
+    `git fetch --prune`; a pushed commit a force-push dropped still blocks;
+  - git refusing to remove the worktree (e.g. locked): recorded like the others. One item's
+    failure never stops the poll's other cleanups.
 - Waits while the agent is in the middle of a turn (working, or waiting for permission): not a
   blocker, nothing is recorded or told; the first poll after the turn cleans up, and Done is
   refused until then.
-- Removes: the agent process; its Claude session transcript (and subagent transcripts); the
-  worktree and its branch **if Ariekei created them** (`git worktree remove` without `--force`,
-  so git refuses too if something changed); `refs/ariekei/pull/<N>/head`; the context file; the Inbox entry (hidden; opening the PR
-  again from search brings it back). Worktrees Ariekei adopted are only detached.
+- Removes, in this order: the agent process; the worktree **if Ariekei created it** and no
+  other item works in it (`git worktree remove` without `--force`, so git refuses too if
+  something changed; `--force` only for initialized submodules, which git always refuses and
+  whose changes `git status` already showed; `git worktree prune` if the folder was deleted by
+  hand) and its branch if Ariekei created that too (`branch_created`: a reused local branch is
+  kept); its Claude session transcript (and subagent transcripts), last, so a refused removal
+  leaves the agent resumable; `refs/ariekei/pull/<N>/head`; the context file; the Inbox entry
+  (hidden; opening the PR again from search brings it back). Worktrees Ariekei adopted are
+  only detached. Ignored files go with the worktree.
 - Only GitHub's own state triggers automatic cleanup: a PR that merely dropped out of a search
   (e.g. past its 50 results) is never treated as finished.
 

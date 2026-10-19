@@ -103,7 +103,9 @@ pub fn reconcile(state: &AppState) -> Result<(), String> {
     {
         if item.worktree_path.as_deref().is_some_and(|p| !p.exists()) {
             tracing::info!("worktree of PR #{} is gone", item.number);
-            state.store.set_worktree(item.id, None, None, false)?;
+            state
+                .store
+                .set_worktree(item.id, None, None, false, false)?;
         }
     }
     Ok(())
@@ -302,6 +304,7 @@ pub fn prepare(state: &AppState, id: i64) -> Result<Prepared, String> {
             path: path.clone(),
             branch: item.branch.clone().unwrap_or_default(),
             adopted: true,
+            branch_created: false,
             note: None,
         });
     }
@@ -326,6 +329,7 @@ pub fn prepare(state: &AppState, id: i64) -> Result<Prepared, String> {
         Some(&prepared.path),
         Some(&prepared.branch),
         !prepared.adopted,
+        prepared.branch_created,
     )?;
     Ok(prepared)
 }
@@ -1304,7 +1308,10 @@ mod tests {
             "more"
         );
         // Started again (e.g. after a restart): the same worktree.
-        app.state.store.set_worktree(id, None, None, false).unwrap();
+        app.state
+            .store
+            .set_worktree(id, None, None, false, false)
+            .unwrap();
         let again = prepare(&app.state, id).unwrap();
         assert!(again.adopted);
     }

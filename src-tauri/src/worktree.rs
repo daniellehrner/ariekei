@@ -37,6 +37,8 @@ pub struct Prepared {
     pub branch: String,
     /// True when an existing worktree was taken over instead of creating one.
     pub adopted: bool,
+    /// Ariekei created the branch too (cleanup may delete it); a reused one is kept.
+    pub branch_created: bool,
     /// Something the user should know, e.g. a reused branch that differs from the PR.
     pub note: Option<String>,
 }
@@ -317,11 +319,13 @@ pub fn prepare_task_on(
     // A task on the default branch itself works in the clone if that is where it is.
     let on_base = remote == repo.base_remote && branch == default_branch;
     let base = (!on_base).then_some(default_branch);
+    forget_missing(&repo.path);
     if let Some(w) = find_existing(&repo.path, &own, branch, &tracking, base)? {
         return Ok(Prepared {
             path: w.path,
             branch: w.branch.unwrap_or_default(),
             adopted: true,
+            branch_created: false,
             note: None,
         });
     }
@@ -332,11 +336,13 @@ pub fn prepare_task_on(
             path.display()
         ));
     }
-    let (branch, note) = track_worktree(&repo.path, &path, branch, own, &tracking, &tracking)?;
+    let (branch, note, branch_created) =
+        track_worktree(&repo.path, &path, branch, own, &tracking, &tracking)?;
     Ok(Prepared {
         path,
         branch,
         adopted: false,
+        branch_created,
         note,
     })
 }
@@ -351,14 +357,16 @@ fn new_branch_worktree(
     to: &str,
 ) -> Result<Prepared, String> {
     let base = fetch(&repo.path, &repo.base_remote, default_branch)?;
+    forget_missing(&repo.path);
     if let Some(w) = git::worktrees(&repo.path)?
         .into_iter()
-        .find(|w| !w.main && w.branch.as_deref() == Some(&branch))
+        .find(|w| !w.main && w.path.exists() && w.branch.as_deref() == Some(&branch))
     {
         return Ok(Prepared {
             path: w.path,
             branch,
             adopted: true,
+            branch_created: false,
             note: None,
         });
     }
@@ -370,7 +378,8 @@ fn new_branch_worktree(
         ));
     }
     let path_arg = path.to_string_lossy().into_owned();
-    if git::branch_exists(&repo.path, &branch) {
+    let branch_created = !git::branch_exists(&repo.path, &branch);
+    if !branch_created {
         git(
             &repo.path,
             &["worktree", "add", "--quiet", &path_arg, &branch],
@@ -407,6 +416,7 @@ fn new_branch_worktree(
         path,
         branch,
         adopted: false,
+        branch_created,
         note: None,
     })
 }
@@ -421,6 +431,7 @@ fn on_local_branch(
     branch: &str,
     push_to: Option<&str>,
 ) -> Result<Prepared, String> {
+    forget_missing(&repo.path);
     if let Some(remote) = push_to.filter(|_| git::upstream(&repo.path, branch).is_none()) {
         git(
             &repo.path,
@@ -443,6 +454,7 @@ fn on_local_branch(
             path: w.path,
             branch: branch.to_owned(),
             adopted: true,
+            branch_created: false,
             note: None,
         });
     }
@@ -462,6 +474,7 @@ fn on_local_branch(
         path,
         branch: branch.to_owned(),
         adopted: false,
+        branch_created: false,
         note: None,
     })
 }
@@ -494,6 +507,23 @@ pub fn fetch_pr_head(
     git_str(repo, &["rev-parse", &pull_ref(number)])
 }
 
+/// Fetches GitHub's `refs/pull/<N>/head` of each PR in `numbers` (merged or closed ones
+/// too) from `remote` into the clone.
+pub fn fetch_pull_heads(repo: &Path, remote: &str, numbers: &[i64]) -> Result<(), String> {
+    if numbers.is_empty() {
+        return Ok(());
+    }
+    let lock = fetching(repo);
+    let _one_at_a_time = hold(&lock);
+    let specs: Vec<String> = numbers
+        .iter()
+        .map(|n| format!("+refs/pull/{n}/head:{}", pull_ref(*n)))
+        .collect();
+    let mut args = vec!["fetch", "--quiet", remote];
+    args.extend(specs.iter().map(String::as_str));
+    git(repo, &args).map(|_| ())
+}
+
 pub fn worktree_path(repo: &Repo, number: i64) -> PathBuf {
     sibling(repo, &format!("pr{number}"))
 }
@@ -521,6 +551,7 @@ pub fn prepare(repo: &Repo, pr: &PrSummary) -> Result<Prepared, String> {
         tracing::warn!("could not fetch base {}: {e}", pr.base_ref);
     }
 
+    forget_missing(&repo.path);
     if let Some(w) = find_existing(
         &repo.path,
         &format!("pr-{}", pr.number),
@@ -532,6 +563,7 @@ pub fn prepare(repo: &Repo, pr: &PrSummary) -> Result<Prepared, String> {
             path: w.path,
             branch: w.branch.unwrap_or_default(),
             adopted: true,
+            branch_created: false,
             note: None,
         });
     }
@@ -544,7 +576,7 @@ pub fn prepare(repo: &Repo, pr: &PrSummary) -> Result<Prepared, String> {
         ));
     }
 
-    let (branch, note) = track_worktree(
+    let (branch, note, branch_created) = track_worktree(
         &repo.path,
         &path,
         &pr.head_ref,
@@ -556,6 +588,7 @@ pub fn prepare(repo: &Repo, pr: &PrSummary) -> Result<Prepared, String> {
         path,
         branch,
         adopted: false,
+        branch_created,
         note,
     })
 }
@@ -565,7 +598,7 @@ pub fn prepare(repo: &Repo, pr: &PrSummary) -> Result<Prepared, String> {
 /// (with the same name, a plain `git push` goes back there), else is `fallback` (a local
 /// `wanted` tracks something else). A reused local branch is fast-forwarded to `tracking`;
 /// if it has commits of its own it is left as it is and the note says so (`upstream` names
-/// `tracking` in it).
+/// `tracking` in it). Also says whether the branch is new.
 fn track_worktree(
     clone: &Path,
     path: &Path,
@@ -573,7 +606,7 @@ fn track_worktree(
     fallback: String,
     tracking: &str,
     upstream: &str,
-) -> Result<(String, Option<String>), String> {
+) -> Result<(String, Option<String>, bool), String> {
     let reusable = git::branch_exists(clone, wanted)
         && git::upstream(clone, wanted).is_none_or(|u| u == tracking);
     let branch = if !git::branch_exists(clone, wanted) || reusable {
@@ -583,7 +616,8 @@ fn track_worktree(
     };
     let path_arg = path.to_string_lossy().into_owned();
     let mut note = None;
-    if git::branch_exists(clone, &branch) {
+    let created = !git::branch_exists(clone, &branch);
+    if !created {
         let checked_out = git::worktrees(clone)?
             .into_iter()
             .find(|w| w.branch.as_deref() == Some(&branch));
@@ -611,7 +645,15 @@ fn track_worktree(
         clone,
         &["branch", "--quiet", "--set-upstream-to", tracking, &branch],
     )?;
-    Ok((branch, note))
+    Ok((branch, note, created))
+}
+
+/// Forgets worktrees whose folder is gone (deleted outside git): git still counts their
+/// branches as checked out there.
+fn forget_missing(clone: &Path) {
+    if let Err(e) = git(clone, &["worktree", "prune"]) {
+        tracing::warn!("git worktree prune: {e}");
+    }
 }
 
 #[cfg(test)]

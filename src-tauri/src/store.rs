@@ -111,6 +111,11 @@ DROP TABLE reviewed_files;
 DROP TABLE own_commits;
 ALTER TABLE work_items DROP COLUMN reviewed_sha;
 "#,
+    r#"
+-- Ariekei created the item's branch too, not only its worktree: cleanup may delete it. A
+-- local branch it only reused (e.g. the user's main) is kept. Older rows keep the old rule.
+ALTER TABLE work_items ADD COLUMN branch_created INTEGER NOT NULL DEFAULT 1;
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -144,6 +149,8 @@ pub struct WorkItem {
     pub kind: String,
     pub issue_number: Option<i64>,
     pub worktree_created: bool,
+    /// Ariekei created its branch too (cleanup may delete it).
+    pub branch_created: bool,
     pub hidden: bool,
     pub cleanup_blockers: Option<Vec<String>>,
     /// For a PR or issue a task's agent opened: the task.
@@ -205,7 +212,7 @@ fn err(e: rusqlite::Error) -> String {
 
 const ITEM_COLUMNS: &str = "id, repo_id, number, snapshot, open, worktree_path, branch, session_id, \
      session_started, transcript_path, last_seen, ui_state, role, tracked, kind, \
-     issue_number, worktree_created, hidden, cleanup_blockers, task_id, starred";
+     issue_number, worktree_created, hidden, cleanup_blockers, task_id, starred, branch_created";
 
 fn item_from_row(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
     let json = |s: Option<String>| s.and_then(|s| serde_json::from_str(&s).ok());
@@ -233,6 +240,7 @@ fn item_from_row(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
             .and_then(|s| serde_json::from_str(&s).ok()),
         task_id: r.get(19)?,
         starred: r.get(20)?,
+        branch_created: r.get(21)?,
     })
 }
 
@@ -484,11 +492,12 @@ impl Store {
         path: Option<&Path>,
         branch: Option<&str>,
         created: bool,
+        branch_created: bool,
     ) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE work_items SET worktree_path = ?2, branch = ?3, worktree_created = ?4 WHERE id = ?1",
-            params![id, path.map(path_str), branch, created],
+            "UPDATE work_items SET worktree_path = ?2, branch = ?3, worktree_created = ?4, branch_created = ?5 WHERE id = ?1",
+            params![id, path.map(path_str), branch, created, branch_created],
         )
         .map(|_| ())
         .map_err(err)
@@ -685,7 +694,13 @@ mod tests {
             .find(|i| i.number == 1)
             .unwrap();
         store
-            .set_worktree(one.id, Some(Path::new("/src/besu_pr1")), Some("feat"), true)
+            .set_worktree(
+                one.id,
+                Some(Path::new("/src/besu_pr1")),
+                Some("feat"),
+                true,
+                true,
+            )
             .unwrap();
         store.set_session(one.id, "s-1").unwrap();
 
@@ -869,7 +884,7 @@ mod tests {
         store.sync_prs(repo.id, &[issue]).unwrap();
         let id = store.items(repo.id).unwrap()[0].id;
         store
-            .set_worktree(id, Some(Path::new("/w")), Some("issue-5-crash"), true)
+            .set_worktree(id, Some(Path::new("/w")), Some("issue-5-crash"), true, true)
             .unwrap();
         store.set_session(id, "s-1").unwrap();
         store
