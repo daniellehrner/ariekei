@@ -1000,13 +1000,33 @@ pub fn resolve_thread(state: &AppState, thread_id: &str, resolved: bool) -> Resu
     Ok(())
 }
 
-/// Writes a file edited in the review view. `path` must stay inside the worktree.
-pub fn save_file(state: &AppState, id: i64, path: &str, content: &str) -> Result<(), String> {
+/// Writes a file edited in the review view. `path` must stay inside the worktree, and the
+/// file must still be as the editor loaded it (`loaded`; a missing file counts as empty):
+/// the diff does not follow the disk, so the agent may have changed it meanwhile, and
+/// writing would throw its edits away.
+pub fn save_file(
+    state: &AppState,
+    id: i64,
+    path: &str,
+    content: &str,
+    loaded: &str,
+) -> Result<(), String> {
     let root = worktree_of(&state.store.item(id)?)?;
     if !inside_worktree(path) {
         return Err(format!("refusing to write outside the worktree: {path}"));
     }
-    std::fs::write(root.join(path), content).map_err(|e| format!("{path}: {e}"))
+    let file = root.join(path);
+    let now = match std::fs::read(&file) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => vec![],
+        Err(e) => return Err(format!("{path}: {e}")),
+    };
+    if now != loaded.as_bytes() {
+        return Err(format!(
+            "Not saved: {path} changed on disk since the review loaded it (the agent may have edited it). Reload to see it as it is now; your edits are dropped."
+        ));
+    }
+    std::fs::write(file, content).map_err(|e| format!("{path}: {e}"))
 }
 
 /// A path relative to the worktree that stays inside it: plain names only (no `..`, no
@@ -1034,6 +1054,27 @@ mod tests {
         }
         #[cfg(windows)]
         assert!(!inside_worktree("C:\\Windows\\a.txt"));
+    }
+
+    #[test]
+    fn save_refuses_to_overwrite_what_changed_on_disk_since_it_was_loaded() {
+        let app = TestApp::new();
+        let task = create_task(&app.state, Some(app.repo.clone()), "Edit", "", "").unwrap();
+        let file = app.path("proj_task1").join("a.txt");
+        let loaded = std::fs::read_to_string(&file).unwrap();
+        save_file(&app.state, task, "a.txt", "mine\n", &loaded).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "mine\n");
+
+        // The agent edits it while the review still shows "mine".
+        write(&file, "the agent's\n");
+        let err = save_file(&app.state, task, "a.txt", "mine again\n", "mine\n").unwrap_err();
+        assert!(err.contains("a.txt changed on disk"), "{err}");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "the agent's\n");
+
+        // A file that is not there yet was loaded as empty.
+        save_file(&app.state, task, "new.txt", "hi\n", "").unwrap();
+        let err = save_file(&app.state, task, "b.txt", "hi\n", "gone\n").unwrap_err();
+        assert!(err.contains("changed on disk"), "{err}");
     }
 
     #[test]

@@ -549,10 +549,19 @@ async fn review_file(
     .await
 }
 
-/// Saves a file edited in the review view.
+/// Saves a file edited in the review view, unless it changed on disk since it was `loaded`.
 #[tauri::command]
-async fn save_file(app: tauri::AppHandle, id: i64, path: String, content: String) -> Res<()> {
-    blocking(app, move |s| workitem::save_file(s, id, &path, &content)).await
+async fn save_file(
+    app: tauri::AppHandle,
+    id: i64,
+    path: String,
+    content: String,
+    loaded: String,
+) -> Res<()> {
+    blocking(app, move |s| {
+        workitem::save_file(s, id, &path, &content, &loaded)
+    })
+    .await
 }
 
 /// Resident memory of the app process in KiB (Linux only).

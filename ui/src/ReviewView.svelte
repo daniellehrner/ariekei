@@ -136,6 +136,10 @@
   let dock: HTMLElement | undefined = $state();
   let editedPath: string | null = $state(null);
   let editedFile: string | null = null;
+  // The new side's file as it was loaded (or last saved): Save is refused if the disk has
+  // something else by then (the agent edited it), and the error offers a reload.
+  let loadedFile = "";
+  let errorReload = $state(false);
   // The file shown has only whitespace changes, and they are hidden.
   let onlyWhitespace = $state(false);
   // Below 880 px the diff column is too narrow for two sides (at 1024 wide it is about 730).
@@ -235,6 +239,7 @@
     selection = null;
     composerOff = false;
     editedPath = null;
+    loadedFile = d.new;
     onlyWhitespace = ignoreWs && !d.binary && d.hunks.length === 0 && !!files.find((f) => f.path === path)?.whitespaceOnly;
     if (d.binary) {
       host.textContent = "Binary file: not shown.";
@@ -598,15 +603,26 @@
 
   async function save() {
     if (!editedPath || editedFile === null) return;
+    const content = editedFile;
     try {
-      await api.saveFile(id, editedPath, editedFile);
+      await api.saveFile(id, editedPath, content, loadedFile);
       say(`Saved ${editedPath}.`);
+      loadedFile = content;
       editedPath = null;
       await loadFiles();
       onchanged();
     } catch (e) {
       error = String(e);
+      errorReload = true;
     }
+  }
+
+  // Shows the review as it is on disk now (the edits not saved are dropped).
+  function reload() {
+    error = null;
+    errorReload = false;
+    load();
+    loadFiles();
   }
 
   // Sections start open, except generated files; the user's choice is remembered either way.
@@ -715,7 +731,7 @@
     <Toggle pressed={isUnified} icon="unified" kbd="u" aria-label="Unified diff (u)" title="Unified diff (u)"
       onclick={() => (view.unified = !isUnified)} data-opt="unified"><span class="tlabel">Unified</span></Toggle>
     <span class="divider"></span>
-    {#if review}<IconButton icon="refresh" label="Reload" onclick={() => { load(); loadFiles(); }} data-reload />{/if}
+    {#if review}<IconButton icon="refresh" label="Reload" onclick={reload} data-reload />{/if}
     <IconButton icon="panel" label={view.sideHidden ? "Show the files" : "Hide the files"} pressed={!view.sideHidden}
       onclick={() => (view.sideHidden = !view.sideHidden)} data-toggle="side" />
     <IconButton icon="keyboard" label="Keyboard shortcuts (?)" onclick={() => (shortcuts.open = !shortcuts.open)} data-keys />
@@ -724,7 +740,8 @@
   {#if error}
     <div class="note bad" role="alert"><Icon name="error" size={14} /><span class="grow">{error}</span>
       {#if errorTerminal && onterminal}<Button size="sm" variant="quiet" icon="terminal" onclick={onterminal}>Open Terminal</Button>{/if}
-      <IconButton icon="x" label="Dismiss" size={22} onclick={() => { error = null; errorTerminal = false; }} /></div>
+      {#if errorReload}<Button size="sm" variant="quiet" icon="refresh" onclick={reload} data-error-reload>Reload</Button>{/if}
+      <IconButton icon="x" label="Dismiss" size={22} onclick={() => { error = null; errorTerminal = false; errorReload = false; }} /></div>
   {/if}
   {#if notice}
     <div class="note" class:gh={!!noticeUrl} role="status" data-notice>

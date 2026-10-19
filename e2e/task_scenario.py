@@ -9,7 +9,8 @@ worktree on task-<n>-<slug> from main, the notes in the agent's context, the age
 opening a PR and an issue (`gh pr create` / `gh issue create`) which are linked to the task
 and listed under it rather than in their sections, a linked PR pointing back to the task and
 sending its review threads to the task's agent, asking the agent about code from the review
-(right-click a line or an old-side selection; refused while it waits for permission), Ctrl+B
+(right-click a line or an old-side selection; refused while it waits for permission), Save file
+in the review (refused when the agent changed the file meanwhile, Reload), Ctrl+B
 and ? in the terminal staying with the agent, Discard refused while the agent waits for
 permission, a closed issue staying under its task, Discard (shows the work it loses, then
 removes the worktree, branch and task; the PR goes back to My PRs), and a second task (the +
@@ -252,6 +253,22 @@ try:
     check("the old side is named as the version before the change",
           "About a.txt line 1 (old version, before the change, commit " in asked and "```txtone```" in re.sub(r"\s+", "", asked), asked)
     eventually("the agent's turn ends", lambda: agent(s, -1), lambda a: a == "finished", timeout=30)
+
+    # --- Save file in the review: refused when the file changed on disk meanwhile ---
+    s.click(s.wait(".item [data-tab='review']"))
+    s.wait_js(f"return !!{editor('new')}?.state.doc.toString().includes('reset peers once')", timeout=30)
+    a_txt = os.path.join(wt, "a.txt")
+    s.js(f"const v = {editor('new')}; v.dispatch({{ changes: {{ from: v.state.doc.length, insert: 'mine\\n' }} }})")
+    open(a_txt, "a").write("the agent's\n")  # the agent edits it while the review shows it
+    s.js("document.querySelector('[data-save]').click()")
+    refused = s.text(s.wait(".review .note.bad", timeout=10))
+    on_disk = open(a_txt).read()
+    print("[save] while the file changed on disk:", refused.strip()[:120], "| on disk:", on_disk.splitlines())
+    check("Save does not overwrite the agent's edit", "changed on disk" in refused and on_disk.endswith("reset peers once\nthe agent's\n"), on_disk)
+    s.js("document.querySelector('[data-error-reload]').click()")
+    eventually("Reload shows the file as it is on disk", lambda: s.js(f"return {editor('new')}?.state.doc.toString()"),
+               lambda v: v == on_disk, timeout=10)
+    git(wt, "checkout", "--", "a.txt")
 
     # In the agent's terminal, the app's shortcuts are Claude Code's keys (Ctrl+B is its
     # "background" key): neither the Inbox nor the shortcuts overlay react.

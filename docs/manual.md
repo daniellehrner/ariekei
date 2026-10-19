@@ -311,7 +311,9 @@ whitespace changed, and a small blue square if you have draft comments on it.
   change further on.
 - **]** / **[** go to the next or previous file.
 - When you review the worktree, the right side is editable: change the code and press
-  **Save file**.
+  **Save file**. The diff does not follow the disk by itself: if the file changed there since
+  the review loaded it (the agent edited it, say), Save is refused rather than overwriting
+  that, and **Reload** shows the file as it is now (your edits are dropped).
 
 ### Asking the agent about code
 
