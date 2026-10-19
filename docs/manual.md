@@ -453,7 +453,9 @@ made), it is still yours:
   agent: its work would land on the other branch. Switch back and it carries on. Ariekei
   notices when its window gets the focus again, or on the next poll. Once the PR is merged or
   closed (or the issue closed), the switch no longer matters: an agent that merges its PR and
-  goes back to `main` is simply finished.
+  goes back to `main` is simply finished. A rebase or bisect of the item's own branch (by you
+  or the agent, e.g. stopped on a conflict) detaches HEAD but does not count as a switch: the
+  agent keeps working.
 
 ### PRs and issues from a task
 

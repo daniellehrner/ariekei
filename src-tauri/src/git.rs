@@ -230,6 +230,32 @@ pub fn current_branch(cwd: &Path) -> Result<Option<String>, String> {
     Ok(name.strip_prefix("refs/heads/").map(str::to_owned))
 }
 
+/// The branch that a rebase or bisect in progress at `cwd` works on, if one is under way.
+/// Both detach HEAD until they end, but the work is still the branch's.
+pub fn operation_branch(cwd: &Path) -> Option<String> {
+    // Per worktree: a linked worktree has its own (absolute) git dir.
+    let files = git_str(
+        cwd,
+        &[
+            "rev-parse",
+            "--git-path",
+            "rebase-merge/head-name",
+            "--git-path",
+            "rebase-apply/head-name",
+            "--git-path",
+            "BISECT_START",
+        ],
+    )
+    .ok()?;
+    files.lines().find_map(|file| {
+        let name = std::fs::read_to_string(cwd.join(file.trim())).ok()?;
+        let name = name.trim();
+        // A rebase names the ref, a bisect the branch (or the commit it started on).
+        let branch = name.strip_prefix("refs/heads/").unwrap_or(name);
+        (!branch.is_empty()).then(|| branch.to_owned())
+    })
+}
+
 pub fn merge_base(cwd: &Path, a: &str, b: &str) -> Result<String, String> {
     git_str(cwd, &["merge-base", a, b])
 }

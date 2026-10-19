@@ -579,14 +579,19 @@ fn polled_pr(repo: &Repo, number: i64) -> Result<PolledPr, String> {
 /// The branch the item's worktree is on instead of the item's (`""`: a detached HEAD), if
 /// it was switched. Mostly the user's own checkout, which Ariekei adopts but the user also
 /// works in. Not once the PR or issue is finished: its branch is done with (often the agent
-/// that merged it switched back to the base branch).
+/// that merged it switched back to the base branch). A rebase or bisect of the item's branch
+/// (e.g. the agent's, stopped on a conflict) detaches HEAD but has not moved it: the agent
+/// still works on the branch.
 pub fn moved_to(item: &WorkItem) -> Option<String> {
     if !item.open {
         return None;
     }
     let dir = item.worktree_path.as_deref().filter(|p| p.exists())?;
     let branch = item.branch.as_deref().filter(|b| !b.is_empty())?;
-    let now = git::current_branch(dir).ok()?.unwrap_or_default();
+    let now = match git::current_branch(dir).ok()? {
+        Some(now) => now,
+        None => git::operation_branch(dir).unwrap_or_default(),
+    };
     (now != branch).then_some(now)
 }
 
@@ -1656,6 +1661,37 @@ mod tests {
         );
         assert!(app.clone.join("mine.txt").exists());
         assert_eq!(git(&app.clone, &["branch", "--show-current"]), "feat/evm");
+    }
+
+    #[test]
+    fn a_rebase_or_bisect_of_the_items_branch_has_not_moved_it() {
+        let app = TestApp::new();
+        let id = create_task(&app.state, Some(app.repo.clone()), "Rebase", "", "").unwrap();
+        let item = app.state.store.item(id).unwrap();
+        let wt = item.worktree_path.clone().unwrap();
+        write(&wt.join("a.txt"), "mine\n");
+        commit(&wt, "mine", "me");
+        write(&app.clone.join("a.txt"), "theirs\n");
+        commit(&app.clone, "theirs", "me");
+
+        // Stopped on a conflict: HEAD is detached, the branch is still the one rebased.
+        let rebase = crate::git::git_str(&wt, &["-c", "core.editor=true", "rebase", "main"]);
+        assert!(rebase.is_err(), "the rebase conflicts");
+        assert_eq!(crate::git::current_branch(&wt).unwrap(), None);
+        assert_eq!(moved_to(&item), None);
+        assert!(ensure_on_branch(&app.state, id).is_ok());
+        git(&wt, &["rebase", "--abort"]);
+
+        git(&wt, &["bisect", "start", "HEAD", "main"]);
+        git(&wt, &["checkout", "-q", "--detach", "main"]);
+        assert_eq!(moved_to(&item), None, "bisecting the branch");
+        git(&wt, &["bisect", "reset"]);
+
+        // A plain detached HEAD is not on the branch.
+        git(&wt, &["checkout", "-q", "--detach", "HEAD"]);
+        assert_eq!(moved_to(&item).as_deref(), Some(""));
+        let err = ensure_on_branch(&app.state, id).unwrap_err();
+        assert!(err.contains("a detached HEAD"), "{err}");
     }
 
     #[test]
