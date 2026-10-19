@@ -96,7 +96,7 @@ fn remote_for_repo(
 
 /// Fetches `branch` of `remote` into `refs/remotes/<remote>/<branch>` regardless of the
 /// remote's configured refspec.
-fn fetch(repo: &Path, remote: &str, branch: &str) -> Result<String, String> {
+pub fn fetch(repo: &Path, remote: &str, branch: &str) -> Result<String, String> {
     let tracking = format!("{remote}/{branch}");
     let lock = fetching(repo);
     let _one_at_a_time = hold(&lock);

@@ -811,7 +811,14 @@ fn review(state: &AppState, id: i64) -> Result<Review, String> {
             .map_err(|_| "the PR head is not fetched yet".to_owned())?,
     };
     let tracking = format!("{}/{}", repo.base_remote, base_ref);
-    let base = git::merge_base(&dir, &head, &tracking).unwrap_or_else(|_| head.clone());
+    // Comparing with the head itself would show no changes at all, and not why.
+    let base = git::merge_base(&dir, &head, &tracking).map_err(|_| {
+        if git::commit_exists(&dir, &tracking) {
+            format!("Nothing to compare with: the head has no commit in common with {tracking}")
+        } else {
+            format!("Nothing to compare with: {tracking} is not fetched")
+        }
+    })?;
     Ok(Review {
         view: if worktree.is_some() {
             None
@@ -827,8 +834,30 @@ fn review(state: &AppState, id: i64) -> Result<Review, String> {
     })
 }
 
+/// Fetches the branch a worktree's review compares with, as it is now (when the review loads,
+/// not for each file). It was fetched when the worktree was made, and a `git pull` there need
+/// not update it (for a fork's PR it fetches the fork): a PR rebased onto a newer base would
+/// show the base's new commits as its own, and a retargeted one (a stacked PR whose parent
+/// merged) be compared with a branch it no longer targets. Without a worktree, `fetch_pr`
+/// fetches it with the head.
+fn fetch_base(state: &AppState, id: i64) -> Result<(), String> {
+    let (item, repo) = item_repo(state, id)?;
+    if item.worktree_path.as_ref().is_some_and(|p| p.exists()) {
+        worktree::fetch(&repo.path, &repo.base_remote, &base_ref_of(&item, &repo)?)?;
+    }
+    Ok(())
+}
+
 pub fn review_state(state: &AppState, id: i64) -> Result<ReviewState, String> {
-    let r = review(state, id)?;
+    // Not fatal (e.g. offline): the base as it was fetched before will do.
+    let fetched = fetch_base(state, id);
+    if let Err(e) = &fetched {
+        tracing::warn!("review of item {id}: could not fetch its base: {e}");
+    }
+    let r = review(state, id).map_err(|e| match &fetched {
+        Err(f) => format!("{e} ({f})"),
+        Ok(()) => e,
+    })?;
     let pr_head = if r.item.kind == "issue" || r.item.is_task() {
         String::new()
     } else {
@@ -1172,6 +1201,54 @@ mod tests {
             comment_ranges(&app.state, task, &["new.txt".to_owned()], &head).unwrap(),
             [("new.txt".to_owned(), vec![(17, 23)])],
             "GitHub shows a rename with one changed line, not a new file"
+        );
+    }
+
+    #[test]
+    fn a_worktree_review_compares_with_the_base_as_it_is_now() {
+        let app = TestApp::new();
+        let (id, wt) = app.pr_with_worktree(6, "feat");
+        // main moves on and the PR is rebased onto it; the worktree gets only the PR's branch
+        // (as `git pull` does for a fork's PR), so the clone's origin/main stays behind.
+        app.push_to("main", &[("m.txt", "carol's\n")], "carol");
+        let up = &app.upstream;
+        git(up, &["checkout", "-q", "feat"]);
+        git(
+            up,
+            &[
+                "-c",
+                "user.name=me",
+                "-c",
+                "user.email=me@example.com",
+                "rebase",
+                "-q",
+                "main",
+            ],
+        );
+        git(up, &["checkout", "-q", "main"]);
+        git(&wt, &["fetch", "-q", "origin", "feat"]);
+        git(&wt, &["reset", "-q", "--hard", "origin/feat"]);
+
+        let state = review_state(&app.state, id).unwrap();
+        assert_eq!(
+            state
+                .commits
+                .iter()
+                .map(|c| c.author.as_str())
+                .collect::<Vec<_>>(),
+            ["me"],
+            "only the PR's own commit, not main's new one"
+        );
+        assert_eq!(state.base, git(up, &["rev-parse", "main"]));
+
+        // A base that cannot be fetched (deleted): the review says so instead of showing nothing.
+        app.set("prs", 6, json!({"base_ref": "gone"}));
+        app.poll().unwrap();
+        let err = review_state(&app.state, id).unwrap_err();
+        assert!(err.contains("origin/gone is not fetched"), "{err}");
+        assert!(
+            err.contains("could not fetch") || err.contains("failed"),
+            "{err}"
         );
     }
 

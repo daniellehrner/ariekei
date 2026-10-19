@@ -275,6 +275,10 @@ One row above the diff:
 - The **scope** menu: **All changes vs `<base>`** (from the merge base to the head, like
   GitHub's Files tab), or **a single commit**, to review a change in small steps. Each commit
   shows how many files it changes. **↑** / **↓**, **Enter** and **Esc** work in the menu.
+  The review fetches the base branch as it is on GitHub when it opens (with a worktree, on
+  **↻ Reload** too), so a PR rebased onto a newer base, or retargeted to another branch, shows
+  only its own changes.
+  If the head has no commit in common with the base, the review says so.
 - The head commit and the number of commits, and a warning for uncommitted changes. Hover for
   where the diff comes from: the **Worktree** (includes uncommitted changes) or the **PR head**
   (read-only).
