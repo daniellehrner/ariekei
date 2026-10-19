@@ -351,6 +351,7 @@ impl TestApp {
     }
 
     /// Starts item `id`'s agent (the fake one) in its worktree, as opening its terminal does.
+    #[track_caller]
     pub fn start_agent(&self, id: i64) {
         let item = self.state.store.item(id).unwrap();
         let cwd = item
@@ -375,9 +376,18 @@ impl TestApp {
                 .status(&id.to_string())
                 .is_some_and(|s| s != crate::hooks::AgentStatus::Starting)
         });
+        // Its prompt is up, so what is typed now reaches it. (A Windows ConPTY writes some
+        // output of its own before the agent has even started.)
+        self.wait_for(|| {
+            self.state
+                .terminals
+                .scrollback(&id.to_string())
+                .contains('❯')
+        });
     }
 
-    /// Waits (up to 20 s) until `done` holds.
+    /// Waits (up to 20 s) until `done` holds. A timeout names the caller's line.
+    #[track_caller]
     pub fn wait_for(&self, done: impl Fn() -> bool) {
         let deadline = Instant::now() + Duration::from_secs(20);
         while !done() {

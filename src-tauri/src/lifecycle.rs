@@ -216,7 +216,9 @@ fn remove(
             .store
             .items(item.repo_id)?
             .into_iter()
-            .filter(|i| i.id != item.id && i.worktree_path.as_deref() == Some(dir))
+            .filter(|i| {
+                i.id != item.id && i.worktree_path.as_deref().is_some_and(|p| same_dir(p, dir))
+            })
             .map(|i| i.label())
             .collect();
         if !sharing.is_empty() {
@@ -267,6 +269,15 @@ fn remove(
     }
     remove_contexts(state, repo, item);
     Ok(removed)
+}
+
+/// Whether `a` and `b` are the same folder. Paths that git listed and paths Ariekei made are
+/// spelled differently on macOS (`/private/var/…`) and Windows (`C:/Users/RUNNER~1/…`).
+fn same_dir(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
 }
 
 /// `git worktree remove`, without --force unless `force` (discarding): git refuses if the

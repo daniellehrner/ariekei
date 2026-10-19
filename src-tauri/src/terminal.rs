@@ -512,6 +512,18 @@ impl TerminalManager {
         }
     }
 
+    /// What the terminal of `key` showed so far (its scrollback), as text.
+    #[cfg(test)]
+    pub fn scrollback(&self, key: &str) -> String {
+        self.get(key)
+            .map(|t| {
+                let out = t.output.lock().unwrap();
+                String::from_utf8_lossy(&out.scrollback.iter().copied().collect::<Vec<u8>>())
+                    .into_owned()
+            })
+            .unwrap_or_default()
+    }
+
     pub fn write(&self, key: &str, data: &[u8]) -> Result<(), String> {
         let term = self.get(key)?;
         let mut writer = term.writer.lock().unwrap();

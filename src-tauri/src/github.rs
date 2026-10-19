@@ -367,25 +367,64 @@ fn pr_stamps_in(owner: &str, name: &str, state: &str, terms: &str) -> Result<Vec
     Ok(parse_stamps(&v["data"]["search"]["nodes"]))
 }
 
+/// Lookups by number per query: the query is one command-line argument of gh, which Windows
+/// limits to 32767 characters (a PR's fields take some 700).
+const LOOKUPS_PER_QUERY: usize = 25;
+
+/// The queries that look up `kind` (`pullRequest`, `issue`) with `fields` for `numbers`,
+/// `LOOKUPS_PER_QUERY` at a time, with the numbers each one looks up and the alias prefix.
+fn lookup_queries<'a>(
+    kind: &str,
+    fields: &str,
+    numbers: &'a [i64],
+) -> impl Iterator<Item = (String, &'a [i64])> {
+    let prefix = if kind == "issue" { "i" } else { "p" };
+    numbers.chunks(LOOKUPS_PER_QUERY).map(move |chunk| {
+        let aliases: String = chunk
+            .iter()
+            .map(|n| format!("{prefix}{n}: {kind}(number: {n}) {{ {fields} }}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        (
+            format!(
+                "query($owner: String!, $name: String!) {{ repository(owner: $owner, name: $name) {{ {aliases} }} }}"
+            ),
+            chunk,
+        )
+    })
+}
+
+/// `kind` (`pullRequest`, `issue`) with `fields` of each of `numbers` in `owner/name`, in
+/// that order (null where GitHub does not know the number).
+fn look_up(
+    owner: &str,
+    name: &str,
+    kind: &str,
+    fields: &str,
+    numbers: &[i64],
+) -> Result<Value, String> {
+    let prefix = if kind == "issue" { "i" } else { "p" };
+    let mut found = vec![];
+    for (query, chunk) in lookup_queries(kind, fields, numbers) {
+        let v = graphql_lookups(&query, &[("owner", owner), ("name", name)])?;
+        found.extend(
+            chunk
+                .iter()
+                .map(|n| v["data"]["repository"][format!("{prefix}{n}")].clone()),
+        );
+    }
+    Ok(Value::Array(found))
+}
+
 /// Stamps of PRs by number (any state); numbers GitHub does not know are left out.
 pub fn pr_stamps(owner: &str, name: &str, numbers: &[i64]) -> Result<Vec<PrStamp>, String> {
-    if numbers.is_empty() {
-        return Ok(vec![]);
-    }
-    let fields: String = numbers
-        .iter()
-        .map(|n| format!("p{n}: pullRequest(number: {n}) {{ {STAMP_FIELDS} }}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let query = format!(
-        "query($owner: String!, $name: String!) {{ repository(owner: $owner, name: $name) {{ {fields} }} }}"
-    );
-    let v = graphql_lookups(&query, &[("owner", owner), ("name", name)])?;
-    let found: Vec<Value> = numbers
-        .iter()
-        .map(|n| v["data"]["repository"][format!("p{n}")].clone())
-        .collect();
-    Ok(parse_stamps(&Value::Array(found)))
+    Ok(parse_stamps(&look_up(
+        owner,
+        name,
+        "pullRequest",
+        STAMP_FIELDS,
+        numbers,
+    )?))
 }
 
 /// Open PRs in `owner/name` matching GitHub search `terms`, most recently updated first,
@@ -413,23 +452,10 @@ pub fn prs_by_number(
     viewer: &str,
     numbers: &[i64],
 ) -> Result<Vec<PrSummary>, String> {
-    if numbers.is_empty() {
-        return Ok(vec![]);
-    }
-    let fields: String = numbers
-        .iter()
-        .map(|n| format!("p{n}: pullRequest(number: {n}) {{ {PR_FIELDS} }}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let query = format!(
-        "query($owner: String!, $name: String!) {{ repository(owner: $owner, name: $name) {{ {fields} }} }}"
-    );
-    let v = graphql_lookups(&query, &[("owner", owner), ("name", name)])?;
-    let found: Vec<Value> = numbers
-        .iter()
-        .map(|n| v["data"]["repository"][format!("p{n}")].clone())
-        .collect();
-    Ok(parse_prs(&Value::Array(found), viewer))
+    Ok(parse_prs(
+        &look_up(owner, name, "pullRequest", PR_FIELDS, numbers)?,
+        viewer,
+    ))
 }
 
 fn s(v: &Value) -> String {
@@ -611,23 +637,10 @@ pub fn issues_by_number(
     viewer: &str,
     numbers: &[i64],
 ) -> Result<Vec<IssueSummary>, String> {
-    if numbers.is_empty() {
-        return Ok(vec![]);
-    }
-    let fields: String = numbers
-        .iter()
-        .map(|n| format!("i{n}: issue(number: {n}) {{ {ISSUE_FIELDS} }}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let query = format!(
-        "query($owner: String!, $name: String!) {{ repository(owner: $owner, name: $name) {{ {fields} }} }}"
-    );
-    let v = graphql_lookups(&query, &[("owner", owner), ("name", name)])?;
-    let found: Vec<Value> = numbers
-        .iter()
-        .map(|n| v["data"]["repository"][format!("i{n}")].clone())
-        .collect();
-    Ok(parse_issues(&Value::Array(found), viewer))
+    Ok(parse_issues(
+        &look_up(owner, name, "issue", ISSUE_FIELDS, numbers)?,
+        viewer,
+    ))
 }
 
 const ISSUE_CONVERSATION: &str = r#"query($owner: String!, $name: String!, $number: Int!) {
@@ -1096,6 +1109,17 @@ fn failure_excerpt(log: &str, lines: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lookups_fit_on_a_windows_command_line() {
+        let numbers: Vec<i64> = (10_000..10_130).collect();
+        let queries: Vec<_> = lookup_queries("pullRequest", PR_FIELDS, &numbers).collect();
+        assert_eq!(queries.iter().map(|(_, c)| c.len()).sum::<usize>(), 130);
+        // gh gets the query as one argument, `query=…`: Windows allows 32767 characters for
+        // the whole command line.
+        let longest = queries.iter().map(|(q, _)| q.len()).max().unwrap();
+        assert!(longest < 30_000, "{longest}");
+    }
     use serde_json::json;
 
     fn fixture() -> Value {
