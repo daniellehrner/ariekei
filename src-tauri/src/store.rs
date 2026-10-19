@@ -353,6 +353,17 @@ impl Store {
         .map_err(err)
     }
 
+    /// The GitHub login the repo is polled for (who gh is logged in as).
+    pub fn set_viewer(&self, id: i64, viewer: &str) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE repos SET viewer = ?2 WHERE id = ?1",
+            params![id, viewer],
+        )
+        .map(|_| ())
+        .map_err(err)
+    }
+
     pub fn setting(&self, key: &str) -> Result<Option<String>, String> {
         let conn = self.conn.lock().unwrap();
         conn.query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| {

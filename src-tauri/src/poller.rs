@@ -212,9 +212,14 @@ fn rfc3339_secs(t: &str) -> Option<u64> {
 
 /// One poll of `repo`: the viewer's PRs, PRs assigned to them, requesting their review or
 /// reviewed by them, and the PRs they track (by number, so merged/closed ones get their final
-/// state). `full`: fetch the
-/// details of every PR, not only of those that changed.
+/// state). `full`: fetch the details of every PR, not only of those that changed, and check
+/// who the viewer is.
 pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), String> {
+    let repo = &if full {
+        current_viewer(state, repo)?
+    } else {
+        repo.clone()
+    };
     let (o, n, me) = (&repo.owner, &repo.name, &repo.viewer);
     let before = state.store.items(repo.id)?;
     let mut cut_short: Vec<&str> = vec![];
@@ -384,6 +389,31 @@ pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), Stri
     }
     crate::lifecycle::after_poll(state, repo)?;
     Ok(())
+}
+
+/// `repo` with the viewer gh is logged in as now: `gh auth switch` changes it, and the
+/// searches are by the viewer. Kept as it is if gh cannot say.
+fn current_viewer(state: &crate::AppState, repo: &Repo) -> Result<Repo, String> {
+    match github::viewer() {
+        Ok(viewer) if !viewer.is_empty() && !viewer.eq_ignore_ascii_case(&repo.viewer) => {
+            tracing::info!(
+                "{}/{}: gh is logged in as {viewer} now, not {}",
+                repo.owner,
+                repo.name,
+                repo.viewer
+            );
+            state.store.set_viewer(repo.id, &viewer)?;
+            Ok(Repo {
+                viewer,
+                ..repo.clone()
+            })
+        }
+        Ok(_) => Ok(repo.clone()),
+        Err(e) => {
+            tracing::warn!("who is logged in to gh: {e}");
+            Ok(repo.clone())
+        }
+    }
 }
 
 /// Tracked items that GitHub does not know any more (`gone`: kind and number), e.g. an issue
@@ -603,6 +633,26 @@ mod tests {
             assert_eq!(detailed(&app), [7]);
             app.poll().unwrap();
             assert_eq!(detailed(&app), [7], "followed while its checks may start");
+        }
+
+        #[test]
+        fn a_full_poll_follows_gh_to_another_login() {
+            let app = TestApp::new();
+            app.add_pr(json!({"number": 7, "title": "Mine", "head_ref": "main"}));
+            app.add_pr(
+                json!({"number": 8, "title": "Work's", "head_ref": "main", "author": "me-at-work"}),
+            );
+            app.poll().unwrap();
+            assert!(app.row(8).is_none());
+            // `gh auth switch`.
+            let mut data = app.data();
+            data["viewer"] = json!("me-at-work");
+            app.set_data(&data);
+            poll(&app.state, &app.repo, true).unwrap();
+            let repo = app.state.store.repo(app.repo.id).unwrap().unwrap();
+            assert_eq!(repo.viewer, "me-at-work");
+            assert_eq!(app.row(8).map(|r| r.role).as_deref(), Some("author"));
+            assert!(app.row(7).is_none(), "the other login's PR");
         }
 
         #[test]
