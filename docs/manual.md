@@ -81,7 +81,7 @@ Each item is listed once, in the first section that fits:
 | **Starred** | Items you starred, whatever else they are |
 | **Tasks** | Your tasks (T1, T2, …), with the PRs and issues opened for them nested under them |
 | **Assigned** | Pull requests and issues assigned to you |
-| **Approved** | Your pull requests that are approved, i.e. ready to merge |
+| **Approved** | Your open pull requests that are approved |
 | **Review requested** | Pull requests that request your review |
 | **My PRs** | Your other open pull requests |
 | **Reviewed** | Pull requests you reviewed |
@@ -100,7 +100,8 @@ request you opened stays, too, e.g. after the review request is gone because you
   you last opened the item.
 - A second line: `issue` for an issue, the author (not in My PRs, Approved and Tasks), `from #N`
   for a PR that came from an issue, CI state (✓ passing, ✗ failing, a hollow diamond while it
-  runs), `draft`, `closed`, the review decision (in Approved: `ready to merge`), the number of
+  runs), `draft`, `closed`, the review decision (in Approved: `ready to merge`, unless it is a
+  draft or CI is failing or still running), the number of
   unresolved review threads, and the **attention reason** on the right. A task says
   `task · <branch>`, or `no PR or issue yet`.
 - A task's PRs and issues hang under it on a guide line, with their kind (PR or issue) where

@@ -55,7 +55,7 @@ told apart in grey-scale and with colour blindness:
 - **Section headers** are light dividers (24 px, `label-caps`, the count in faint mono right
   after the label) and stay at the top while their section scrolls.
 - **Rows** have two lines. The dot slot is empty when there is no agent. Issues say `issue` on
-  line 2; Approved says `ready to merge`. A task's line 2 is `task · <branch>` or `no PR or issue
+  line 2; Approved says `ready to merge` (unless a draft or CI holds it up). A task's line 2 is `task · <branch>` or `no PR or issue
   yet`; its PRs and issues hang under it on a 1 px guide line, with their kind icon in the dot
   slot, and more than three fold (except those that want something) under "+N more".
 - **The star** is the user's own mark, filled in `--you`. In rows it is a hover/focus action

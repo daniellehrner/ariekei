@@ -14,7 +14,7 @@
   import StatusDot from "./controls/StatusDot.svelte";
   import { ATTENTION_LABEL, attentionKind } from "./lib/attention";
   import { api, shortName, type Repo, type Row } from "./lib/api";
-  import { SECTIONS, bySection } from "./lib/inboxSections";
+  import { SECTIONS, bySection, readyToMerge } from "./lib/inboxSections";
   import { browser } from "./lib/layout.svelte";
 
   let {
@@ -178,6 +178,7 @@
 {#snippet item(row: Row, section: string, nested: boolean)}
   {@const kind = attentionKind(row.attention)}
   {@const decision = row.reviewDecision ? DECISION[row.reviewDecision] : null}
+  {@const ready = section === "approved" && readyToMerge(row)}
   {@const links = row.kind === "task" ? rows.filter((r) => r.taskId === row.id).length : 0}
   <li class:closed={!row.open} class:nested>
     <button class="row" class:active={row.id === selected} aria-current={row.id === selected} onclick={() => onselect(row.id)}
@@ -203,7 +204,7 @@
             {#if links}<span class="faint shrink" title={row.branch ?? undefined}>task{row.branch ? ` · ${row.branch}` : ""}</span>{:else}<span class="faint">no PR or issue yet</span>{/if}
           {:else}
             {#if row.kind === "issue" && !nested}<span class="faint issue"><Icon name="issue" size={12} />issue</span>{/if}
-            {#if section === "approved"}<span class="faint">ready to merge</span>{/if}
+            {#if ready}<span class="faint">ready to merge</span>{/if}
             {#if section !== "mine" && section !== "approved" && section !== "tasks"}<span>{row.author}</span>{/if}
             {#if row.issueNumber}<span>from #{row.issueNumber}</span>{/if}
             {#if ciState(row.ci)}
@@ -213,7 +214,7 @@
             {/if}
             {#if row.isDraft}<span class="faint">draft</span>{/if}
             {#if !row.open}<span class="faint">closed</span>{/if}
-            {#if decision && section !== "approved"}<span class={decision[1]}>{decision[0]}</span>{/if}
+            {#if decision && !ready}<span class={decision[1]}>{decision[0]}</span>{/if}
             {#if row.unresolvedThreads}
               <span class="threads" title="Unresolved review threads"><Icon name="comment" size={12} />{row.unresolvedThreads}</span>
             {/if}

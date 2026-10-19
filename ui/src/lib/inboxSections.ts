@@ -28,7 +28,7 @@ export function sectionOf(row: Row): SectionKey {
     case "assignee":
       return "assigned";
     case "author":
-      return row.kind === "pr" && row.reviewDecision === "APPROVED" ? "approved" : "mine";
+      return row.kind === "pr" && row.open && row.reviewDecision === "APPROVED" ? "approved" : "mine";
     case "requested":
       return "requested";
     case "reviewed":
@@ -36,6 +36,12 @@ export function sectionOf(row: Row): SectionKey {
     default:
       return "open";
   }
+}
+
+/** Whether an approved PR can be merged as far as the Inbox knows: open, not a draft, and its
+ *  CI (if any) passed. */
+export function readyToMerge(row: Row): boolean {
+  return row.open && !row.isDraft && row.reviewDecision === "APPROVED" && (row.ci == null || row.ci === "SUCCESS");
 }
 
 /** The rows of each section, in the Inbox's order (rows under a task are left out). */
