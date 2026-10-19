@@ -14,11 +14,13 @@ const { release } = Astro.props;
 const platforms: Platform[] = ['linux', 'macos', 'windows'];
 const first = (p: Platform) => release?.downloads.find((d) => d.platform === p);
 const version = release ? `v${release.version}` : '';
+const icon =
+  '<svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5v8M4.5 7L8 10.5 11.5 7M3 13.5h10"/></svg>';
 ---
 
 <div class="download">
   <a class="button primary" href="#install" data-download="any">
-    {release ? 'Download' : 'Install'}{version && <span class="version">{version}</span>}
+    <Fragment set:html={icon} />{release ? 'Download' : 'Install'}{version && <span class="version">{version}</span>}
   </a>
   {
     platforms.map((p) => {
@@ -26,6 +28,7 @@ const version = release ? `v${release.version}` : '';
       return (
         d && (
           <a class="button primary" href={d.url} data-download={p} hidden>
+            <Fragment set:html={icon} />
             Download for {platformNames[p]}
             <span class="version">{version}</span>
           </a>
@@ -40,10 +43,11 @@ const version = release ? `v${release.version}` : '';
     display: contents;
   }
   .version {
-    margin-left: var(--sp-4);
+    padding: 2px 7px;
+    border-radius: var(--r-pill);
+    background: color-mix(in srgb, var(--text-on-accent) 18%, transparent);
     font-family: var(--font-mono);
-    font-size: 0.85em;
-    font-weight: var(--fw-regular);
-    opacity: 0.8;
+    font-size: 12px;
+    font-weight: var(--fw-medium);
   }
 </style>

@@ -2,7 +2,12 @@
 // Copyright contributors to Ariekei.
 // SPDX-License-Identifier: Apache-2.0
 
+import '@fontsource/instrument-sans/400.css';
+import '@fontsource/instrument-sans/500.css';
+import '@fontsource/instrument-sans/600.css';
 import '@fontsource/jetbrains-mono/400.css';
+import '@fontsource/jetbrains-mono/500.css';
+import '@fontsource/jetbrains-mono/600.css';
 import '../../../ui/src/tokens.css';
 import '../styles/home.css';
 import logo from '../assets/logo.svg?raw';
@@ -14,14 +19,28 @@ const release = await latestRelease();
 const platforms: Platform[] = ['linux', 'macos', 'windows'];
 const title = 'Ariekei — a review workbench for coding agents';
 const description =
-  'Every pull request, issue and task gets its own git worktree and its own Claude Code session. The Inbox puts what needs you first; you review the agent’s work and send comments to GitHub or back to the agent.';
+  'Run Claude Code on many PRs and issues at once. Each gets its own worktree and session; the Inbox puts what needs you first, and you review the agent’s work before it goes to GitHub.';
 const canonical = Astro.site ? new URL('/', Astro.site).href : undefined;
+const manual = '/docs/manual/';
+
+const check =
+  '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>';
+const download =
+  '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5v8M4.5 7L8 10.5 11.5 7M3 13.5h10"/></svg>';
+// The three voices, as in the app: the agent a copper circle, you a blue square, GitHub a violet diamond.
+const marks = {
+  agent: '<svg width="12" height="12" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="4" fill="var(--agent)"/></svg>',
+  you: '<svg width="12" height="12" viewBox="0 0 8 8" aria-hidden="true"><rect width="8" height="8" rx="1.5" fill="var(--you)"/></svg>',
+  gh: '<svg width="12" height="12" viewBox="0 0 8 8" aria-hidden="true"><path d="M4 0.3L7.7 4 4 7.7 0.3 4z" fill="var(--gh)"/></svg>',
+  folder:
+    '<svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z"/></svg>',
+};
 ---
 
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>{title}</title>
     <meta name="description" content={description} />
     {canonical && <link rel="canonical" href={canonical} />}
@@ -32,261 +51,335 @@ const canonical = Astro.site ? new URL('/', Astro.site).href : undefined;
   </head>
   <body>
     <header class="top">
-      <a class="brand" href="/" aria-label="Ariekei home"><Fragment set:html={logo} /><span>Ariekei</span></a>
-      <nav aria-label="Site">
-        <a href="/docs/manual/">Docs</a>
-        <a href={releasesPage}>Releases</a>
-        <a href={repo}>GitHub</a>
+      <nav class="wrap" aria-label="Main">
+        <a class="brand" href="/" aria-label="Ariekei, home"><Fragment set:html={logo} /><span>ariekei</span></a>
+        <div class="links">
+          <a href={manual}>Manual</a>
+          <a href={releasesPage}>Releases</a>
+          <a href={repo}>GitHub</a>
+          <a class="button small" href="#install">Download</a>
+        </div>
       </nav>
     </header>
 
     <main>
-      <section class="hero wrap">
-        <h1>A review workbench for coding agents.</h1>
-        <p class="lead">
-          Every pull request, issue and task gets its own git worktree and its own Claude Code session. The Inbox puts
-          what needs you first; you review the agent’s work and send comments to GitHub or back to the agent.
-        </p>
-        <div class="actions">
-          <DownloadButton release={release} />
-          <a class="button" href={repo}>View on GitHub</a>
+      <section class="wrap hero" aria-labelledby="hero-title">
+        <div class="intro">
+          <h1 id="hero-title">A review workbench for coding agents.</h1>
+          <p class="lead">
+            Run Claude Code on many PRs and issues at once. Each gets its own worktree and session; the Inbox puts what
+            needs you first, and you review the agent’s work before it goes to GitHub.
+          </p>
+          <div class="actions">
+            <DownloadButton release={release} />
+            <a class="button" href={repo}>
+              <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0M2.5 12.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0M10.5 12.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0M4 5v6M12 11V6.5a2 2 0 0 0-2-2H7.5M9 3L7.5 4.5 9 6"></path></svg>
+              View on GitHub
+            </a>
+          </div>
+          <p class="preview">
+            <span class="tag">Early preview</span>
+            <span>The builds are not signed yet.</span>
+            <a href="#install" data-other-platforms hidden>Other platforms</a>
+          </p>
+          <ul class="glance" aria-label="At a glance">
+            <li><Fragment set:html={check} />Free and open source (Apache-2.0)</li>
+            <li><Fragment set:html={check} />Runs on your machine</li>
+            <li><Fragment set:html={check} />Uses your own <code>claude</code> and <code>gh</code></li>
+            <li><Fragment set:html={check} />Linux, macOS and Windows</li>
+          </ul>
         </div>
-        <p class="fine">
-          Free and open source (Apache-2.0) · Runs on your machine · Uses your own <code>claude</code> and <code>gh</code> ·
-          Linux, macOS and Windows
-        </p>
+        <div class="hero-shot">
+          <Shot
+            name="drafts"
+            eager
+            alt="Ariekei: the Inbox on the left, a pull request under review on the right, with a side-by-side diff, a draft comment, and a banner saying the agent is waiting for permission."
+          />
+        </div>
       </section>
 
-      <div class="wrap hero-shot">
-        <Shot
-          name="drafts"
-          eager
-          alt="Ariekei with the Inbox on the left and the review of a pull request on the right: a side-by-side diff, a draft comment, and a banner saying the agent is waiting for permission."
-        />
-      </div>
-
-      <section class="wrap strip" aria-label="What Ariekei is">
-        <div>
-          <h2><span class="mark agent" aria-hidden="true"></span>The agent writes the code</h2>
+      <section class="wrap voices" aria-label="How Ariekei divides the work">
+        <article>
+          <p class="voice agent"><Fragment set:html={marks.agent} />The agent</p>
+          <h2>The agent writes the code</h2>
           <p>
             Your installed <code>claude</code> runs unmodified in an embedded terminal, in the item’s worktree, with the PR or
             issue as context. Your settings, your plan, your permissions.
           </p>
-        </div>
-        <div>
-          <h2><span class="mark you" aria-hidden="true"></span>You review it</h2>
+        </article>
+        <article>
+          <p class="voice you"><Fragment set:html={marks.you} />You</p>
+          <h2>You review it</h2>
           <p>
             Ariekei is where you read the changes, comment and decide. It is not an IDE: for deep navigation or debugging,
             open the same worktree in your editor.
           </p>
-        </div>
-        <div>
-          <h2><span class="mark gh" aria-hidden="true"></span>GitHub stays the record</h2>
+        </article>
+        <article>
+          <p class="voice gh"><Fragment set:html={marks.gh} />GitHub</p>
+          <h2>GitHub stays the record</h2>
           <p>
             Pull requests, issues, reviews and checks come from GitHub through your <code>gh</code> login. Works with any
             language: the diff comes from git.
           </p>
-        </div>
+        </article>
       </section>
 
-      <section class="wrap feature">
+      <section class="wrap feature" id="inbox" aria-labelledby="inbox-title">
         <div class="text">
           <p class="kicker">Inbox</p>
-          <h2>What needs you, first.</h2>
+          <h2 id="inbox-title">What needs you, first.</h2>
           <p>
-            Starred, tasks, assigned, approved, review requested, your PRs, reviewed and the ones you added: each item sits
-            in the first section that fits, ordered by attention. The agent needs you, CI is failing, new comments, ready
-            for review.
+            Eight sections, from Starred to the ones you added. Each item sits in the first that fits, ordered by
+            attention.
           </p>
+          <ol class="reasons" aria-label="Attention, most urgent first">
+            <li class="agent">
+              <svg width="16" height="16" viewBox="0 0 14 14" aria-hidden="true"><circle cx="7" cy="7" r="6.25" fill="none" stroke="var(--agent)" stroke-opacity="0.4" stroke-width="1.5"></circle><circle cx="7" cy="7" r="3.9" fill="var(--agent)"></circle></svg>
+              The agent needs you
+            </li>
+            <li class="bad">
+              <svg width="16" height="16" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1.5L12.5 7 7 12.5 1.5 7z" fill="var(--bad)"></path></svg>
+              CI is failing
+            </li>
+            <li class="gh">
+              <svg width="16" height="16" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1.5L12.5 7 7 12.5 1.5 7z" fill="var(--gh)"></path></svg>
+              New comments
+            </li>
+            <li class="you">
+              <svg width="16" height="16" viewBox="0 0 14 14" aria-hidden="true"><rect x="2.75" y="2.75" width="8.5" height="8.5" rx="1.75" fill="var(--you)"></rect></svg>
+              Ready for review
+            </li>
+          </ol>
           <p>Notifications for the same events, in the window or from the OS when Ariekei is in the background.</p>
           <a class="more" href="/docs/manual/#4-the-inbox">The Inbox in the manual</a>
         </div>
         <Shot name="inbox" sizes="(min-width: 860px) 700px, 100vw" alt="The Inbox, grouped into sections, next to the overview of a pull request with its checks and reviews." />
       </section>
 
-      <section class="wrap feature flip">
+      <section class="wrap feature flip" id="worktrees" aria-labelledby="wt-title">
         <div class="text">
           <p class="kicker">Worktrees</p>
-          <h2>One worktree and one agent per item.</h2>
-          <p>
-            Start working on a PR and it gets a worktree on its branch, next to your clone. An issue gets a new branch; a
-            task needs neither, and the PRs and issues its agent opens are linked under it.
-          </p>
-          <p>
-            Agents keep their conversation across restarts. Merged or closed items are cleaned up, without ever losing
-            uncommitted or unpushed work.
-          </p>
+          <h2 id="wt-title">One worktree and one agent per item.</h2>
+          <ul class="dashes">
+            <li>Start working on a PR and it gets a worktree on its branch, next to your clone.</li>
+            <li>An issue gets a new branch; a task needs neither, and the PRs and issues its agent opens are linked under it.</li>
+            <li>Agents keep their conversation across restarts.</li>
+            <li>Merged or closed items are cleaned up, without ever losing uncommitted or unpushed work.</li>
+          </ul>
           <a class="more" href="/docs/lifecycle/">Issues, tasks and cleanup</a>
         </div>
         <Shot name="task" sizes="(min-width: 860px) 700px, 100vw" alt="A task in Ariekei with the pull request its agent opened, listed under the task in the Inbox." />
       </section>
 
-      <section class="wrap feature">
+      <section class="wrap feature" id="review" aria-labelledby="rv-title">
         <div class="text">
           <p class="kicker">Review</p>
-          <h2>Read the change, then say what you think.</h2>
-          <p>
-            All changes against the base branch or one commit at a time, in a review order instead of alphabetical, with
-            keyboard navigation. Works without a worktree for other people’s PRs.
-          </p>
-          <p>
-            Comments go to GitHub as a review, or to the agent. Select code and ask the agent about it: the file, lines
-            and code go along.
+          <h2 id="rv-title">Read the change, then say what you think.</h2>
+          <ul class="dashes">
+            <li>All changes against the base branch or one commit at a time, in a review order instead of alphabetical, with keyboard navigation.</li>
+            <li>Works without a worktree for other people’s PRs.</li>
+            <li>Comments go to GitHub as a review, or to the agent.</li>
+            <li>Select code and ask the agent about it: the file, lines and code go along.</li>
+          </ul>
+          <p class="keys" aria-label="Keyboard shortcuts">
+            <span><kbd>n</kbd><kbd>p</kbd> changes</span>
+            <span><kbd>]</kbd><kbd>[</kbd> files</span>
+            <span><kbd>a</kbd> ask the agent</span>
           </p>
           <a class="more" href="/docs/review/">How the review works</a>
         </div>
         <Shot name="ask-agent" sizes="(min-width: 860px) 700px, 100vw" alt="Selected lines in the diff and the Ask the agent box, with a question about the code." />
       </section>
 
-      <section class="wrap flow" aria-labelledby="flow-title">
-        <h2 id="flow-title">How it fits together</h2>
-        <ol>
-          <li>
-            <span class="mark gh" aria-hidden="true"></span>
-            <h3>GitHub</h3>
-            <p>PRs and issues reach the Inbox through your <code>gh</code>. Or start a task with no PR yet.</p>
-          </li>
-          <li>
-            <span class="mark tree" aria-hidden="true"></span>
-            <h3>Worktree</h3>
-            <p><code>../clone_pr8012</code> on the PR’s branch: your clone stays as it is.</p>
-          </li>
-          <li>
-            <span class="mark agent" aria-hidden="true"></span>
-            <h3>Agent</h3>
-            <p>Claude Code works there. Its hooks tell Ariekei when it is working, needs you or is done.</p>
-          </li>
-          <li>
-            <span class="mark you" aria-hidden="true"></span>
-            <h3>You</h3>
-            <p>Review the diff. Send comments back to the agent, or to GitHub as a review.</p>
-          </li>
-        </ol>
+      <section class="flow" id="how" aria-labelledby="how-title">
+        <div class="wrap">
+          <h2 id="how-title">How it fits together</h2>
+          <ol>
+            <li>
+              <div class="step"><span class="icon"><Fragment set:html={marks.gh} /></span><span class="rule"></span><span class="n">01</span></div>
+              <h3>GitHub</h3>
+              <p>PRs and issues reach the Inbox through your <code>gh</code>. Or start a task with no PR yet.</p>
+            </li>
+            <li>
+              <div class="step"><span class="icon tree"><Fragment set:html={marks.folder} /></span><span class="rule"></span><span class="n">02</span></div>
+              <h3>Worktree</h3>
+              <p><code>../clone_pr8012</code> on the PR’s branch: your clone stays as it is.</p>
+            </li>
+            <li>
+              <div class="step"><span class="icon"><Fragment set:html={marks.agent} /></span><span class="rule"></span><span class="n">03</span></div>
+              <h3>Agent</h3>
+              <p>Claude Code works there. Its hooks tell Ariekei when it is working, needs you or is done.</p>
+            </li>
+            <li>
+              <div class="step"><span class="icon"><Fragment set:html={marks.you} /></span><span class="rule"></span><span class="n">04</span></div>
+              <h3>You</h3>
+              <p>Review the diff. Send comments back to the agent, or to GitHub as a review.</p>
+            </li>
+          </ol>
+        </div>
       </section>
 
       <section class="wrap install" id="install" aria-labelledby="install-title">
-        <h2 id="install-title">Install</h2>
-        {
-          release ? (
-            <div class="platforms">
-              {platforms.map((p) => {
-                const files = release.downloads.filter((d) => d.platform === p);
-                return (
-                  <div class="platform">
-                    <h3>{platformNames[p]}</h3>
-                    {files.length ? (
-                      <ul>
-                        {files.map((d) => (
-                          <li>
-                            <a href={d.url}>{d.label}</a>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p>
-                        Not in this release: see <a href={release.url}>the release page</a>.
-                      </p>
-                    )}
-                  </div>
-                );
-              })}
-              <p class="fine">
-                Version {release.version}. <a href={release.url}>Release notes</a> · <a href={releasesPage}>All releases</a>
+        <div class="install-head">
+          <h2 id="install-title">Install</h2>
+          {
+            release && (
+              <p>
+                <span>Version <span class="mono">{release.version}</span></span>
+                <a href={release.url}>Release notes</a>
+                <a href={releasesPage}>All releases</a>
               </p>
+            )
+          }
+        </div>
+        <div class="install-grid">
+          <div class="column">
+            {
+              release ? (
+                platforms.map((p) => {
+                  const files = release.downloads.filter((d) => d.platform === p);
+                  return (
+                    <div class="card platform">
+                      <h3>{platformNames[p]}</h3>
+                      <div class="files">
+                        {files.length ? (
+                          files.map((d, i) => (
+                            <a class:list={['file', { plain: !d.name && !d.note }]} href={d.url}>
+                              {i === 0 && <Fragment set:html={download} />}
+                              {d.name}
+                              {d.ext && <span class:list={['mono', { quiet: d.name }]}>{d.ext}</span>}
+                              {d.note && <span class="quiet">{d.note}</span>}
+                            </a>
+                          ))
+                        ) : (
+                          <p>
+                            Not in this release: see <a href={release.url}>the release page</a>.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div class="card">
+                  <p>
+                    There is no release yet. Until then, build Ariekei from source, or watch the{' '}
+                    <a href={releasesPage}>Releases page</a>.
+                  </p>
+                </div>
+              )
+            }
+            <div class="warning" role="note">
+              <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5l6 11H2zM8 6.5v3M8 11.5h.01"></path></svg>
+              <div>
+                <strong>Unsigned builds</strong>
+                <span>The builds are not signed with a developer certificate yet.</span>
+                <span><b>macOS:</b> when the first launch is blocked, allow it in System Settings → Privacy &amp; Security → Open Anyway.</span>
+                <span><b>Windows:</b> choose More info → Run anyway.</span>
+              </div>
             </div>
-          ) : (
-            <p>
-              There is no release yet. Until then, build Ariekei from source (below), or watch the{' '}
-              <a href={releasesPage}>Releases page</a>.
-            </p>
-          )
-        }
-        <div class="notes">
-          <div>
-            <h3>You need</h3>
-            <ul>
-              <li><code>git</code></li>
-              <li>The GitHub CLI <code>gh</code>, logged in (<code>gh auth login</code>). Ariekei has no login of its own.</li>
-              <li>Claude Code (<code>claude</code>), with your own settings and plan.</li>
-              <li>A local clone of the repository, with a GitHub remote.</li>
-            </ul>
           </div>
-          <div>
-            <h3>Unsigned builds</h3>
-            <p>
-              The builds are not signed with a developer certificate yet. On macOS, when the first launch is blocked, allow
-              it in System Settings → Privacy &amp; Security → Open Anyway. On Windows, choose More info → Run anyway.
-            </p>
+          <div class="column">
+            <div class="card">
+              <h3>You need</h3>
+              <ul class="checks">
+                <li><Fragment set:html={check} /><span><code>git</code></span></li>
+                <li><Fragment set:html={check} /><span>The GitHub CLI <code>gh</code>, logged in (<code>gh auth login</code>). Ariekei has no login of its own.</span></li>
+                <li><Fragment set:html={check} /><span>Claude Code (<code>claude</code>), with your own settings and plan.</span></li>
+                <li><Fragment set:html={check} /><span>A local clone of the repository, with a GitHub remote.</span></li>
+              </ul>
+            </div>
+            <div class="card">
+              <h3>Build from source</h3>
+              <p>Rust 1.88+, Node 22+, and on Linux the WebKitGTK 4.1 and GTK 3 development packages.</p>
+              <pre><span>$</span> git clone {repo}.git
+<span>$</span> cd ariekei
+<span>$</span> npm ci
+<span>$</span> npx tauri build</pre>
+            </div>
           </div>
         </div>
-        <details class="source">
-          <summary>Build from source</summary>
-          <p>Rust 1.88+, Node 22+, and on Linux the WebKitGTK 4.1 and GTK 3 development packages.</p>
-          <pre><code>git clone {repo}.git
-cd ariekei
-npm ci
-npx tauri build</code></pre>
-        </details>
       </section>
 
       <section class="wrap faq" aria-labelledby="faq-title">
         <h2 id="faq-title">Questions</h2>
-        <details>
-          <summary>Is it free?</summary>
-          <p>Yes. Ariekei is open source under the Apache License 2.0. There is no account and nothing to pay for; Claude Code uses your own plan.</p>
-        </details>
-        <details>
-          <summary>What leaves my machine?</summary>
-          <p>
-            Nothing goes to Ariekei: there is no server and no telemetry. GitHub is reached through your <code>gh</code> and
-            <code>git</code>, and the agent is your <code>claude</code>, each with its own login.
-          </p>
-        </details>
-        <details>
-          <summary>Does it replace my editor?</summary>
-          <p>
-            No. Ariekei is for steering and reviewing agents. Code intelligence, navigation and debugging stay in your IDE,
-            which can open the same worktree.
-          </p>
-        </details>
-        <details>
-          <summary>Which agents does it support?</summary>
-          <p>Claude Code, run unmodified. Its status comes from Claude Code’s hooks.</p>
-        </details>
-        <details>
-          <summary>Which languages?</summary>
-          <p>Any. The diff comes from git, every file type is syntax-highlighted, and the agent works in any language.</p>
-        </details>
-        <details>
-          <summary>Where does my data live?</summary>
-          <p>
-            In a local database in the app’s data directory, plus the worktrees next to your clone.
-            <a href="/docs/manual/#16-where-your-data-lives">Details in the manual</a>.
-          </p>
-        </details>
+        <dl>
+          <div>
+            <dt>Is it free?</dt>
+            <dd>Yes. Ariekei is open source under the Apache License 2.0. There is no account and nothing to pay for; Claude Code uses your own plan.</dd>
+          </div>
+          <div>
+            <dt>What leaves my machine?</dt>
+            <dd>
+              Nothing goes to Ariekei: there is no server and no telemetry. GitHub is reached through your <code>gh</code> and
+              <code>git</code>, and the agent is your <code>claude</code>, each with its own login.
+            </dd>
+          </div>
+          <div>
+            <dt>Does it replace my editor?</dt>
+            <dd>
+              No. Ariekei is for steering and reviewing agents. Code intelligence, navigation and debugging stay in your IDE,
+              which can open the same worktree.
+            </dd>
+          </div>
+          <div>
+            <dt>Which agents does it support?</dt>
+            <dd>Claude Code, run unmodified. Its status comes from Claude Code’s hooks.</dd>
+          </div>
+          <div>
+            <dt>Which languages?</dt>
+            <dd>Any. The diff comes from git, every file type is syntax-highlighted, and the agent works in any language.</dd>
+          </div>
+          <div>
+            <dt>Does it work with GitLab?</dt>
+            <dd>No. Pull requests and issues come only from GitHub, through your <code>gh</code>.</dd>
+          </div>
+          <div>
+            <dt>Can the agent run commands on its own?</dt>
+            <dd>
+              Only as far as your Claude Code permissions allow. When the agent asks to run something, Ariekei shows the
+              request and you answer it in the terminal.
+            </dd>
+          </div>
+          <div>
+            <dt>Where does my data live?</dt>
+            <dd>
+              In a local database in the app’s data directory, plus the worktrees next to your clone.{' '}
+              <a href="/docs/manual/#16-where-your-data-lives">Details in the manual</a>.
+            </dd>
+          </div>
+        </dl>
       </section>
 
-      <section class="wrap closing">
-        <h2>Let the agent write it. Review it here.</h2>
-        <div class="actions">
-          <DownloadButton release={release} />
-          <a class="button" href="/docs/manual/">Read the manual</a>
+      <section class="wrap closing" aria-labelledby="cta-title">
+        <div class="card">
+          <span class="big-mark"><Fragment set:html={logo} /></span>
+          <h2 id="cta-title">Let the agent write it. Review it here.</h2>
+          <div class="actions">
+            <DownloadButton release={release} />
+            <a class="button" href={manual}>Read the manual</a>
+          </div>
         </div>
       </section>
     </main>
 
-    <footer class="wrap bottom">
-      <span>Ariekei · Apache-2.0</span>
-      <nav aria-label="Footer">
-        <a href="/docs/manual/">Manual</a>
-        <a href={releasesPage}>Releases</a>
-        <a href={`${repo}/issues`}>Issues</a>
-        <a href={repo}>GitHub</a>
-      </nav>
+    <footer class="bottom">
+      <div class="wrap">
+        <span class="brand-small"><Fragment set:html={logo} />Ariekei · Apache-2.0</span>
+        <nav aria-label="Footer">
+          <a href={manual}>Manual</a>
+          <a href={releasesPage}>Releases</a>
+          <a href={`${repo}/issues`}>Issues</a>
+          <a href={repo}>GitHub</a>
+        </nav>
+        <p class="name">Named after the Ariekei of China Miéville’s <i>Embassytown</i>, who speak with two voices at once.</p>
+      </div>
     </footer>
 
     <script is:inline>
-      // Show the download button for the visitor's OS (see DownloadButton.astro).
+      // Show the download button for the visitor's OS (see DownloadButton.astro), and then the
+      // link to the other platforms.
       (() => {
         const ua = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.userAgent;
         const os = /mac/i.test(ua) ? 'macos' : /win/i.test(ua) ? 'windows' : /linux|x11/i.test(ua) && !/android/i.test(ua) ? 'linux' : null;
@@ -295,6 +388,7 @@ npx tauri build</code></pre>
           if (!mine) continue;
           mine.hidden = false;
           box.querySelector('[data-download="any"]').hidden = true;
+          for (const link of document.querySelectorAll('[data-other-platforms]')) link.hidden = false;
         }
       })();
     </script>
