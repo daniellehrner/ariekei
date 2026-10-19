@@ -231,17 +231,26 @@
   }
 
   // Whether GitHub has newer than what shows: fetched in the background (the backend goes to
-  // GitHub only when a poll saw a new head, or the base was not fetched lately). Offline, the
-  // review as it was fetched will do.
+  // GitHub only when a poll saw a new head, or the base was not fetched lately), then what the
+  // clone has is compared with what shows, so newer fetched by an earlier check (or by Reload
+  // meanwhile) counts too. Asked again while it runs (a poll came in), it runs once more after.
+  // Offline, the review as it was fetched will do.
   let checking = false;
+  let again = false;
   async function check() {
-    const shown = review;
-    if (!shown || checking) return;
+    if (!review) return;
+    if (checking) {
+      again = true;
+      return;
+    }
     checking = true;
     try {
-      if (!(await api.reviewFetch(id))) return;
-      const next = await api.reviewState(id);
-      if (review === shown) newer = whatMoved(shown, next) ?? newer;
+      do {
+        again = false;
+        await api.reviewFetch(id);
+        const next = await api.reviewState(id);
+        if (review) newer = whatMoved(review, next) ?? newer;
+      } while (again);
     } catch (e) {
       console.warn(`review: could not check GitHub for newer: ${e}`);
     } finally {

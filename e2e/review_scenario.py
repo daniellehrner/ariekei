@@ -511,7 +511,15 @@ try:
     marker = lambda: s.js("return document.querySelector('.review .marker')?.textContent ?? ''")
     eventually("the review opens on what it fetched before", marker, lambda v: "1 commit" in v, timeout=30)
     s.js("document.querySelector('[data-refresh]').click()")
-    s.wait("[data-newer='head']", timeout=30)
+    try:
+        s.wait("[data-newer='head']", timeout=30)
+    except TimeoutError:
+        print("[newer] not offered; the backend says:", s.js("""const rows = await window.__TAURI_INTERNALS__.invoke('inbox');
+          const id = rows.find((r) => r.number === 43).id;
+          const fetched = await window.__TAURI_INTERNALS__.invoke('review_fetch', { id }).catch((e) => `error: ${e}`);
+          const state = await window.__TAURI_INTERNALS__.invoke('review_state', { id }).catch((e) => `error: ${e}`);
+          return [fetched, state.head ?? state];"""), "| expected head:", git(upstream, "rev-parse", "feature/y"))
+        raise
     s.screenshot(os.path.join(shots, "r5-newer.png"))
     print("[newer] bar:", s.js("return document.querySelector('[data-newer]').textContent.trim()"), "| marker:", marker().strip())
     check("the diff waits for Reload", "1 commit" in marker())
