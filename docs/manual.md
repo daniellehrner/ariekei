@@ -385,7 +385,7 @@ Markdown is rendered by GitHub and sanitized; links open in your system browser.
 1. Issues assigned to you appear under **Assigned**; add any other open issue with
    [Browse](#browse-adding-prs-and-issues). Overview and Comments show the issue.
 2. **Start working** creates the branch `issue-<N>-<words of the title>` from the default
-   branch, in `../<clone>_issue<N>`. A plain `git push` creates the branch on your fork (a
+   branch (as GitHub has it now, also when it was renamed), in `../<clone>_issue<N>`. A plain `git push` creates the branch on your fork (a
    remote pointing at `<you>/<repo>`), or on the base remote when you have no fork.
 3. The agent gets the issue as context and waits for you. The Review tab works on the worktree
    before anything is pushed.

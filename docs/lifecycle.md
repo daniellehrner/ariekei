@@ -8,7 +8,8 @@ reviewing it: [pull-requests.md](pull-requests.md).
 - Issues assigned to you appear in the Inbox under **Issues** (Overview and Comments show the
   issue). Issues you started working on stay listed even if they are unassigned later.
 - **Start working** on an issue creates the branch `issue-<N>-<words of the title>` from the
-  default branch (the clone's `<remote>/HEAD`, else GitHub's) in `../<clone>_issue<N>`, and sets
+  default branch (GitHub's, so a renamed one is followed: the clone's `<remote>/HEAD` is moved
+  to it; the clone's when GitHub can't be asked) in `../<clone>_issue<N>`, and sets
   it up so that a plain `git push` creates it on your fork (a remote pointing at
   `<you>/<repo>`), or on the base remote when there is no fork. The agent gets the issue's text
   and comments as context and waits for you. **Review** works on the worktree before anything

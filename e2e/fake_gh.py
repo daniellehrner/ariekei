@@ -9,6 +9,7 @@ GraphQL mutations) to $FAKE_GH_DIR/writes.jsonl, so a test can check what would 
 sent to GitHub. Supports only the calls Ariekei makes.
 
 data.json: {"viewer": "me", "upstream": <path of the "GitHub" git repo, optional>,
+            "default_branch": <name, default main>,
             "prs": [{number, title, author, head_ref, head_owner (a fork; default owner), head_sha,
                      base_ref, state, requested (bool),
                      assigned (bool), reviewed (bool, by the viewer), draft (bool), decision, ci,
@@ -143,7 +144,7 @@ def graphql(fields):
         record({"graphql": query.split("(")[1].split("{")[-1].strip() if "{" in query else query, "vars": {k: v for k, v in fields.items() if k != "query"}})
         return {"data": {}}
     if "defaultBranchRef" in query:
-        return {"data": {"repository": {"defaultBranchRef": {"name": "main"}}}}
+        return {"data": {"repository": {"defaultBranchRef": {"name": DATA.get("default_branch", "main")}}}}
     if "search(" in query:
         return page(query, fields, *search(fields["q"], prs, all_issues))
     by_number = {p["number"]: p for p in prs}

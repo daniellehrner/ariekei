@@ -53,6 +53,27 @@ pub fn default_branch(repo: &Repo) -> Result<String, String> {
     }
 }
 
+/// The default branch to start new work from: GitHub's, which may have been renamed since the
+/// clone was made (fetching never updates `<remote>/HEAD`); `<remote>/HEAD` is moved to it, so
+/// the review compares with it too. The clone's if GitHub cannot be asked.
+fn current_default_branch(repo: &Repo) -> Result<String, String> {
+    let branch = match github::default_branch(&repo.owner, &repo.name) {
+        Ok(branch) => branch,
+        Err(e) => {
+            tracing::warn!("the default branch of {}/{}: {e}", repo.owner, repo.name);
+            return default_branch(repo);
+        }
+    };
+    let head = format!("refs/remotes/{}/HEAD", repo.base_remote);
+    let tracking = format!("refs/remotes/{}/{branch}", repo.base_remote);
+    if git::git_str(&repo.path, &["symbolic-ref", &head]).ok() != Some(tracking.clone())
+        && let Err(e) = git::git(&repo.path, &["symbolic-ref", &head, &tracking])
+    {
+        tracing::warn!("could not point {head} at {tracking}: {e}");
+    }
+    Ok(branch)
+}
+
 /// The branch the item's changes are compared to: a PR's base, or the default branch for
 /// an issue or a task.
 fn base_ref_of(item: &WorkItem, repo: &Repo) -> Result<String, String> {
@@ -314,13 +335,15 @@ pub fn prepare(state: &AppState, id: i64) -> Result<Prepared, String> {
             -item.number,
             item.title(),
             &head,
-            &default_branch(&repo)?,
+            &current_default_branch(&repo)?,
         )?
     } else if item.is_task() {
-        worktree::prepare_task(&repo, -item.number, item.title(), &default_branch(&repo)?)?
+        let default = current_default_branch(&repo)?;
+        worktree::prepare_task(&repo, -item.number, item.title(), &default)?
     } else if item.kind == "issue" {
         let issue = issue_summary(&item)?;
-        worktree::prepare_issue(&repo, item.number, &issue.title, &default_branch(&repo)?)?
+        let default = current_default_branch(&repo)?;
+        worktree::prepare_issue(&repo, item.number, &issue.title, &default)?
     } else {
         worktree::prepare(&repo, &summary(&item)?)?
     };
@@ -1442,6 +1465,24 @@ mod tests {
             ("worktree", "main", "", true)
         );
         assert_eq!(state.commits.len(), 1);
+    }
+
+    #[test]
+    fn new_work_starts_from_the_default_branch_github_has_now() {
+        let app = TestApp::new();
+        // Renamed on GitHub after the clone was made; the clone's origin/HEAD says main.
+        git(&app.upstream, &["branch", "-m", "main", "trunk"]);
+        let mut data = app.data();
+        data["default_branch"] = json!("trunk");
+        app.set_data(&data);
+        let task = create_task(&app.state, Some(app.repo.clone()), "Renamed", "", "").unwrap();
+        let wt = app.path("proj_task1");
+        assert_eq!(
+            git(&wt, &["rev-parse", "HEAD"]),
+            git(&app.upstream, &["rev-parse", "trunk"])
+        );
+        assert_eq!(default_branch(&app.repo).unwrap(), "trunk");
+        assert_eq!(review_state(&app.state, task).unwrap().base_ref, "trunk");
     }
 
     #[test]
