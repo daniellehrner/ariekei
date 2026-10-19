@@ -353,6 +353,17 @@ impl Store {
         .map_err(err)
     }
 
+    /// The repo's owner and name on GitHub (they change when it is renamed or transferred).
+    pub fn set_slug(&self, id: i64, owner: &str, name: &str) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE repos SET owner = ?2, name = ?3 WHERE id = ?1",
+            params![id, owner, name],
+        )
+        .map(|_| ())
+        .map_err(err)
+    }
+
     /// The GitHub login the repo is polled for (who gh is logged in as).
     pub fn set_viewer(&self, id: i64, viewer: &str) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();

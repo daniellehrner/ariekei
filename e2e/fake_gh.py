@@ -10,6 +10,7 @@ sent to GitHub. Supports only the calls Ariekei makes.
 
 data.json: {"viewer": "me", "upstream": <path of the "GitHub" git repo, optional>,
             "default_branch": <name, default main>, "now": <GitHub's clock, RFC 3339, optional>,
+            "full_name": <where owner/proj is now on GitHub, e.g. after a rename; null: deleted>,
             "prs": [{number, title, author, head_ref, head_owner (a fork; default owner), head_sha,
                      base_ref, state, requested (bool),
                      assigned (bool), reviewed (bool, by the viewer), draft (bool), decision, ci,
@@ -137,14 +138,33 @@ def of_repo(items, name):
     return [i for i in items if i.get("repo", "proj") == name]
 
 
+def resolve(owner, name):
+    """The repo name that items are filed under for GitHub's owner/name, or None if GitHub
+    knows no such repo: owner/proj lives at "full_name" (renamed or transferred; null:
+    deleted) and only the REST API still answers for its old name."""
+    full_name = DATA.get("full_name", "owner/proj")
+    if f"{owner}/{name}" == full_name:
+        return "proj"
+    if (owner, name) == ("owner", "proj"):
+        return None
+    return name
+
+
 def graphql(fields):
     query = fields.get("query", "")
-    in_q = re.search(r"repo:[^/\s]+/(\S+)", fields.get("q", ""))
-    repo = fields.get("name") or (in_q.group(1) if in_q else "proj")
-    prs, all_issues = of_repo(DATA["prs"], repo), of_repo(DATA.get("issues", []), repo)
     if query.lstrip().startswith("mutation"):
         record({"graphql": query.split("(")[1].split("{")[-1].strip() if "{" in query else query, "vars": {k: v for k, v in fields.items() if k != "query"}})
         return {"data": {}}
+    in_q = re.search(r"repo:([^/\s]+)/(\S+)", fields.get("q", ""))
+    owner, name = (fields["owner"], fields["name"]) if "name" in fields else in_q.groups() if in_q else ("owner", "proj")
+    repo = resolve(owner, name)
+    if repo is None and "search(" in query:
+        return {"data": None, "errors": [{"type": "INVALID", "path": ["search"], "message":
+                "The listed users and repositories cannot be searched either because the resources do not exist or you do not have permission to view them."}]}
+    if repo is None:
+        return {"data": {"repository": None}, "errors": [{"type": "NOT_FOUND", "path": ["repository"],
+                "message": f"Could not resolve to a Repository with the name '{owner}/{name}'."}]}
+    prs, all_issues = of_repo(DATA["prs"], repo), of_repo(DATA.get("issues", []), repo)
     if "defaultBranchRef" in query:
         return {"data": {"repository": {"defaultBranchRef": {"name": DATA.get("default_branch", "main")}}}}
     if "search(" in query:
@@ -281,6 +301,17 @@ def main(argv):
             return 0
         print(json.dumps({"html_url": f"https://github.com/{path}"}))
         return 0
+    slug = re.fullmatch(r"repos/([^/]+)/([^/]+)", argv[1]) if argv[0] == "api" else None
+    if slug and argv[2:] == ["--jq", ".full_name"]:
+        owner, name = slug.groups()
+        full_name = DATA.get("full_name", "owner/proj")
+        # The old name redirects to the new one, as on GitHub.
+        found = full_name if resolve(owner, name) in ("proj", None) else f"{owner}/{name}"
+        if found:
+            print(found)
+            return 0
+        print("gh: Not Found (HTTP 404)", file=sys.stderr)
+        return 1
     if argv[0] == "api" and "/actions/jobs/" in argv[1]:
         return 0
     print(f"fake gh: unsupported call {argv}", file=sys.stderr)

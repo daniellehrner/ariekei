@@ -118,7 +118,7 @@ fn graphql_lookups(query: &str, strings: &[(&str, &str)]) -> Result<Value, Strin
 
 /// The outcome of a lookup query from gh's exit status and output: `None` when gh failed
 /// without a GraphQL answer (e.g. no network), else the data, unless an error other than
-/// NOT_FOUND came with it.
+/// NOT_FOUND of a looked-up item came with it (the repository itself not found is one).
 fn lookup_result(success: bool, stdout: &[u8]) -> Option<Result<Value, String>> {
     let v: Value = match serde_json::from_slice(stdout) {
         Ok(v) => v,
@@ -126,7 +126,11 @@ fn lookup_result(success: bool, stdout: &[u8]) -> Option<Result<Value, String>> 
         Err(_) => return None,
     };
     match v.get("errors").and_then(Value::as_array) {
-        Some(errors) if errors.iter().any(|e| e["type"] != "NOT_FOUND") => {
+        Some(errors)
+            if errors.iter().any(|e| {
+                e["type"] != "NOT_FOUND" || e["path"].as_array().is_none_or(|p| p.len() < 2)
+            }) =>
+        {
             Some(Err(format!("GitHub GraphQL error: {}", v["errors"])))
         }
         _ if v.get("data").is_none_or(Value::is_null) => {
@@ -176,6 +180,22 @@ fn http_date(answer: &str) -> Option<String> {
     let month = MONTHS.iter().position(|m| *m == month)? + 1;
     let day: u32 = day.parse().ok()?;
     (year.len() == 4 && time.len() == 8).then(|| format!("{year}-{month:02}-{day:02}T{time}Z"))
+}
+
+/// Where GitHub has repo `owner/name` now: its owner and name, which differ after it was
+/// renamed or moved to another owner (the REST API redirects from the old name).
+pub fn repo_slug(owner: &str, name: &str) -> Result<(String, String), String> {
+    let out = gh(&[
+        "api",
+        &format!("repos/{owner}/{name}"),
+        "--jq",
+        ".full_name",
+    ])?;
+    let full_name = String::from_utf8_lossy(&out).trim().to_owned();
+    full_name
+        .split_once('/')
+        .map(|(o, n)| (o.to_owned(), n.to_owned()))
+        .ok_or_else(|| format!("GitHub names {owner}/{name} {full_name:?}"))
 }
 
 pub fn viewer() -> Result<String, String> {
@@ -1203,6 +1223,9 @@ mod tests {
         // Other errors still fail, and so does gh failing without an answer.
         let forbidden = br#"{"data":null,"errors":[{"type":"FORBIDDEN","message":"no"}]}"#;
         assert!(lookup_result(false, forbidden).unwrap().is_err());
+        // The repository itself is not found (renamed, deleted): nothing in it is known.
+        let no_repo = br#"{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","path":["repository"],"message":"Could not resolve"}]}"#;
+        assert!(lookup_result(false, no_repo).unwrap().is_err());
         assert!(lookup_result(false, b"").is_none());
         assert!(
             lookup_result(true, br#"{"data":{"repository":{}}}"#)

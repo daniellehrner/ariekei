@@ -108,7 +108,7 @@ fn run(app: AppHandle, wake: Receiver<()>) {
             let Ok(Some(repo)) = state.store.repo(id) else {
                 continue;
             };
-            match poll(&state, &repo, full) {
+            match poll_following_moves(&state, &repo, full) {
                 Ok(()) => state.events.inbox_changed(repo.id),
                 Err(error) => {
                     let (message, until_reset) = poll_failure(error);
@@ -391,6 +391,46 @@ pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), Stri
     Ok(())
 }
 
+/// A poll of `repo` that follows it when it was renamed or moved to another owner on GitHub:
+/// the poll fails then (a search names the repo), and GitHub's REST API, which still answers
+/// for the old name, tells the new one. That is recorded and polled.
+pub fn poll_following_moves(
+    state: &crate::AppState,
+    repo: &Repo,
+    full: bool,
+) -> Result<(), String> {
+    let error = match poll(state, repo, full) {
+        Ok(()) => return Ok(()),
+        Err(error) => error,
+    };
+    if rate_limit_wait(&error, || None).is_some() {
+        return Err(error);
+    }
+    match github::repo_slug(&repo.owner, &repo.name) {
+        Ok((owner, name))
+            if !(owner.eq_ignore_ascii_case(&repo.owner)
+                && name.eq_ignore_ascii_case(&repo.name)) =>
+        {
+            tracing::info!("{}/{} is {owner}/{name} now", repo.owner, repo.name);
+            state.store.set_slug(repo.id, &owner, &name)?;
+            poll(
+                state,
+                &Repo {
+                    owner,
+                    name,
+                    ..repo.clone()
+                },
+                full,
+            )
+        }
+        Err(e) if e.contains("HTTP 404") => Err(format!(
+            "GitHub has no repository {}/{} (deleted, or you have no access to it): {error}",
+            repo.owner, repo.name
+        )),
+        _ => Err(error),
+    }
+}
+
 /// `repo` with the viewer gh is logged in as now: `gh auth switch` changes it, and the
 /// searches are by the viewer. Kept as it is if gh cannot say.
 fn current_viewer(state: &crate::AppState, repo: &Repo) -> Result<Repo, String> {
@@ -653,6 +693,32 @@ mod tests {
             assert_eq!(repo.viewer, "me-at-work");
             assert_eq!(app.row(8).map(|r| r.role).as_deref(), Some("author"));
             assert!(app.row(7).is_none(), "the other login's PR");
+        }
+
+        #[test]
+        fn a_repo_renamed_on_github_is_followed() {
+            let app = TestApp::new();
+            app.add_pr(json!({"number": 7, "title": "Seven", "head_ref": "main"}));
+            let mut data = app.data();
+            data["full_name"] = json!("new-owner/proj-next");
+            app.set_data(&data);
+            poll_following_moves(&app.state, &app.repo, false).unwrap();
+            let repo = app.state.store.repo(app.repo.id).unwrap().unwrap();
+            assert_eq!(
+                (repo.owner.as_str(), repo.name.as_str()),
+                ("new-owner", "proj-next")
+            );
+            assert!(crate::workitem::inbox(&app.state, Some(repo)).unwrap()[0].number == 7);
+
+            // Deleted: the error says so.
+            let mut data = app.data();
+            data["full_name"] = json!(null);
+            app.set_data(&data);
+            let error = poll_following_moves(&app.state, &app.repo, false).unwrap_err();
+            assert!(
+                error.starts_with("GitHub has no repository owner/proj"),
+                "{error}"
+            );
         }
 
         #[test]

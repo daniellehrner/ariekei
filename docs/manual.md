@@ -631,7 +631,9 @@ activity, a grey bar for lifecycle news.
 - **"Could not connect"**: the folder is not a git clone, or the clone has no GitHub remote,
   or `gh` is not logged in.
 - **"Could not refresh from GitHub"**: check `gh auth status` and your network. If GitHub's API
-  budget is used up, the Inbox says so and waits for the reset.
+  budget is used up, the Inbox says so and waits for the reset. A repository renamed or moved
+  to another owner on GitHub is followed by itself; one that is gone (deleted, or you lost
+  access) is named in the error.
 - **The agent exits immediately on a new repository**: Claude Code's trust prompt preselects
   "No, exit". Open the item again and choose to trust the folder.
 - **Done is refused**: read the listed reasons; commit and push or discard the work, then press
