@@ -247,7 +247,67 @@ fn parse_stamps(list: &Value) -> Vec<PrStamp> {
         .collect()
 }
 
-/// Open PRs in `owner/name` matching GitHub search `terms`, most recently updated first.
+/// What a poll's search found, and whether that is all: it reads at most `SEARCH_PAGES`
+/// pages.
+#[derive(Debug, Clone)]
+pub struct Searched<T> {
+    pub found: Vec<T>,
+    pub complete: bool,
+}
+
+/// The most pages a poll's search reads. A page costs a point; a review request to a team
+/// (e.g. through CODEOWNERS) can make for hundreds of results in a busy repo.
+const SEARCH_PAGES: usize = 10;
+
+/// All results of GitHub search `q`, `per_page` at a time (`fields` of each node), up to
+/// `SEARCH_PAGES` pages.
+fn search_pages(q: &str, per_page: usize, fields: &str) -> Result<Searched<Value>, String> {
+    let query = format!(
+        "query($q: String!, $after: String) {{ search(query: $q, type: ISSUE, first: {per_page}, after: $after) {{ \
+         pageInfo {{ hasNextPage endCursor }} nodes {{ {fields} }} }} }}"
+    );
+    let mut found = vec![];
+    let mut after: Option<String> = None;
+    for _ in 0..SEARCH_PAGES {
+        let mut strings = vec![("q", q)];
+        if let Some(cursor) = &after {
+            strings.push(("after", cursor));
+        }
+        let v = graphql(&query, &strings, &[])?;
+        let search = &v["data"]["search"];
+        found.extend(nodes(search).iter().cloned());
+        let next = search["pageInfo"]["endCursor"]
+            .as_str()
+            .filter(|_| search["pageInfo"]["hasNextPage"] == true);
+        match next {
+            Some(cursor) => after = Some(cursor.to_owned()),
+            None => {
+                return Ok(Searched {
+                    found,
+                    complete: true,
+                });
+            }
+        }
+    }
+    Ok(Searched {
+        found,
+        complete: false,
+    })
+}
+
+/// All open PRs in `owner/name` matching GitHub search `terms` (up to `SEARCH_PAGES` pages
+/// of 100, which cost a point each), most recently updated first.
+pub fn poll_pr_stamps(owner: &str, name: &str, terms: &str) -> Result<Searched<PrStamp>, String> {
+    let q = format!("repo:{owner}/{name} is:pr is:open {terms} sort:updated-desc");
+    let pages = search_pages(&q, 100, &format!("... on PullRequest {{ {STAMP_FIELDS} }}"))?;
+    Ok(Searched {
+        found: parse_stamps(&Value::Array(pages.found)),
+        complete: pages.complete,
+    })
+}
+
+/// Open PRs in `owner/name` matching GitHub search `terms`, most recently updated first:
+/// the first 50.
 pub fn search_pr_stamps(owner: &str, name: &str, terms: &str) -> Result<Vec<PrStamp>, String> {
     let query = format!(
         "query($q: String!) {{ search(query: $q, type: ISSUE, first: 50) {{ nodes {{ ... on PullRequest {{ {STAMP_FIELDS} }} }} }} }}"
@@ -467,14 +527,19 @@ pub fn parse_issues(list: &Value, viewer: &str) -> Vec<IssueSummary> {
         .collect()
 }
 
-/// Open issues in `owner/name` assigned to the viewer.
-pub fn assigned_issues(owner: &str, name: &str, viewer: &str) -> Result<Vec<IssueSummary>, String> {
-    let query = format!(
-        "query($q: String!) {{ search(query: $q, type: ISSUE, first: 50) {{ nodes {{ ... on Issue {{ {ISSUE_FIELDS} }} }} }} }}"
-    );
+/// Open issues in `owner/name` assigned to the viewer (up to `SEARCH_PAGES` pages of 50: with
+/// their labels and comments, 50 cost a point).
+pub fn assigned_issues(
+    owner: &str,
+    name: &str,
+    viewer: &str,
+) -> Result<Searched<IssueSummary>, String> {
     let q = format!("repo:{owner}/{name} is:issue is:open assignee:{viewer} sort:updated-desc");
-    let v = graphql(&query, &[("q", &q)], &[])?;
-    Ok(parse_issues(&v["data"]["search"]["nodes"], viewer))
+    let pages = search_pages(&q, 50, &format!("... on Issue {{ {ISSUE_FIELDS} }}"))?;
+    Ok(Searched {
+        found: parse_issues(&Value::Array(pages.found), viewer),
+        complete: pages.complete,
+    })
 }
 
 /// Open issues in `owner/name` matching GitHub search `terms`, most recently updated first,
@@ -1275,7 +1340,7 @@ mod live {
         let prs = search_prs(&owner, &name, &me, &format!("author:{me}")).unwrap();
         let requested = search_prs(&owner, &name, &me, &format!("review-requested:{me}")).unwrap();
         println!("default branch: {}", default_branch(&owner, &name).unwrap());
-        let issues = assigned_issues(&owner, &name, &me).unwrap();
+        let issues = assigned_issues(&owner, &name, &me).unwrap().found;
         println!("{} issues assigned to me", issues.len());
         let open_issues = search_issues(&owner, &name, "").unwrap();
         println!("{} open issues (browsing, newest first)", open_issues.len());
@@ -1292,8 +1357,12 @@ mod live {
             );
         }
         println!("{} PRs request my review", requested.len());
-        let assigned = search_pr_stamps(&owner, &name, &format!("assignee:{me}")).unwrap();
-        let reviewed = search_pr_stamps(&owner, &name, &format!("reviewed-by:{me}")).unwrap();
+        let assigned = poll_pr_stamps(&owner, &name, &format!("assignee:{me}"))
+            .unwrap()
+            .found;
+        let reviewed = poll_pr_stamps(&owner, &name, &format!("reviewed-by:{me}"))
+            .unwrap()
+            .found;
         println!(
             "{} PRs assigned to me, {} reviewed by me",
             assigned.len(),

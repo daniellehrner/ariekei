@@ -135,7 +135,8 @@ Within a section, items are ordered by their most urgent reason, then by last up
 The Inbox polls GitHub every 60 seconds. The **↻** button in the Inbox header refreshes now;
 its arrow turns until GitHub has answered. Polling is designed to be cheap on GitHub's API
 budget; if the budget is used up anyway, the Inbox says so and waits for GitHub's reset. If a
-refresh fails, a "Could not refresh from GitHub" line shows the error.
+refresh fails, a "Could not refresh from GitHub" line shows the error. Each search reads up to
+1000 pull requests (and 500 issues); an item past that stays in the Inbox as it was.
 
 ### Browse: adding PRs and issues
 

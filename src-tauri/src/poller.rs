@@ -5,8 +5,8 @@
 //! every minute (or right away when asked) and stores the result.
 //!
 //! GitHub's GraphQL budget (5000 points an hour) is shared with `gh` and the agents, so a
-//! poll first asks which PRs exist and when each last changed (1 point per query: the
-//! viewer's, assigned, review requested, reviewed), and fetches the details (reviews,
+//! poll first asks which PRs exist and when each last changed (1 point per query and page of
+//! 100: the viewer's, assigned, review requested, reviewed), and fetches the details (reviews,
 //! threads, checks: 1 point per PR) only of PRs that changed, have checks still running, or
 //! are new; every tenth poll, and one the user asked for, fetches them all (check runs
 //! restarted on an unchanged PR show up then). After the poll, a task whose branch is pushed
@@ -186,10 +186,22 @@ fn rfc3339_secs(t: &str) -> Option<u64> {
 pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), String> {
     let (o, n, me) = (&repo.owner, &repo.name, &repo.viewer);
     let before = state.store.items(repo.id)?;
-    let mine = github::search_pr_stamps(o, n, &format!("author:{me}"))?;
-    let assigned = github::search_pr_stamps(o, n, &format!("assignee:{me}"))?;
-    let requested = github::search_pr_stamps(o, n, &format!("review-requested:{me}"))?;
-    let reviewed = github::search_pr_stamps(o, n, &format!("reviewed-by:{me}"))?;
+    let mut cut_short: Vec<&str> = vec![];
+    let mut search = |terms: String| -> Result<Vec<github::PrStamp>, String> {
+        let searched = github::poll_pr_stamps(o, n, &terms)?;
+        if !searched.complete {
+            tracing::warn!(
+                "{o}/{n}: only the first {} PRs of {terms}",
+                searched.found.len()
+            );
+            cut_short.push("pr");
+        }
+        Ok(searched.found)
+    };
+    let mine = search(format!("author:{me}"))?;
+    let assigned = search(format!("assignee:{me}"))?;
+    let requested = search(format!("review-requested:{me}"))?;
+    let reviewed = search(format!("reviewed-by:{me}"))?;
     let numbers = |found: &[github::PrStamp]| found.iter().map(|p| p.number).collect::<Vec<_>>();
     let found = Found {
         assigned: numbers(&assigned),
@@ -249,7 +261,16 @@ pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), Stri
         .filter(|i| i.kind == "pr" && i.open)
         .filter_map(|i| i.issue_number)
         .collect();
-    let assigned: Vec<_> = github::assigned_issues(o, n, me)?
+    let searched = github::assigned_issues(o, n, me)?;
+    if !searched.complete {
+        tracing::warn!(
+            "{o}/{n}: only the first {} assigned issues",
+            searched.found.len()
+        );
+        cut_short.push("issue");
+    }
+    let assigned: Vec<_> = searched
+        .found
         .into_iter()
         .filter(|i| !followed.contains(&i.number))
         .collect();
@@ -286,7 +307,7 @@ pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), Stri
             snapshot: serde_json::to_value(i).unwrap_or_default(),
         }))
         .collect();
-    state.store.sync_prs(repo.id, &polled)?;
+    state.store.sync_found(repo.id, &polled, &cut_short)?;
 
     for item in state.store.items(repo.id)? {
         // Not in the Inbox (cleaned up, or marked done, and nothing brought it back): its
@@ -547,6 +568,28 @@ mod tests {
             app.set("prs", 8, json!({"requested": true}));
             app.poll().unwrap();
             assert_eq!(app.row(8).map(|r| r.role).as_deref(), Some("requested"));
+        }
+
+        #[test]
+        fn a_search_reads_all_its_pages() {
+            let app = TestApp::new();
+            let mut data = app.data();
+            for number in 1..=130 {
+                data["prs"].as_array_mut().unwrap().push(json!({
+                    "number": number, "title": format!("Team review {number}"), "author": "bob",
+                    "head_ref": "main", "head_sha": "abc", "base_ref": "main", "requested": true
+                }));
+            }
+            for number in 201..=260 {
+                data["issues"].as_array_mut().unwrap().push(json!({
+                    "number": number, "title": "Mine", "author": "carol", "assigned": true
+                }));
+            }
+            app.set_data(&data);
+            app.poll().unwrap();
+            let rows = app.rows();
+            assert_eq!(rows.iter().filter(|r| r.kind == "pr").count(), 130);
+            assert_eq!(rows.iter().filter(|r| r.kind == "issue").count(), 60);
         }
 
         #[test]

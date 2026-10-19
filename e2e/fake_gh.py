@@ -145,32 +145,7 @@ def graphql(fields):
     if "defaultBranchRef" in query:
         return {"data": {"repository": {"defaultBranchRef": {"name": "main"}}}}
     if "search(" in query:
-        q = fields["q"]
-        is_open = lambda i: i.get("state", "OPEN") == "OPEN"
-        words = [w for w in q.split() if not re.match(r"^(repo|is|sort):", w)]
-        matches = lambda i: all(w.lower() in (i["title"] + " " + i["author"] + " " + str(i["number"])).lower() for w in words)
-        if "is:issue" in q:
-            if "assignee:" in q:
-                found = [i for i in all_issues if i.get("assigned") and is_open(i)]
-            else:
-                found = [i for i in all_issues if is_open(i) and matches(i)]
-            return {"data": {"search": {"nodes": [issue_summary(i) for i in found]}}}
-        head = re.search(r"head:(\S+)", q)
-        if head:
-            found = [p for p in prs if p["head_ref"] == head.group(1) and is_open(p)]
-        elif f"-author:{ME}" in q:
-            found = [p for p in prs if p["author"] != ME and is_open(p)]
-        elif f"author:{ME}" in q:
-            found = [p for p in prs if p["author"] == ME and is_open(p)]
-        elif f"assignee:{ME}" in q:
-            found = [p for p in prs if p.get("assigned") and is_open(p)]
-        elif f"review-requested:{ME}" in q:
-            found = [p for p in prs if p.get("requested") and is_open(p)]
-        elif f"reviewed-by:{ME}" in q:
-            found = [p for p in prs if p.get("reviewed") and is_open(p)]
-        else:
-            found = [p for p in prs if is_open(p) and matches(p)]
-        return {"data": {"search": {"nodes": [summary(p) for p in found]}}}
+        return page(query, fields, *search(fields["q"], prs, all_issues))
     by_number = {p["number"]: p for p in prs}
     issues = {i["number"]: i for i in all_issues}
     if "issue(number: $number)" in query:
@@ -182,6 +157,45 @@ def graphql(fields):
         return {"data": {"repository": {"pullRequest": conversation(by_number[int(fields["number"])])}}}
     aliases = re.findall(r"p(\d+): pullRequest\(number: (\d+)\)", query)
     return lookups("p", "PullRequest", [int(n) for n, _ in aliases], by_number, summary)
+
+
+def search(q, prs, all_issues):
+    """What a search finds (open PRs or issues), and how to render one."""
+    is_open = lambda i: i.get("state", "OPEN") == "OPEN"
+    words = [w for w in q.split() if not re.match(r"^(repo|is|sort):", w)]
+    matches = lambda i: all(w.lower() in (i["title"] + " " + i["author"] + " " + str(i["number"])).lower() for w in words)
+    if "is:issue" in q:
+        if "assignee:" in q:
+            found = [i for i in all_issues if i.get("assigned") and is_open(i)]
+        else:
+            found = [i for i in all_issues if is_open(i) and matches(i)]
+        return found, issue_summary
+    head = re.search(r"head:(\S+)", q)
+    if head:
+        found = [p for p in prs if p["head_ref"] == head.group(1) and is_open(p)]
+    elif f"-author:{ME}" in q:
+        found = [p for p in prs if p["author"] != ME and is_open(p)]
+    elif f"author:{ME}" in q:
+        found = [p for p in prs if p["author"] == ME and is_open(p)]
+    elif f"assignee:{ME}" in q:
+        found = [p for p in prs if p.get("assigned") and is_open(p)]
+    elif f"review-requested:{ME}" in q:
+        found = [p for p in prs if p.get("requested") and is_open(p)]
+    elif f"reviewed-by:{ME}" in q:
+        found = [p for p in prs if p.get("reviewed") and is_open(p)]
+    else:
+        found = [p for p in prs if is_open(p) and matches(p)]
+    return found, summary
+
+
+def page(query, fields, found, render):
+    """One page of search results, as GitHub pages them: `first` at a time, from the cursor
+    `after` (here: the index to go on from)."""
+    first = int(re.search(r"search\([^)]*first: (\d+)", query).group(1))
+    start = int(fields.get("after") or 0)
+    end = start + first
+    return {"data": {"search": {"pageInfo": {"hasNextPage": end < len(found), "endCursor": str(end)},
+                                "nodes": [render(i) for i in found[start:end]]}}}
 
 
 def lookups(prefix, kind, numbers, known, render):

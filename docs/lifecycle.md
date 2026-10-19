@@ -91,7 +91,8 @@ PRs and issues, or be thrown away.
   found). Worktrees Ariekei adopted are
   only detached. Ignored files go with the worktree.
 - Only GitHub's own state triggers automatic cleanup: a PR that merely dropped out of a search
-  (e.g. past its 50 results) is never treated as finished.
+  is never treated as finished. The poll's searches read all pages of results (up to 10); when
+  one stops short, items of its kind that it did not find stay as they were.
 
 ## Testing
 

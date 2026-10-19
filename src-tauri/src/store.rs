@@ -394,7 +394,20 @@ impl Store {
     /// Records what a poll found. Items it did not find are kept (with `open = false`)
     /// until cleanup, so no local state is lost. A hidden item comes back if what was found
     /// brings it back (`brings_back`).
+    #[cfg(test)]
     pub fn sync_prs(&self, repo_id: i64, prs: &[PolledPr]) -> Result<(), String> {
+        self.sync_found(repo_id, prs, &[])
+    }
+
+    /// `sync_prs`, where the searches for items of the kinds in `cut_short` ("pr", "issue")
+    /// did not read all results: items of those kinds that were not found may be among the
+    /// rest, so they keep what they had.
+    pub fn sync_found(
+        &self,
+        repo_id: i64,
+        prs: &[PolledPr],
+        cut_short: &[&str],
+    ) -> Result<(), String> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction().map_err(err)?;
         let hidden: Vec<(i64, Seen)> = {
@@ -420,11 +433,13 @@ impl Store {
             .collect::<Result<_, _>>()
             .map_err(err)?
         };
-        tx.execute(
-            "UPDATE work_items SET open = 0 WHERE repo_id = ?1 AND kind != 'task'",
-            [repo_id],
-        )
-        .map_err(err)?;
+        for kind in ["pr", "issue"].iter().filter(|k| !cut_short.contains(k)) {
+            tx.execute(
+                "UPDATE work_items SET open = 0 WHERE repo_id = ?1 AND kind = ?2",
+                params![repo_id, kind],
+            )
+            .map_err(err)?;
+        }
         for pr in prs {
             tx.execute(
                 "INSERT INTO work_items (repo_id, number, snapshot, open, role, kind) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -770,6 +785,28 @@ mod tests {
             Some(Path::new("/src/besu_pr1"))
         );
         assert_eq!(one.session_id.as_deref(), Some("s-1"));
+    }
+
+    #[test]
+    fn a_search_cut_short_closes_nothing_of_its_kind() {
+        let (store, repo) = store_with_repo();
+        let issue = PolledPr {
+            kind: "issue",
+            ..polled(2, json!({"title": "b"}))
+        };
+        store
+            .sync_prs(repo.id, &[polled(1, json!({"title": "a"})), issue])
+            .unwrap();
+        // Neither is found: the PR searches did not read all their results, the issue's did.
+        store.sync_found(repo.id, &[], &["pr"]).unwrap();
+        let open = |number| {
+            store
+                .items(repo.id)
+                .unwrap()
+                .iter()
+                .any(|i| i.number == number && i.open)
+        };
+        assert!(open(1) && !open(2));
     }
 
     #[test]
