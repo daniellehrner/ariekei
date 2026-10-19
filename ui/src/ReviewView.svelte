@@ -151,7 +151,8 @@
   let submitting = $state(false);
   let event = $state<"COMMENT" | "APPROVE" | "REQUEST_CHANGES">("COMMENT");
   let summary = $state("");
-  let preview: { line: LineComment[]; body: DraftComment[] } | null = $state(null);
+  // What goes where, and the commit it goes to: the PR head the drafts were made on.
+  let preview: { line: LineComment[]; body: DraftComment[]; commit: string } | null = $state(null);
   let busy = $state(false);
 
   // (An order saved before the review guide was removed reads as review order.)
@@ -580,8 +581,9 @@
     if (review.own) event = "COMMENT";
     try {
       const paths = [...new Set(view.comments.map((c) => c.path))];
-      const ranges: Ranges = Object.fromEntries(await api.commentRanges(id, paths));
-      preview = classify(view.comments, review.prHead, ranges);
+      const commit = review.prHead;
+      const ranges: Ranges = Object.fromEntries(await api.commentRanges(id, paths, commit));
+      preview = { ...classify(view.comments, commit, ranges), commit };
     } catch (e) {
       error = String(e);
     }
@@ -594,7 +596,7 @@
     try {
       const body = reviewBody(summary, preview.body);
       if (event === "REQUEST_CHANGES" && !body && !preview.line.length) throw new Error("To request changes, add a summary or a line comment.");
-      const url = await api.submitReview(id, event, body, preview.line);
+      const url = await api.submitReview(id, event, body, preview.line, preview.commit);
       const what = { COMMENT: "Review submitted", APPROVE: "Approved", REQUEST_CHANGES: "Changes requested" }[event];
       say(`${what} on GitHub with ${preview.line.length} line comment${preview.line.length === 1 ? "" : "s"}.`, url || null);
       view.comments = [];

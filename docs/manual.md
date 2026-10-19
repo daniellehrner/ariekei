@@ -353,6 +353,8 @@ Everything of your review is in the dock under the diff.
      **Comment**, **Approve** or **Request changes** (only **Comment** on your own PR). The
      form tells you which drafts become line comments (lines in the PR's diff at its head
      commit) and which go into the review text instead. **Submit to GitHub** sends it.
+     The review is of the head commit you reviewed: if the author pushed meanwhile, the line
+     comments still land on the lines you commented on.
 
 With no drafts, **Review on GitHub…** submits a review with just a summary and event, e.g. an
 approval.

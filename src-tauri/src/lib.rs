@@ -455,8 +455,12 @@ async fn comment_ranges(
     app: tauri::AppHandle,
     id: i64,
     paths: Vec<String>,
+    commit: String,
 ) -> Res<workitem::CommentRanges> {
-    blocking(app, move |s| workitem::comment_ranges(s, id, &paths)).await
+    blocking(app, move |s| {
+        workitem::comment_ranges(s, id, &paths, &commit)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -466,9 +470,10 @@ async fn submit_review(
     event: String,
     body: String,
     comments: Vec<github::LineComment>,
+    commit: String,
 ) -> Res<String> {
     blocking(app, move |s| {
-        workitem::submit_review(s, id, &event, &body, &comments)
+        workitem::submit_review(s, id, &event, &body, &comments, &commit)
     })
     .await
 }

@@ -919,32 +919,33 @@ pub fn review_file(
 /// Line ranges per path, as `(first, last)` lines of the new side.
 pub type CommentRanges = Vec<(String, Vec<(u32, u32)>)>;
 
-/// For each path, the line ranges (new side) of the PR diff that GitHub accepts line
-/// comments on: its hunks with GitHub's three lines of context.
+/// For each path, the line ranges (new side) of the PR diff at `commit` that GitHub accepts
+/// line comments on: its hunks with GitHub's three lines of context. `commit` is the PR head
+/// the drafts were made on (see `submit_review`).
 pub fn comment_ranges(
     state: &AppState,
     id: i64,
     paths: &[String],
+    commit: &str,
 ) -> Result<CommentRanges, String> {
-    let review = review_state(state, id)?;
-    let dir = PathBuf::from(&review.dir);
-    let head = if git::commit_exists(&dir, &review.pr_head) {
-        review.pr_head
+    let r = review(state, id)?;
+    let head = if git::commit_exists(&r.dir, commit) {
+        commit.to_owned()
     } else {
-        review.head
+        r.head
     };
     paths
         .iter()
         .map(|path| {
             let diff = git::git_str(
-                &dir,
+                &r.dir,
                 &[
                     "diff",
                     "-U3",
                     "--no-color",
                     "--no-ext-diff",
                     "--no-renames",
-                    &review.base,
+                    &r.base,
                     &head,
                     "--",
                     path,
@@ -960,21 +961,27 @@ pub fn comment_ranges(
         .collect()
 }
 
-/// Submits a review on GitHub. `comments` must already be on lines of the PR diff
-/// (see `comment_ranges`); everything else belongs in `body`.
+/// Submits a review on GitHub of the PR at `commit`, the head the review showed (empty: the
+/// PR's head now). `comments` must already be on lines of the PR diff at that commit (see
+/// `comment_ranges`); everything else belongs in `body`. The author may have pushed since:
+/// against the newer head the comments' line numbers would point at other lines.
 pub fn submit_review(
     state: &AppState,
     id: i64,
     event: &str,
     body: &str,
     comments: &[github::LineComment],
+    commit: &str,
 ) -> Result<String, String> {
     let (item, repo) = item_repo(state, id)?;
     if !matches!(event, "COMMENT" | "APPROVE" | "REQUEST_CHANGES") {
         return Err(format!("unknown review event {event}"));
     }
-    let pr = summary(&item)?;
-    let payload = github::review_payload(&pr.head_sha, event, body, comments);
+    let commit = match commit {
+        "" => summary(&item)?.head_sha,
+        commit => commit.to_owned(),
+    };
+    let payload = github::review_payload(&commit, event, body, comments);
     let url = github::submit_review(&repo.owner, &repo.name, item.number, &payload)?;
     state.poller.refresh();
     Ok(url)
@@ -1088,6 +1095,57 @@ mod tests {
             save_file(&app.state, task, "a.txt", "caf\u{fffd}!\n", "caf\u{fffd}\n").unwrap_err();
         assert!(err.contains("not valid UTF-8"), "{err}");
         assert_eq!(std::fs::read(&file).unwrap(), b"caf\xe9\n");
+    }
+
+    #[test]
+    fn a_review_goes_to_the_commit_its_comments_were_made_on() {
+        let app = TestApp::new();
+        let lines = |changed: &[usize]| {
+            (1..=20)
+                .map(|i| match changed.contains(&i) {
+                    true => format!("line {i} changed\n"),
+                    false => format!("line {i}\n"),
+                })
+                .collect::<String>()
+        };
+        // bob's PR #5, as GitHub has it (refs/pull/5/head).
+        let push = |changed: &[usize]| {
+            app.push_to("feat", &[("f.txt", &lines(changed))], "bob");
+            git(&app.upstream, &["update-ref", "refs/pull/5/head", "feat"]);
+        };
+        app.push_to("main", &[("f.txt", &lines(&[]))], "me");
+        push(&[2]);
+        app.add_pr(
+            json!({"number": 5, "title": "Feat", "head_ref": "feat", "author": "bob",
+                          "requested": true}),
+        );
+        app.poll().unwrap();
+        let id = app.item(5).id;
+        fetch_pr(&app.state, id).unwrap();
+        let seen = review_state(&app.state, id).unwrap().pr_head;
+
+        // The author pushes again while the review is open, and the poll sees it.
+        push(&[2, 15]);
+        app.poll().unwrap();
+        fetch_pr(&app.state, id).unwrap();
+        assert_ne!(summary(&app.item(5)).unwrap().head_sha, seen);
+
+        let paths = ["f.txt".to_owned()];
+        assert_eq!(
+            comment_ranges(&app.state, id, &paths, &seen).unwrap(),
+            [("f.txt".to_owned(), vec![(1, 5)])],
+            "the diff at the commit the drafts are on"
+        );
+        let comment = github::LineComment {
+            path: "f.txt".into(),
+            line: 2,
+            start_line: None,
+            side: "RIGHT".into(),
+            body: "Why?".into(),
+        };
+        submit_review(&app.state, id, "COMMENT", "", &[comment], &seen).unwrap();
+        let posted = app.writes().pop().unwrap();
+        assert_eq!(posted["body"]["commit_id"], seen.as_str());
     }
 
     #[test]

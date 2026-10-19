@@ -235,9 +235,12 @@ export const api = {
   createTask: (title: string, notes: string, branch: string) => invoke<number>("create_task", { title, notes, branch }),
   conversation: (id: number) => invoke<Conversation>("pr_conversation", { id }),
   fetchPr: (id: number) => invoke<string>("fetch_pr", { id }),
-  commentRanges: (id: number, paths: string[]) => invoke<[string, [number, number][]][]>("comment_ranges", { id, paths }),
-  submitReview: (id: number, event: string, body: string, comments: LineComment[]) =>
-    invoke<string>("submit_review", { id, event, body, comments }),
+  // `commit`: the PR head the review shows, which the drafts' lines are from (GitHub's may be
+  // newer by now).
+  commentRanges: (id: number, paths: string[], commit: string) =>
+    invoke<[string, [number, number][]][]>("comment_ranges", { id, paths, commit }),
+  submitReview: (id: number, event: string, body: string, comments: LineComment[], commit: string) =>
+    invoke<string>("submit_review", { id, event, body, comments, commit }),
   replyComment: (id: number, commentId: number, body: string) => invoke<void>("reply_comment", { id, commentId, body }),
   postComment: (id: number, body: string) => invoke<void>("post_comment", { id, body }),
   resolveThread: (threadId: string, resolved: boolean) => invoke<void>("resolve_thread", { threadId, resolved }),
