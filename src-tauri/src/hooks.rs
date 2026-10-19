@@ -11,6 +11,7 @@
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tauri::{AppHandle, Manager as _};
@@ -139,9 +140,11 @@ pub fn created_links(event: &HookEvent, owner: &str, name: &str) -> Vec<(&'stati
         return vec![];
     };
     let text = response.to_string();
-    let prefix = format!("https://github.com/{owner}/{name}/").to_lowercase();
+    // ASCII case only: it keeps every byte where it is (`to_lowercase` changes the length of
+    // e.g. "İ"), so offsets found in `lower` hold in `text`.
+    let prefix = format!("https://github.com/{owner}/{name}/").to_ascii_lowercase();
     let mut found = vec![];
-    let lower = text.to_lowercase();
+    let lower = text.to_ascii_lowercase();
     for (at, _) in lower.match_indices(&prefix) {
         let rest = &text[at + prefix.len()..];
         let (kind, rest) = if let Some(r) = rest.strip_prefix("pull/").filter(|_| prs) {
@@ -234,7 +237,14 @@ impl HookServer {
             .spawn(move || {
                 for stream in listener.incoming().flatten() {
                     match handle(stream, &path) {
-                        Ok(Some(event)) => on_event(event),
+                        // A bug in handling one event must not end the server, and with it
+                        // every agent's status.
+                        Ok(Some(event)) => {
+                            let name = event.hook_event_name.clone();
+                            if catch_unwind(AssertUnwindSafe(|| on_event(event))).is_err() {
+                                tracing::error!("handling a {name} hook event failed");
+                            }
+                        }
                         Ok(None) => {}
                         Err(e) => tracing::debug!("hook request failed: {e}"),
                     }
@@ -373,6 +383,12 @@ mod tests {
             }),
         );
         assert_eq!(created_links(&mcp, "owner", "proj"), [("issue", 14)]);
+        // Text before the URL that lowercases to more bytes ("İ" to "i̇") shifts nothing.
+        let wide = bash(
+            "gh pr create --title 'İİİİ'",
+            "İİİİİİİİ https://github.com/owner/proj/pull/15\n",
+        );
+        assert_eq!(created_links(&wide, "owner", "proj"), [("pr", 15)]);
         // A review of an existing PR, or a comment on an issue, creates neither.
         for tool in [
             "mcp__github__create_pull_request_review",
@@ -513,6 +529,32 @@ mod tests {
             rx.try_recv().is_err(),
             "the rejected request must not produce an event"
         );
+    }
+
+    #[test]
+    fn an_event_that_fails_to_be_handled_does_not_end_the_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let server = HookServer::start(dir.path(), move |e| {
+            assert_ne!(e.session_id, "bad", "a bug");
+            tx.send(e).unwrap();
+        })
+        .unwrap();
+        let settings: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&server.settings_path).unwrap()).unwrap();
+        let url = settings["hooks"]["Stop"][0]["hooks"][0]["url"]
+            .as_str()
+            .unwrap()
+            .trim_start_matches("http://127.0.0.1:")
+            .to_owned();
+        let (port, path) = url.split_once('/').unwrap();
+        let (port, path) = (port.parse().unwrap(), format!("/{path}"));
+        let body =
+            |session: &str| format!(r#"{{"hook_event_name":"Stop","session_id":"{session}"}}"#);
+        post(port, &path, &body("bad"));
+        post(port, &path, &body("good"));
+        let received = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(received.session_id, "good");
     }
 
     mod with_app {
