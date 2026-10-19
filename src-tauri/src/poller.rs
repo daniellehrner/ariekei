@@ -289,6 +289,11 @@ pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), Stri
     state.store.sync_prs(repo.id, &polled)?;
 
     for item in state.store.items(repo.id)? {
+        // Not in the Inbox (cleaned up, or marked done, and nothing brought it back): its
+        // news would open an item the user cannot find.
+        if item.hidden {
+            continue;
+        }
         let old = before.iter().find(|b| b.id == item.id);
         if item.kind == "issue" {
             if old.is_none()
@@ -505,6 +510,43 @@ mod tests {
             app.poll().unwrap();
             assert!(app.row(6).is_none());
             assert_eq!(app.row(7).unwrap().title, "Seven, renamed");
+        }
+
+        #[test]
+        fn a_closed_pr_that_was_cleaned_up_comes_back_when_reopened() {
+            let app = TestApp::new();
+            app.add_pr(json!({"number": 7, "title": "Mine", "head_ref": "main"}));
+            app.poll().unwrap();
+            crate::workitem::mark_seen(&app.state, app.item(7).id).unwrap();
+            app.set("prs", 7, json!({"state": "CLOSED"}));
+            app.poll().unwrap();
+            assert!(app.item(7).hidden && app.row(7).is_none());
+            app.set("prs", 7, json!({"state": "OPEN"}));
+            app.poll().unwrap();
+            assert!(app.row(7).is_some_and(|r| r.open));
+        }
+
+        #[test]
+        fn a_pr_marked_done_is_quiet_until_the_users_review_is_requested_again() {
+            let app = TestApp::new();
+            app.add_pr(json!({"number": 8, "title": "Bob's", "head_ref": "main",
+                              "author": "bob", "reviewed": true}));
+            app.poll().unwrap();
+            let id = app.item(8).id;
+            crate::workitem::mark_done(&app.state, id).unwrap();
+            app.events.take();
+            app.set("prs", 8, json!({"ci": "FAILURE"}));
+            poll(&app.state, &app.repo, true).unwrap();
+            assert!(app.row(8).is_none(), "still done");
+            assert!(
+                app.events.notices().is_empty(),
+                "{:?}",
+                app.events.notices()
+            );
+
+            app.set("prs", 8, json!({"requested": true}));
+            app.poll().unwrap();
+            assert_eq!(app.row(8).map(|r| r.role).as_deref(), Some("requested"));
         }
 
         #[test]

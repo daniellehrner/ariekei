@@ -86,7 +86,9 @@ PRs and issues, or be thrown away.
   hand) and its branch if Ariekei created that too (`branch_created`: a reused local branch is
   kept); its Claude session transcript (and subagent transcripts), last, so a refused removal
   leaves the agent resumable; `refs/ariekei/pull/<N>/head`; the context file; the Inbox entry
-  (hidden; opening the PR again from search brings it back). Worktrees Ariekei adopted are
+  (hidden; opening the PR again from search brings it back, and so does a poll that finds it
+  reopened or with a new reason: a review request or an assignment it did not have when last
+  found). Worktrees Ariekei adopted are
   only detached. Ignored files go with the worktree.
 - Only GitHub's own state triggers automatic cleanup: a PR that merely dropped out of a search
   (e.g. past its 50 results) is never treated as finished.

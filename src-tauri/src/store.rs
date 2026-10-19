@@ -202,6 +202,27 @@ pub struct PolledPr {
     pub snapshot: serde_json::Value,
 }
 
+/// What the previous poll knew about an item: whether it found it (open), why it is in the
+/// Inbox, and its state on GitHub.
+#[derive(Debug, Clone)]
+struct Seen {
+    open: bool,
+    role: String,
+    state: String,
+}
+
+/// Whether what a poll found brings a hidden item (cleaned up, or marked done) back into the
+/// Inbox: it was reopened, or it has a reason for the user to look at it again that it did
+/// not have when the previous poll found it (their review is requested, it is assigned to
+/// them). A reason it already had does not, or Done on an open PR would undo itself on the
+/// next poll.
+fn brings_back(seen: &Seen, found: &PolledPr) -> bool {
+    let reopened = seen.state != "OPEN";
+    let new_reason =
+        matches!(found.role, "requested" | "assignee") && !(seen.open && seen.role == found.role);
+    found.open && (reopened || new_reason)
+}
+
 pub struct Store {
     conn: Mutex<Connection>,
 }
@@ -370,13 +391,35 @@ impl Store {
 
     // --- work items ---
 
-    /// Records the current GitHub state of the repo's open PRs. Items that are no longer
-    /// open are kept (with `open = false`) until cleanup, so no local state is lost.
     /// Records what a poll found. Items it did not find are kept (with `open = false`)
-    /// until cleanup, so no local state is lost.
+    /// until cleanup, so no local state is lost. A hidden item comes back if what was found
+    /// brings it back (`brings_back`).
     pub fn sync_prs(&self, repo_id: i64, prs: &[PolledPr]) -> Result<(), String> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction().map_err(err)?;
+        let hidden: Vec<(i64, Seen)> = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT number, open, role, json_extract(snapshot, '$.state') FROM work_items
+                     WHERE repo_id = ?1 AND hidden = 1",
+                )
+                .map_err(err)?;
+            stmt.query_map([repo_id], |r| {
+                Ok((
+                    r.get(0)?,
+                    Seen {
+                        open: r.get(1)?,
+                        role: r.get(2)?,
+                        state: r
+                            .get::<_, Option<String>>(3)?
+                            .unwrap_or_else(|| "OPEN".into()),
+                    },
+                ))
+            })
+            .map_err(err)?
+            .collect::<Result<_, _>>()
+            .map_err(err)?
+        };
         tx.execute(
             "UPDATE work_items SET open = 0 WHERE repo_id = ?1 AND kind != 'task'",
             [repo_id],
@@ -389,6 +432,16 @@ impl Store {
                 params![repo_id, pr.number, pr.snapshot.to_string(), pr.open, pr.role, pr.kind],
             )
             .map_err(err)?;
+            if hidden
+                .iter()
+                .any(|(number, seen)| *number == pr.number && brings_back(seen, pr))
+            {
+                tx.execute(
+                    "UPDATE work_items SET hidden = 0 WHERE repo_id = ?1 AND number = ?2",
+                    params![repo_id, pr.number],
+                )
+                .map_err(err)?;
+            }
         }
         tx.commit().map_err(err)
     }
@@ -871,6 +924,57 @@ mod tests {
             .unwrap();
         assert!(!store.item(id).unwrap().hidden);
         assert_eq!(store.tracked_numbers(repo.id, "pr").unwrap(), [7, 8]);
+    }
+
+    #[test]
+    fn a_hidden_item_comes_back_when_reopened_or_asked_for_again() {
+        let (store, repo) = store_with_repo();
+        let found = |role: &'static str, state: &str| PolledPr {
+            role,
+            open: state == "OPEN",
+            ..polled(5, json!({"title": "t", "state": state}))
+        };
+        let hidden = |id| store.item(id).unwrap().hidden;
+        // Done on a PR the user reviewed: later polls find it as before, it stays hidden.
+        store
+            .sync_prs(repo.id, &[found("reviewed", "OPEN")])
+            .unwrap();
+        let id = store.items(repo.id).unwrap()[0].id;
+        store.mark_cleaned(id).unwrap();
+        store
+            .sync_prs(repo.id, &[found("reviewed", "OPEN")])
+            .unwrap();
+        assert!(hidden(id));
+        // The author asks for their review again.
+        store
+            .sync_prs(repo.id, &[found("requested", "OPEN")])
+            .unwrap();
+        assert!(!hidden(id));
+
+        // Done while the request stands: hidden while it does; asked again later: back.
+        store.mark_cleaned(id).unwrap();
+        store
+            .sync_prs(repo.id, &[found("requested", "OPEN")])
+            .unwrap();
+        assert!(hidden(id));
+        store.sync_prs(repo.id, &[]).unwrap();
+        assert!(hidden(id));
+        store
+            .sync_prs(repo.id, &[found("requested", "OPEN")])
+            .unwrap();
+        assert!(!hidden(id));
+
+        // The user's own PR, closed and cleaned up, then reopened.
+        store
+            .sync_prs(repo.id, &[found("author", "CLOSED")])
+            .unwrap();
+        store.mark_cleaned(id).unwrap();
+        store
+            .sync_prs(repo.id, &[found("author", "CLOSED")])
+            .unwrap();
+        assert!(hidden(id));
+        store.sync_prs(repo.id, &[found("author", "OPEN")]).unwrap();
+        assert!(!hidden(id));
     }
 
     #[test]

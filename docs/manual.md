@@ -502,7 +502,9 @@ Cleanup removes the agent process and its Claude Code session transcript, the wo
 branch **if Ariekei created them** (worktrees Ariekei adopted are only detached, and so is one
 another item works in too; a local branch Ariekei only reused, such as your `main`, is kept),
 Ariekei's ref for the PR head, its context file, and the Inbox entry. Adding the PR or issue
-again with Browse brings it back while it is open.
+again with Browse brings it back while it is open. It also comes back by itself when it is
+reopened, or when there is a new reason for it: your review is requested again, or it is
+assigned to you.
 
 Ignored files in the worktree (build output, but also a `.env` or `CLAUDE.local.md`) are
 deleted with it. A worktree folder you deleted yourself is fine: Ariekei forgets it, and
@@ -519,7 +521,8 @@ Ariekei notifies you when:
   task, an item was cleaned up or kept so no work is lost, or a task's PRs and issues are all
   closed.
 
-Nothing is shown for the item you are looking at in a focused window. While an Ariekei window
+Nothing is shown for the item you are looking at in a focused window, nor for items that are
+not in the Inbox (cleaned up or marked done). While an Ariekei window
 is in front, notices appear inside the window, in the bottom right corner (above the review's
 dock); otherwise they are OS notifications. Each notice names the item and says why in the
 Inbox's words (**Agent needs you**, **Ready for review**, **CI failing**, **New activity**,
