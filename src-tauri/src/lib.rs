@@ -638,6 +638,7 @@ pub fn run() {
                     .unwrap_or_default(),
                 idle_after: Duration::from_secs(env_secs("ARIEKEI_IDLE_SECS", 15 * 60)),
                 quiet_after: Duration::from_secs(env_secs("ARIEKEI_QUIET_SECS", 30)),
+                claude_dir: claude::config_dir(),
                 env: vec![],
             });
             match &launch {

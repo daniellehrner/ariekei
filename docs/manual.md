@@ -653,6 +653,9 @@ activity, a grey bar for lifecycle news.
   access) is named in the error.
 - **The agent exits immediately on a new repository**: Claude Code's trust prompt preselects
   "No, exit". Press **Start again** in its terminal and choose to trust the folder.
+- **The agent's status never changes from Ready**: Claude Code runs no hooks for it, e.g. with
+  `disableAllHooks` in your settings or a policy that allows only managed hooks. The terminal
+  works, and a saved conversation is still resumed, but Ariekei cannot tell what the agent does.
 - **Done is refused**: read the listed reasons; commit and push or discard the work, then press
   Done again.
 - **Send to agent is greyed out** (in the Ask agent box or under the drafts): the agent is

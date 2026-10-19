@@ -54,9 +54,44 @@ pub fn find() -> Result<PathBuf, String> {
     })
 }
 
+/// Claude Code's own directory: `CLAUDE_CONFIG_DIR`, else `~/.claude`.
+pub fn config_dir() -> Option<PathBuf> {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| std::env::home_dir().map(|h| h.join(".claude")))
+}
+
+/// The transcript Claude Code saved for `session_id`, if any: `projects/<project>/<id>.jsonl`
+/// in its directory `dir` (every project is searched: how it names one from the working
+/// directory is its own business).
+pub fn find_transcript(dir: &Path, session_id: &str) -> Option<PathBuf> {
+    let name = format!("{session_id}.jsonl");
+    std::fs::read_dir(dir.join("projects"))
+        .ok()?
+        .flatten()
+        .map(|project| project.path().join(&name))
+        .find(|t| t.is_file())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sessions_transcript_is_found_in_any_project() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(find_transcript(dir.path(), "s1"), None, "no projects yet");
+        let project = dir.path().join("projects/-home-me-proj");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(dir.path().join("projects/-other")).unwrap();
+        assert_eq!(find_transcript(dir.path(), "s1"), None);
+        std::fs::write(project.join("s1.jsonl"), "{}\n").unwrap();
+        assert_eq!(
+            find_transcript(dir.path(), "s1"),
+            Some(project.join("s1.jsonl"))
+        );
+        assert_eq!(find_transcript(dir.path(), "s2"), None);
+    }
 
     #[test]
     fn known_locations_cover_native_installer_layout() {

@@ -361,7 +361,16 @@ pub fn prepare(state: &AppState, id: i64) -> Result<Prepared, String> {
 /// current context appended to the system prompt.
 pub fn session_plan(state: &AppState, data_dir: &Path, id: i64) -> Result<SessionPlan, String> {
     ensure_on_branch(state, id)?;
-    let (item, repo) = item_repo(state, id)?;
+    let (mut item, repo) = item_repo(state, id)?;
+    // Hooks may never have said that it was prompted (hooks turned off, or another Ariekei's
+    // settings file): a transcript on disk says so. Claude Code refuses to start a new
+    // conversation under the id of one it saved.
+    if let Some(session_id) = item.session_id.as_deref().filter(|_| !item.session_started)
+        && let Some(transcript) = state.terminals.find_transcript(session_id)
+    {
+        state.store.mark_session_started(id, Some(&transcript))?;
+        (item.session_started, item.transcript_path) = (true, Some(transcript));
+    }
     if let Some(session_id) = item.session_id.clone()
         && terminal::resumable(item.session_started, item.transcript_path.as_deref())
     {
@@ -1661,6 +1670,34 @@ mod tests {
         );
         assert!(app.clone.join("mine.txt").exists());
         assert_eq!(git(&app.clone, &["branch", "--show-current"]), "feat/evm");
+    }
+
+    #[test]
+    fn a_saved_conversation_is_resumed_though_no_hook_said_it_started() {
+        let app = TestApp::new();
+        let id = create_task(&app.state, Some(app.repo.clone()), "Hookless", "", "").unwrap();
+        let plan = session_plan(&app.state, &app.state.data_dir, id).unwrap();
+        assert!(!plan.resume);
+        // Not prompted (as far as Ariekei knows): the same id again.
+        let again = session_plan(&app.state, &app.state.data_dir, id).unwrap();
+        assert_eq!(
+            (again.session_id.as_str(), again.resume),
+            (plan.session_id.as_str(), false)
+        );
+
+        // Claude Code saved it, but no hook arrived.
+        let transcript = app
+            .path("claude-config/projects/-proj-task1")
+            .join(format!("{}.jsonl", plan.session_id));
+        write(&transcript, "{}\n");
+        let resumed = session_plan(&app.state, &app.state.data_dir, id).unwrap();
+        assert_eq!(
+            (resumed.session_id.as_str(), resumed.resume),
+            (plan.session_id.as_str(), true)
+        );
+        let item = app.state.store.item(id).unwrap();
+        assert!(item.session_started);
+        assert_eq!(item.transcript_path, Some(transcript), "deleted on cleanup");
     }
 
     #[test]

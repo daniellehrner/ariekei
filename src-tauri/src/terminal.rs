@@ -50,6 +50,8 @@ pub struct Launch {
     /// A working agent whose terminal has been silent this long is not working (see
     /// `settle_quiet`).
     pub quiet_after: Duration,
+    /// Claude Code's directory, where it keeps transcripts (`claude::config_dir`).
+    pub claude_dir: Option<PathBuf>,
     /// Extra environment, for tests only (where the fake agent keeps its transcripts).
     pub env: Vec<(String, String)>,
 }
@@ -266,6 +268,12 @@ impl TerminalManager {
         tracing::info!("agent {key} went on in session {session_id}");
         *current = session_id.to_owned();
         Some(term.ended.lock().unwrap().take())
+    }
+
+    /// The transcript Claude Code saved for `session_id`, if any (`claude::find_transcript`).
+    pub fn find_transcript(&self, session_id: &str) -> Option<PathBuf> {
+        let dir = self.launch.as_ref().ok()?.claude_dir.as_deref()?;
+        crate::claude::find_transcript(dir, session_id)
     }
 
     /// The token that names the item's terminal in its hook events.
@@ -596,6 +604,7 @@ mod tests {
             extra_args: vec![],
             idle_after: Duration::from_secs(900),
             quiet_after: Duration::from_secs(30),
+            claude_dir: None,
             env: vec![],
         }
     }

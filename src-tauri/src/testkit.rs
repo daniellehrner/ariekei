@@ -134,6 +134,7 @@ impl TestApp {
             extra_args: vec![],
             idle_after: Duration::from_secs(3600),
             quiet_after: Duration::from_secs(3600),
+            claude_dir: Some(root.path().join("claude-config")),
             env: vec![(
                 "FAKE_CLAUDE_DIR".into(),
                 root.path().join("claude").to_string_lossy().into_owned(),
