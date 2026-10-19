@@ -4,7 +4,7 @@
 //! Git access via the `git` CLI (respects the user's config, credentials and worktrees).
 
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -282,6 +282,26 @@ pub fn changed_files(cwd: &Path, from: &str, to: Option<&str>) -> Result<Vec<Cha
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(files)
+}
+
+/// The files renamed from `from` to `to`, as git's rename detection (`-M`, which GitHub's
+/// PR diffs follow too) pairs them: new path → old path.
+pub fn renames(cwd: &Path, from: &str, to: &str) -> Result<HashMap<String, String>, String> {
+    let out = git(cwd, &["diff", "--name-status", "-M", "-z", from, to, "--"])?;
+    // Entries are a status and a path, or for a rename a status and both paths.
+    let mut fields = out
+        .split(|b| *b == 0)
+        .filter(|f| !f.is_empty())
+        .map(|f| String::from_utf8_lossy(f).into_owned());
+    let mut renamed = HashMap::new();
+    while let (Some(status), Some(path)) = (fields.next(), fields.next()) {
+        if status.starts_with('R')
+            && let Some(new) = fields.next()
+        {
+            renamed.insert(new, path);
+        }
+    }
+    Ok(renamed)
 }
 
 /// A changed region in git's terms: 1-based start lines and line counts. A count of 0
@@ -593,6 +613,25 @@ pub mod tests {
         );
         let d = file_diff(p, &base, Some(&now), "gone.txt", true).unwrap();
         assert!(d.hunks.is_empty(), "-w hides whitespace-only hunks");
+    }
+
+    #[test]
+    fn finds_renamed_files_and_where_they_came_from() {
+        let dir = repo();
+        let p = dir.path();
+        let base = head(p).unwrap();
+        let long: String = (1..=20).map(|i| format!("line {i}\n")).collect();
+        std::fs::write(p.join("a.txt"), &long).unwrap();
+        commit(p, "longer");
+        let before = head(p).unwrap();
+        std::fs::rename(p.join("a.txt"), p.join("moved.txt")).unwrap();
+        std::fs::write(p.join("gone.txt"), "changed\n").unwrap();
+        commit(p, "move");
+        assert_eq!(
+            renames(p, &before, "HEAD").unwrap(),
+            HashMap::from([("moved.txt".to_owned(), "a.txt".to_owned())])
+        );
+        assert!(renames(p, &base, &before).unwrap().is_empty());
     }
 
     #[test]

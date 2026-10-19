@@ -921,7 +921,8 @@ pub type CommentRanges = Vec<(String, Vec<(u32, u32)>)>;
 
 /// For each path, the line ranges (new side) of the PR diff at `commit` that GitHub accepts
 /// line comments on: its hunks with GitHub's three lines of context. `commit` is the PR head
-/// the drafts were made on (see `submit_review`).
+/// the drafts were made on (see `submit_review`). A renamed file's hunks are those of the
+/// rename, as GitHub shows it, not of a new file.
 pub fn comment_ranges(
     state: &AppState,
     id: i64,
@@ -934,23 +935,24 @@ pub fn comment_ranges(
     } else {
         r.head
     };
+    let renames = git::renames(&r.dir, &r.base, &head)?;
     paths
         .iter()
         .map(|path| {
-            let diff = git::git_str(
-                &r.dir,
-                &[
-                    "diff",
-                    "-U3",
-                    "--no-color",
-                    "--no-ext-diff",
-                    "--no-renames",
-                    &r.base,
-                    &head,
-                    "--",
-                    path,
-                ],
-            )?;
+            let mut args = vec![
+                "diff",
+                "-U3",
+                "--no-color",
+                "--no-ext-diff",
+                "-M",
+                &r.base,
+                &head,
+                "--",
+                path,
+            ];
+            // Both paths, or git cannot pair them.
+            args.extend(renames.get(path).map(String::as_str));
+            let diff = git::git_str(&r.dir, &args)?;
             let ranges = git::parse_hunks(&diff)
                 .into_iter()
                 .filter(|h| h.new_lines > 0)
@@ -1146,6 +1148,31 @@ mod tests {
         submit_review(&app.state, id, "COMMENT", "", &[comment], &seen).unwrap();
         let posted = app.writes().pop().unwrap();
         assert_eq!(posted["body"]["commit_id"], seen.as_str());
+    }
+
+    #[test]
+    fn line_comments_on_a_renamed_file_go_on_the_lines_of_its_rename() {
+        let app = TestApp::new();
+        let lines = |changed: usize| {
+            (1..=40)
+                .map(|i| match i == changed {
+                    true => format!("line {i} changed\n"),
+                    false => format!("line {i}\n"),
+                })
+                .collect::<String>()
+        };
+        app.push_to("main", &[("old.txt", &lines(0))], "me");
+        let task = create_task(&app.state, Some(app.repo.clone()), "Move", "", "").unwrap();
+        let wt = app.path("proj_task1");
+        git(&wt, &["mv", "old.txt", "new.txt"]);
+        write(&wt.join("new.txt"), &lines(20));
+        commit(&wt, "move it", "me");
+        let head = crate::git::head(&wt).unwrap();
+        assert_eq!(
+            comment_ranges(&app.state, task, &["new.txt".to_owned()], &head).unwrap(),
+            [("new.txt".to_owned(), vec![(17, 23)])],
+            "GitHub shows a rename with one changed line, not a new file"
+        );
     }
 
     #[test]
