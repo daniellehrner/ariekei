@@ -196,10 +196,10 @@
   const shownRev = $derived(range ? (range[1] ?? (review?.dirty ? null : review?.head ?? null)) : null);
   const editable = $derived(range?.[1] === null);
 
-  async function load() {
+  async function load(refresh = false) {
     error = null;
     try {
-      review = await api.reviewState(id);
+      review = await api.reviewState(id, refresh);
     } catch (e) {
       error = String(e);
     }
@@ -639,7 +639,7 @@
   function reload() {
     error = null;
     errorReload = false;
-    load();
+    load(true);
     loadFiles();
   }
 

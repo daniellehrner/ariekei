@@ -529,8 +529,15 @@ async fn discard_task(app: tauri::AppHandle, id: i64) -> Res<lifecycle::Cleanup>
 // --- review ---
 
 #[tauri::command]
-async fn review_state(app: tauri::AppHandle, id: i64) -> Res<workitem::ReviewState> {
-    blocking(app, move |s| workitem::review_state(s, id)).await
+async fn review_state(
+    app: tauri::AppHandle,
+    id: i64,
+    refresh: Option<bool>,
+) -> Res<workitem::ReviewState> {
+    blocking(app, move |s| {
+        workitem::review_state(s, id, refresh.unwrap_or(false))
+    })
+    .await
 }
 
 /// Changed files from `from` to `to` (a commit), or to the working tree when `to` is null.

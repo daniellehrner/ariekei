@@ -383,10 +383,19 @@ impl TestApp {
         // Its prompt is up, so what is typed now reaches it. (A Windows ConPTY writes some
         // output of its own before the agent has even started.)
         let deadline = Instant::now() + Duration::from_secs(20);
+        let mut answered = false;
         loop {
             let shown = self.state.terminals.scrollback(&id.to_string());
             if shown.contains('❯') {
                 break;
+            }
+            // A Windows ConPTY asks where the cursor is and shows nothing until it hears; in
+            // the app, the terminal view (xterm.js) answers.
+            if shown.contains("\x1b[6n") && !std::mem::replace(&mut answered, true) {
+                self.state
+                    .terminals
+                    .write(&id.to_string(), b"\x1b[1;1R")
+                    .unwrap();
             }
             assert!(
                 Instant::now() < deadline,

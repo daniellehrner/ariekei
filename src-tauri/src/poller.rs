@@ -78,10 +78,11 @@ impl Poller {
                     .as_deref()
                     .and_then(rfc3339_secs)
                     .map(|github| github as i64 - now_secs() as i64);
-                if let Some(ahead) = asked {
-                    *clock = Some((Instant::now(), ahead));
-                }
-                asked.unwrap_or(0)
+                // Not asked again for the next PR when GitHub did not say: the local clock
+                // will do until the hour is up.
+                let ahead = asked.unwrap_or(0);
+                *clock = Some((Instant::now(), ahead));
+                ahead
             }
         };
         now_secs().saturating_add_signed(ahead)

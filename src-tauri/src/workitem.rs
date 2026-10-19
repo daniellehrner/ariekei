@@ -12,7 +12,10 @@ use crate::store::{PolledPr, Repo, WorkItem};
 use crate::terminal::{self, SessionPlan};
 use crate::worktree::{self, Prepared};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 pub fn summary(item: &WorkItem) -> Result<PrSummary, String> {
     serde_json::from_value(item.snapshot.clone())
@@ -877,17 +880,45 @@ fn review(state: &AppState, id: i64) -> Result<Review, String> {
 /// show the base's new commits as its own, and a retargeted one (a stacked PR whose parent
 /// merged) be compared with a branch it no longer targets. Without a worktree, `fetch_pr`
 /// fetches it with the head.
-fn fetch_base(state: &AppState, id: i64) -> Result<(), String> {
+///
+/// It is a round trip to GitHub, and the Review tab loads whenever it is shown: so only when
+/// the item's base was not fetched in the last `BASE_FETCH_EVERY` (or it is another branch
+/// now), or `refresh` (the user's Reload).
+fn fetch_base(state: &AppState, id: i64, refresh: bool) -> Result<(), String> {
+    // When each (clone, item, base branch) was fetched.
+    type Fetched = HashMap<(PathBuf, i64, String), Instant>;
+    static FETCHED: Mutex<Option<Fetched>> = Mutex::new(None);
     let (item, repo) = item_repo(state, id)?;
-    if item.worktree_path.as_ref().is_some_and(|p| p.exists()) {
-        worktree::fetch(&repo.path, &repo.base_remote, &base_ref_of(&item, &repo)?)?;
+    if !item.worktree_path.as_ref().is_some_and(|p| p.exists()) {
+        return Ok(());
     }
+    let base = base_ref_of(&item, &repo)?;
+    let key = (repo.path.clone(), id, base.clone());
+    let recent = FETCHED
+        .lock()
+        .unwrap()
+        .get_or_insert_with(HashMap::new)
+        .get(&key)
+        .is_some_and(|at| at.elapsed() < BASE_FETCH_EVERY);
+    if recent && !refresh {
+        return Ok(());
+    }
+    worktree::fetch(&repo.path, &repo.base_remote, &base)?;
+    FETCHED
+        .lock()
+        .unwrap()
+        .get_or_insert_with(HashMap::new)
+        .insert(key, Instant::now());
     Ok(())
 }
 
-pub fn review_state(state: &AppState, id: i64) -> Result<ReviewState, String> {
+/// How long a worktree review's base counts as fresh (see `fetch_base`).
+const BASE_FETCH_EVERY: Duration = Duration::from_secs(10 * 60);
+
+/// The review of item `id`; `refresh`: the user asked for it as it is now (Reload).
+pub fn review_state(state: &AppState, id: i64, refresh: bool) -> Result<ReviewState, String> {
     // Not fatal (e.g. offline): the base as it was fetched before will do.
-    let fetched = fetch_base(state, id);
+    let fetched = fetch_base(state, id, refresh);
     if let Err(e) = &fetched {
         tracing::warn!("review of item {id}: could not fetch its base: {e}");
     }
@@ -1190,7 +1221,7 @@ mod tests {
         app.poll().unwrap();
         let id = app.item(5).id;
         fetch_pr(&app.state, id).unwrap();
-        let seen = review_state(&app.state, id).unwrap().pr_head;
+        let seen = review_state(&app.state, id, false).unwrap().pr_head;
 
         // The author pushes again while the review is open, and the poll sees it.
         push(&[2, 15]);
@@ -1266,7 +1297,7 @@ mod tests {
         git(&wt, &["fetch", "-q", "origin", "feat"]);
         git(&wt, &["reset", "-q", "--hard", "origin/feat"]);
 
-        let state = review_state(&app.state, id).unwrap();
+        let state = review_state(&app.state, id, false).unwrap();
         assert_eq!(
             state
                 .commits
@@ -1278,10 +1309,20 @@ mod tests {
         );
         assert_eq!(state.base, git(up, &["rev-parse", "main"]));
 
+        // Shown again soon after: no fetch (the tab loads whenever it is shown), unless the
+        // user asks for it as it is now.
+        app.push_to("main", &[("n.txt", "dave's\n")], "dave");
+        let main_now = git(up, &["rev-parse", "main"]);
+        let fetched = || git(&app.clone, &["rev-parse", "origin/main"]);
+        review_state(&app.state, id, false).unwrap();
+        assert_ne!(fetched(), main_now);
+        review_state(&app.state, id, true).unwrap();
+        assert_eq!(fetched(), main_now);
+
         // A base that cannot be fetched (deleted): the review says so instead of showing nothing.
         app.set("prs", 6, json!({"base_ref": "gone"}));
         app.poll().unwrap();
-        let err = review_state(&app.state, id).unwrap_err();
+        let err = review_state(&app.state, id, false).unwrap_err();
         assert!(err.contains("origin/gone is not fetched"), "{err}");
         assert!(
             err.contains("could not fetch") || err.contains("failed"),
@@ -1468,7 +1509,7 @@ mod tests {
         let wt = app.path("proj_task1");
         write(&wt.join("a.txt"), "one\ntwo\nthree\nfour\n");
         commit(&wt, "four", "me");
-        let state = review_state(&app.state, task).unwrap();
+        let state = review_state(&app.state, task, false).unwrap();
         assert_eq!(
             (
                 state.mode,
@@ -1496,7 +1537,10 @@ mod tests {
             git(&app.upstream, &["rev-parse", "trunk"])
         );
         assert_eq!(default_branch(&app.repo).unwrap(), "trunk");
-        assert_eq!(review_state(&app.state, task).unwrap().base_ref, "trunk");
+        assert_eq!(
+            review_state(&app.state, task, false).unwrap().base_ref,
+            "trunk"
+        );
     }
 
     #[test]

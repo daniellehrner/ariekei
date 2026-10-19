@@ -223,7 +223,8 @@ export const api = {
   termResize: (id: number, cols: number, rows: number) => invoke<void>("term_resize", { id, cols, rows }),
   agentSend: (id: number, text: string) => invoke<void>("agent_send", { id, text }),
   sendPrFeedback: (id: number) => invoke<void>("send_pr_feedback", { id }),
-  reviewState: (id: number) => invoke<ReviewState>("review_state", { id }),
+  /** `refresh`: as it is now (Reload), fetching its base even if it was fetched lately. */
+  reviewState: (id: number, refresh = false) => invoke<ReviewState>("review_state", { id, refresh }),
   reviewFiles: (id: number, from: string, to: string | null, ignoreWs: boolean) =>
     invoke<ReviewFile[]>("review_files", { id, from, to, ignoreWs }),
   reviewFile: (id: number, from: string, to: string | null, path: string, ignoreWs: boolean) =>
