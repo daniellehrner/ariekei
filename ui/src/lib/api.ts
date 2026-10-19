@@ -173,6 +173,8 @@ export interface FileDiff {
   old: string;
   new: string;
   binary: boolean;
+  /** The new version is not valid UTF-8 (`new` has U+FFFD for what is not): not editable. */
+  lossy: boolean;
   hunks: Hunk[];
 }
 

@@ -322,6 +322,9 @@ pub struct FileDiff {
     pub old: String,
     pub new: String,
     pub binary: bool,
+    /// The new version is not valid UTF-8: `new` has U+FFFD for what is not, so it must not
+    /// be saved back.
+    pub lossy: bool,
     pub hunks: Vec<Hunk>,
 }
 
@@ -343,9 +346,11 @@ pub fn file_diff(
             old: String::new(),
             new: String::new(),
             binary: true,
+            lossy: false,
             hunks: vec![],
         });
     }
+    let lossy = std::str::from_utf8(&new).is_err();
     let (old, new) = (
         String::from_utf8_lossy(&old).into_owned(),
         String::from_utf8_lossy(&new).into_owned(),
@@ -379,6 +384,7 @@ pub fn file_diff(
         old,
         new,
         binary: false,
+        lossy,
         hunks,
     })
 }
@@ -556,6 +562,18 @@ pub mod tests {
             [("grow a", 1)]
         );
         assert!(is_dirty(p).unwrap());
+    }
+
+    #[test]
+    fn a_new_version_that_is_not_utf8_is_marked_lossy() {
+        let dir = repo();
+        let p = dir.path();
+        std::fs::write(p.join("a.txt"), b"caf\xe9\r\n").unwrap();
+        let d = file_diff(p, "HEAD", None, "a.txt", false).unwrap();
+        assert!(d.lossy && !d.binary);
+        assert_eq!(d.new, "caf\u{fffd}\r\n");
+        std::fs::write(p.join("a.txt"), "café\r\n").unwrap();
+        assert!(!file_diff(p, "HEAD", None, "a.txt", false).unwrap().lossy);
     }
 
     #[test]

@@ -1021,6 +1021,12 @@ pub fn save_file(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => vec![],
         Err(e) => return Err(format!("{path}: {e}")),
     };
+    // The editor got U+FFFD for what is not UTF-8, and would write that back.
+    if std::str::from_utf8(&now).is_err() {
+        return Err(format!(
+            "Not saved: {path} is not valid UTF-8 text, which the review cannot edit."
+        ));
+    }
     if now != loaded.as_bytes() {
         return Err(format!(
             "Not saved: {path} changed on disk since the review loaded it (the agent may have edited it). Reload to see it as it is now; your edits are dropped."
@@ -1075,6 +1081,13 @@ mod tests {
         save_file(&app.state, task, "new.txt", "hi\n", "").unwrap();
         let err = save_file(&app.state, task, "b.txt", "hi\n", "gone\n").unwrap_err();
         assert!(err.contains("changed on disk"), "{err}");
+
+        // Nor is a file that is not UTF-8 (the editor has U+FFFD in it).
+        std::fs::write(&file, b"caf\xe9\n").unwrap();
+        let err =
+            save_file(&app.state, task, "a.txt", "caf\u{fffd}!\n", "caf\u{fffd}\n").unwrap_err();
+        assert!(err.contains("not valid UTF-8"), "{err}");
+        assert_eq!(std::fs::read(&file).unwrap(), b"caf\xe9\n");
     }
 
     #[test]

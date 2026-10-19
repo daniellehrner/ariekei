@@ -27,7 +27,7 @@
 <script lang="ts">
   import { MergeView, getChunks, unifiedMergeView } from "@codemirror/merge";
   import { syntaxHighlighting } from "@codemirror/language";
-  import { EditorSelection, EditorState, type Extension } from "@codemirror/state";
+  import { EditorSelection, EditorState, Text, type Extension } from "@codemirror/state";
   import { EditorView } from "@codemirror/view";
   import { basicSetup } from "codemirror";
   import { onDestroy, tick, untrack } from "svelte";
@@ -45,7 +45,7 @@
   import { ariekeiHighlight, ariekeiTheme } from "./lib/codemirrorTheme";
   import { currentChange } from "./lib/currentChange";
   import { draftLines, draftMarks, setDraftLines } from "./lib/draftMarks";
-  import { gitOverride } from "./lib/gitDiff";
+  import { gitOverride, lineSeparatorOf } from "./lib/gitDiff";
   import { hscroll } from "./lib/hscroll";
   import { externalLinks } from "./lib/html";
   import { isTyping } from "./lib/keys";
@@ -142,6 +142,8 @@
   let errorReload = $state(false);
   // The file shown has only whitespace changes, and they are hidden.
   let onlyWhitespace = $state(false);
+  // The file shown is not valid UTF-8: it cannot be edited (saving would garble it).
+  let lossy = $state(false);
   // Below 880 px the diff column is too narrow for two sides (at 1024 wide it is about 730).
   let mainWidth = $state(1200);
 
@@ -240,6 +242,7 @@
     composerOff = false;
     editedPath = null;
     loadedFile = d.new;
+    lossy = d.lossy;
     onlyWhitespace = ignoreWs && !d.binary && d.hunks.length === 0 && !!files.find((f) => f.path === path)?.whitespaceOnly;
     if (d.binary) {
       host.textContent = "Binary file: not shown.";
@@ -251,7 +254,8 @@
     const onUpdate = EditorView.updateListener.of((u) => {
       if (u.docChanged) {
         editedPath = path;
-        editedFile = u.state.doc.toString();
+        // With the file's own line endings (doc.toString() would join with "\n").
+        editedFile = u.state.sliceDoc();
       }
       if (u.selectionSet || u.docChanged) {
         const sel = u.state.selection.main;
@@ -264,7 +268,10 @@
         }
       }
     });
-    const newDoc = [...draftMarks, ...common, EditorView.editable.of(to === null), EditorState.readOnly.of(to !== null), onUpdate, currentChange];
+    // Each side split into git's lines, keeping its line endings (lib/gitDiff.ts).
+    const [oldSep, newSep] = [EditorState.lineSeparator.of(lineSeparatorOf(d.old)), EditorState.lineSeparator.of(lineSeparatorOf(d.new))];
+    const canEdit = to === null && !d.lossy;
+    const newDoc = [...draftMarks, ...common, newSep, EditorView.editable.of(canEdit), EditorState.readOnly.of(!canEdit), onUpdate, currentChange];
     const diffConfig = { override: gitOverride(d.old, d.new, d.hunks) };
     const collapseUnchanged = { margin: 3, minSize: 6 };
     if (onePane) {
@@ -273,13 +280,13 @@
         doc: d.new,
         extensions: [
           ...newDoc,
-          unifiedMergeView({ original: d.old, gutter: true, mergeControls: false, highlightChanges: true, syntaxHighlightDeletions: true, diffConfig, collapseUnchanged }),
+          unifiedMergeView({ original: Text.of(d.old.split(lineSeparatorOf(d.old))), gutter: true, mergeControls: false, highlightChanges: true, syntaxHighlightDeletions: true, diffConfig, collapseUnchanged }),
         ],
       });
     } else {
       merge = new MergeView({
         parent: host,
-        a: { doc: d.old, extensions: [...common, EditorState.readOnly.of(true)] },
+        a: { doc: d.old, extensions: [...common, oldSep, EditorState.readOnly.of(true)] },
         b: { doc: d.new, extensions: newDoc },
         collapseUnchanged,
         gutter: true,
@@ -870,7 +877,7 @@
           </div>
         {:else if !showComposer}
           <div class="empty-dock">
-            <span class="grow hint">Select code to comment on it{editable ? "; edit it to change the file" : ""}.</span>
+            <span class="grow hint">Select code to comment on it{editable ? (lossy ? "; this file is not UTF-8 text, so it cannot be edited here" : "; edit it to change the file") : ""}.</span>
             {#if review?.prHead}
               <span class="submit-anchor">
                 <Button size="sm" variant="quiet" mark="gh" onclick={openSubmit} aria-expanded={submitting} data-open-submit>Review on GitHub…</Button>

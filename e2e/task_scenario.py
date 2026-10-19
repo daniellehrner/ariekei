@@ -10,7 +10,7 @@ opening a PR and an issue (`gh pr create` / `gh issue create`) which are linked 
 and listed under it rather than in their sections, a linked PR pointing back to the task and
 sending its review threads to the task's agent, asking the agent about code from the review
 (right-click a line or an old-side selection; refused while it waits for permission), Save file
-in the review (refused when the agent changed the file meanwhile, Reload), Ctrl+B
+in the review (refused when the agent changed the file meanwhile, Reload; CRLF kept), Ctrl+B
 and ? in the terminal staying with the agent, Discard refused while the agent waits for
 permission, a closed issue staying under its task, Discard (shows the work it loses, then
 removes the worktree, branch and task; the PR goes back to My PRs), and a second task (the +
@@ -269,6 +269,22 @@ try:
     eventually("Reload shows the file as it is on disk", lambda: s.js(f"return {editor('new')}?.state.doc.toString()"),
                lambda v: v == on_disk, timeout=10)
     git(wt, "checkout", "--", "a.txt")
+    # A file with CRLF line endings keeps them: the editor has git's lines, and Save writes
+    # them back as they were, a new line included.
+    crlf = os.path.join(wt, "crlf.txt")
+    open(crlf, "wb").write(b"one\r\ntwo\r\n")
+    s.js("document.querySelector('[data-reload]').click()")
+    s.click(s.wait(".files [data-file='crlf.txt']", timeout=30))
+    lines = eventually("a CRLF file shows its lines", lambda: s.js(f"const v = {editor('new')}; return v && [v.state.doc.lines, v.state.doc.line(1).text]"),
+                       lambda v: v == [3, "one"], timeout=30)
+    s.js(f"const v = {editor('new')}; v.dispatch({{ changes: {{ from: v.state.doc.line(2).to, insert: v.state.lineBreak + 'three' }} }})")
+    s.js("document.querySelector('[data-save]').click()")
+    s.wait(".review [data-notice]", timeout=10, text="Saved crlf.txt")
+    saved = open(crlf, "rb").read()
+    print("[save] CRLF file: lines", lines, "| saved:", saved)
+    equal("Save keeps CRLF line endings", saved, b"one\r\ntwo\r\nthree\r\n")
+    s.click(s.wait(".files [data-file='a.txt']"))
+    os.remove(crlf)
 
     # In the agent's terminal, the app's shortcuts are Claude Code's keys (Ctrl+B is its
     # "background" key): neither the Inbox nor the shortcuts overlay react.

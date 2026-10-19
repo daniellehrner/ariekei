@@ -313,7 +313,8 @@ whitespace changed, and a small blue square if you have draft comments on it.
 - When you review the worktree, the right side is editable: change the code and press
   **Save file**. The diff does not follow the disk by itself: if the file changed there since
   the review loaded it (the agent edited it, say), Save is refused rather than overwriting
-  that, and **Reload** shows the file as it is now (your edits are dropped).
+  that, and **Reload** shows the file as it is now (your edits are dropped). Saving keeps the
+  file's line endings (CRLF too). A file that is not UTF-8 text cannot be edited here.
 
 ### Asking the agent about code
 

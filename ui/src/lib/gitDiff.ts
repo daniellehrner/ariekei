@@ -46,9 +46,24 @@ export function gitChanges(oldText: string, newText: string, hunks: Hunk[]): Cha
   return changes;
 }
 
-// A `diffConfig.override` that uses git's hunks for the two documents it was made for and
-// CodeMirror's diff for anything else (e.g. re-diffing after an edit).
+// The line separator of a document for a file's text (CodeMirror's `lineSeparator`): "\r\n"
+// when every line ends so, else "\n". Then the editor's lines are git's (a lone "\r" is part
+// of its line, as for git; CodeMirror would otherwise split there too), and its text joined
+// with the separator is the file again, line endings and all: Save keeps them.
+export function lineSeparatorOf(text: string): "\r\n" | "\n" {
+  return text.includes("\r\n") && !/(^|[^\r])\n/.test(text) ? "\r\n" : "\n";
+}
+
+// The text of such a document as CodeMirror's diff gets it: lines joined with "\n".
+export function docText(text: string): string {
+  const sep = lineSeparatorOf(text);
+  return sep === "\n" ? text : text.split(sep).join("\n");
+}
+
+// A `diffConfig.override` that uses git's hunks for the two files it was made for (in
+// documents split with `lineSeparatorOf`) and CodeMirror's diff for anything else (e.g.
+// re-diffing after an edit).
 export function gitOverride(oldText: string, newText: string, hunks: Hunk[]) {
-  return (a: string, b: string): readonly Change[] =>
-    a === oldText && b === newText ? gitChanges(oldText, newText, hunks) : diff(a, b);
+  const [a0, b0] = [docText(oldText), docText(newText)];
+  return (a: string, b: string): readonly Change[] => (a === a0 && b === b0 ? gitChanges(a0, b0, hunks) : diff(a, b));
 }

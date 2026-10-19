@@ -3,7 +3,8 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { gitChanges } from "./gitDiff.ts";
+import { diff } from "@codemirror/merge";
+import { docText, gitChanges, gitOverride, lineSeparatorOf } from "./gitDiff.ts";
 
 const spans = (o: string, n: string, hunks: Parameters<typeof gitChanges>[2]) =>
   gitChanges(o, n, hunks).map((c) => [o.slice(c.fromA, c.toA), n.slice(c.fromB, c.toB)]);
@@ -27,4 +28,24 @@ test("identical text elsewhere is not marked when git says it is unchanged", () 
   const n = "dup\nx\ndup\ndup\n";
   const changes = gitChanges(o, n, [{ oldStart: 3, oldLines: 0, newStart: 4, newLines: 1 }]);
   assert.deepEqual(changes.map((c) => [c.fromB, c.toB]), [[10, 14]]);
+});
+
+test("a CRLF file is split into git's lines and keeps its line endings", () => {
+  assert.equal(lineSeparatorOf("a\r\nb\r\n"), "\r\n");
+  assert.equal(lineSeparatorOf("a\r\nb"), "\r\n");
+  // LF, mixed, and lone CRs (which git does not count as line breaks): split at "\n" only.
+  for (const text of ["a\nb\n", "a\r\nb\n", "\na\r\n", "a\rb\n", ""]) assert.equal(lineSeparatorOf(text), "\n", JSON.stringify(text));
+  assert.equal(docText("a\r\nb\rc\r\n"), "a\nb\rc\n");
+  const text = "one\r\ntwo\r\n";
+  assert.equal(docText(text).split("\n").join(lineSeparatorOf(text)), text, "joined again, it is the file");
+});
+
+test("git's hunks are used for CRLF files too", () => {
+  // With whitespace ignored git reports only line 2; CodeMirror's own diff also marks line 1.
+  const o = "a  \r\nb\r\n";
+  const n = "a\r\nc\r\n";
+  const hunks = [{ oldStart: 2, oldLines: 1, newStart: 2, newLines: 1 }];
+  const [a, b] = [docText(o), docText(n)];
+  assert.ok(diff(a, b).length > 1);
+  assert.deepEqual(gitOverride(o, n, hunks)(a, b).map((c) => [a.slice(c.fromA, c.toA), b.slice(c.fromB, c.toB)]), [["b", "c"]]);
 });
