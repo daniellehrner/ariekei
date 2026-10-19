@@ -47,6 +47,9 @@ pub struct Launch {
     pub extra_args: Vec<String>,
     /// Close detached, idle terminals after this long.
     pub idle_after: Duration,
+    /// A working agent whose terminal has been silent this long is not working (see
+    /// `settle_quiet`).
+    pub quiet_after: Duration,
     /// Extra environment, for tests only (where the fake agent keeps its transcripts).
     pub env: Vec<(String, String)>,
 }
@@ -95,6 +98,10 @@ struct Term {
     output: Mutex<Output>,
     /// Latest status and when it was reported.
     status: Mutex<(AgentStatus, Instant)>,
+    /// What the latest status is about (e.g. the command it asks to run).
+    detail: Mutex<Option<String>>,
+    /// When the agent last wrote to the terminal.
+    last_output: Mutex<Instant>,
     /// The agent finished a turn since the user last opened the item's review.
     unreviewed: AtomicBool,
 }
@@ -151,6 +158,15 @@ pub fn resumable(started: bool, transcript: Option<&Path>) -> bool {
     started && transcript.is_none_or(Path::exists)
 }
 
+/// Whether keys typed at a permission prompt answer it: Enter, Esc, Ctrl+C or an option's
+/// number. Not arrow keys (they choose), nor what the terminal itself reports (focus,
+/// mouse, cursor position): escape sequences, which never hold a CR or Ctrl+C byte.
+fn answers_prompt(data: &[u8]) -> bool {
+    data == b"\x1b"
+        || matches!(data, [d] if d.is_ascii_digit())
+        || data.iter().any(|b| matches!(b, b'\r' | 0x03))
+}
+
 /// Statuses in which the agent waits for the user, so an unwatched terminal may close.
 fn idle(status: AgentStatus) -> bool {
     matches!(
@@ -167,19 +183,63 @@ impl TerminalManager {
             launch,
             terms: Mutex::default(),
         });
-        if let Ok(idle_after) = manager.launch.as_ref().map(|l| l.idle_after) {
+        if let Ok(launch) = manager.launch.as_ref() {
+            let (idle_after, quiet_after) = (launch.idle_after, launch.quiet_after);
             let weak = Arc::downgrade(&manager);
             let _ = std::thread::Builder::new()
                 .name("terminal-reaper".into())
                 .spawn(move || {
+                    let mut idle_checked = Instant::now();
                     while let Some(manager) = weak.upgrade() {
-                        manager.close_idle(idle_after);
+                        manager.settle_quiet(quiet_after);
+                        if idle_checked.elapsed() >= Duration::from_secs(30).min(idle_after) {
+                            manager.close_idle(idle_after);
+                            idle_checked = Instant::now();
+                        }
                         drop(manager);
-                        std::thread::sleep(Duration::from_secs(30).min(idle_after));
+                        std::thread::sleep(Duration::from_secs(1));
                     }
                 });
         }
         manager
+    }
+
+    /// The user typed `data` into the item's terminal. Keys that answer a permission prompt
+    /// (or a question) mean the agent goes on: running what it asked for (until PostToolUse,
+    /// which for a long command is long after), or, if the answer was No, ending its turn,
+    /// which Claude Code reports with no hook at all (`settle_quiet` tells).
+    pub fn typed(&self, key: &str, data: &[u8]) {
+        let Ok(term) = self.get(key) else { return };
+        if term.status.lock().unwrap().0 == AgentStatus::WaitingForPermission
+            && answers_prompt(data)
+        {
+            let detail = term.detail.lock().unwrap().clone();
+            self.report(key, AgentStatus::Working, detail);
+        }
+    }
+
+    /// Agents that seem to work but whose terminal has been silent for `after` are not
+    /// working: while it works, Claude Code redraws its spinner and timer all the time. A turn
+    /// that the user interrupted (Esc, or No at a permission prompt) ends with no hook, so
+    /// this is how its end shows.
+    fn settle_quiet(&self, after: Duration) {
+        let quiet: Vec<String> = self
+            .terms
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, t)| {
+                let (status, since) = *t.status.lock().unwrap();
+                status == AgentStatus::Working
+                    && since.elapsed() >= after
+                    && t.last_output.lock().unwrap().elapsed() >= after
+            })
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in quiet {
+            tracing::info!("agent {key} is quiet: its turn ended");
+            self.report(&key, AgentStatus::Ready, None);
+        }
     }
 
     /// The item whose terminal sent a hook event: the one `token` names, or (when the event
@@ -257,6 +317,7 @@ impl TerminalManager {
         let term = self.get(key).ok()?;
         let previous =
             std::mem::replace(&mut *term.status.lock().unwrap(), (status, Instant::now())).0;
+        term.detail.lock().unwrap().clone_from(&detail);
         if status == AgentStatus::Finished && previous != AgentStatus::Finished {
             term.unreviewed.store(true, Ordering::Relaxed);
         }
@@ -351,6 +412,8 @@ impl TerminalManager {
                 view: Some(view),
             }),
             status: Mutex::new((AgentStatus::Starting, Instant::now())),
+            detail: Mutex::default(),
+            last_output: Mutex::new(Instant::now()),
             unreviewed: AtomicBool::new(false),
         });
         // Registered before output starts, so the first hook finds the item.
@@ -374,6 +437,7 @@ impl TerminalManager {
                     }
                     total += n;
                     reader_term.output.lock().unwrap().push(&buf[..n]);
+                    *reader_term.last_output.lock().unwrap() = Instant::now();
                     if std::mem::take(&mut first)
                         && let Some(manager) = reader_manager.upgrade()
                     {
@@ -525,6 +589,7 @@ mod tests {
             hooks_settings: "/data/hooks.json".into(),
             extra_args: vec![],
             idle_after: Duration::from_secs(900),
+            quiet_after: Duration::from_secs(30),
             env: vec![],
         }
     }
@@ -572,6 +637,72 @@ mod tests {
     fn only_waiting_agents_count_as_idle() {
         assert!(idle(AgentStatus::Finished) && idle(AgentStatus::Ready));
         assert!(!idle(AgentStatus::Working) && !idle(AgentStatus::WaitingForPermission));
+    }
+
+    #[test]
+    fn answering_a_prompt_takes_enter_esc_ctrl_c_or_a_number() {
+        for answer in [&b"\r"[..], b"\x1b", b"\x03", b"2", b"\x1b[B\r"] {
+            assert!(answers_prompt(answer), "{answer:?}");
+        }
+        // Arrow keys, focus and mouse reports, a cursor position report, typing.
+        for other in [
+            &b"\x1b[B"[..],
+            b"\x1b[I",
+            b"\x1b[O",
+            b"\x1b[<0;3;4M",
+            b"\x1b[12;1R",
+            b"no",
+        ] {
+            assert!(!answers_prompt(other), "{other:?}");
+        }
+    }
+
+    mod with_app {
+        use super::super::*;
+        use crate::testkit::TestApp;
+        use crate::workitem::create_task;
+
+        #[test]
+        fn an_answered_or_interrupted_turn_is_not_left_waiting_or_working() {
+            let app = TestApp::new();
+            let task = create_task(&app.state, Some(app.repo.clone()), "Quiet", "", "").unwrap();
+            app.start_agent(task);
+            let key = task.to_string();
+            let terms = &app.state.terminals;
+            let status = || terms.status(&key).unwrap();
+            terms.report(
+                &key,
+                AgentStatus::WaitingForPermission,
+                Some("Bash ./gradlew test".into()),
+            );
+            terms.typed(&key, b"\x1b[B");
+            assert_eq!(status(), AgentStatus::WaitingForPermission, "only choosing");
+            // Yes: it runs the command, long before PostToolUse.
+            terms.typed(&key, b"\r");
+            assert_eq!(status(), AgentStatus::Working);
+            assert_eq!(
+                terms.get(&key).unwrap().detail.lock().unwrap().as_deref(),
+                Some("Bash ./gradlew test")
+            );
+            terms.typed(&key, b"\r");
+            assert_eq!(status(), AgentStatus::Working, "typing while it works");
+
+            // Claude Code redraws while it works; an interrupted turn goes silent, no hook.
+            let quiet = Duration::from_millis(300);
+            terms.settle_quiet(quiet);
+            assert_eq!(status(), AgentStatus::Working, "not quiet for long yet");
+            std::thread::sleep(quiet + Duration::from_millis(100));
+            *terms.get(&key).unwrap().last_output.lock().unwrap() = Instant::now();
+            terms.settle_quiet(quiet);
+            assert_eq!(status(), AgentStatus::Working, "it just wrote something");
+            std::thread::sleep(quiet + Duration::from_millis(100));
+            terms.settle_quiet(quiet);
+            assert_eq!(status(), AgentStatus::Ready);
+            assert!(
+                app.events.notices().is_empty(),
+                "the user ended it: nothing to tell"
+            );
+        }
     }
 
     #[test]

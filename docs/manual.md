@@ -249,7 +249,7 @@ The status dot and label come from Claude Code's hooks:
 | Starting | Claude Code is starting |
 | Ready | Waiting for your instructions |
 | Working | In the middle of a turn |
-| Waiting for permission | Asks to run something; answer in the Terminal |
+| Waiting for permission | Asks to run something, asks you a question or to approve its plan; answer in the Terminal |
 | Finished | Finished its turn |
 | Error | Stopped with an error |
 | Stopped | Not running (it resumes when you open the item) |
@@ -257,6 +257,11 @@ The status dot and label come from Claude Code's hooks:
 While the agent waits for permission, a strip under the header shows what it asks to run, with
 **Answer in Terminal** if you are on another tab. In a narrow window a long command wraps onto
 a second line.
+
+Claude Code tells Ariekei nothing when you end a turn yourself (Esc, or No at a permission
+prompt), so Ariekei watches the terminal too: once you answer a permission prompt the agent is
+working again (until the command is done), and a working agent whose terminal has shown nothing
+new for 30 seconds is ready again (while Claude Code works it keeps redrawing its spinner).
 
 ### Switching items and restarting
 

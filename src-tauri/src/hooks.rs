@@ -62,10 +62,11 @@ const TERMINAL_HEADER: &str = "X-Ariekei-Terminal";
 
 /// Events registered in the hooks settings file. Not SessionStart: it ignores `http`
 /// hooks (only `command` hooks run), so `ready` comes from the terminal's first output.
-const EVENTS: [&str; 8] = [
+const EVENTS: [&str; 9] = [
     "UserPromptSubmit",
     "PreToolUse",
     "PostToolUse",
+    "PostToolUseFailure",
     "PermissionRequest",
     "Notification",
     "Stop",
@@ -73,13 +74,23 @@ const EVENTS: [&str; 8] = [
     "SessionEnd",
 ];
 
+/// Tools whose call waits for the user's answer in the terminal (Claude Code's dialogs).
+const USER_TOOLS: [&str; 2] = ["AskUserQuestion", "ExitPlanMode"];
+
 /// The status an event implies, if any (e.g. most notification types change nothing).
+/// Claude Code sends nothing when the user interrupts a turn (Esc, or "No" at a permission
+/// prompt): `TerminalManager` tells that from the terminal (`typed`, `settle_quiet`).
 pub fn status_for(event: &HookEvent) -> Option<(AgentStatus, Option<String>)> {
     use AgentStatus::*;
     let tool = || tool_detail(event);
     Some(match event.hook_event_name.as_str() {
         "UserPromptSubmit" => (Working, None),
-        "PreToolUse" | "PostToolUse" => (Working, tool()),
+        // Tools that ask the user something themselves: a question, the plan to approve.
+        "PreToolUse" if matches!(event.tool_name.as_deref(), Some(t) if USER_TOOLS.contains(&t)) => {
+            (WaitingForPermission, tool())
+        }
+        // A failed tool call does not end the turn: the agent goes on with the error.
+        "PreToolUse" | "PostToolUse" | "PostToolUseFailure" => (Working, tool()),
         "PermissionRequest" => (WaitingForPermission, tool()),
         "Notification" => match event.notification_type.as_deref() {
             Some("permission_prompt") => (WaitingForPermission, None),
@@ -508,6 +519,20 @@ mod tests {
                     serde_json::json!({ "notification_type": "auth_success" }),
                 ),
                 None,
+            ),
+            (
+                event(
+                    "PostToolUseFailure",
+                    serde_json::json!({ "tool_name": "Bash", "error": "exit 1" }),
+                ),
+                Some(Working),
+            ),
+            (
+                event(
+                    "PreToolUse",
+                    serde_json::json!({ "tool_name": "AskUserQuestion" }),
+                ),
+                Some(WaitingForPermission),
             ),
             (event("Stop", none.clone()), Some(Finished)),
             (

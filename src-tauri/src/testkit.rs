@@ -133,6 +133,7 @@ impl TestApp {
             hooks_settings: hooks,
             extra_args: vec![],
             idle_after: Duration::from_secs(3600),
+            quiet_after: Duration::from_secs(3600),
             env: vec![(
                 "FAKE_CLAUDE_DIR".into(),
                 root.path().join("claude").to_string_lossy().into_owned(),

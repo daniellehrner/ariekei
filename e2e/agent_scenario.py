@@ -9,14 +9,16 @@ a local "GitHub" repo with insteadOf), plus two work items inserted into Ariekei
 database as if the poller had found them. Covers: Inbox, Start working (worktree on the
 PR branch), the agent in the terminal (slash-command autocomplete, a committing turn),
 Review since the PR base, a second agent commit reviewed on its own (its commit scope),
-Inbox attention, idle shutdown (not while a background job runs), resume after an app
-restart, and quitting while a background job runs (asked first: Cancel, then Quit anyway).
+permission prompts (working while an allowed long command runs; ready again after No, which
+sends no hook), Inbox attention, idle shutdown (not while a background job runs), resume after
+an app restart, `/clear` (the status follows the new conversation), and quitting while a
+background job runs (asked first: Cancel, then Quit anyway).
 
 The agent is e2e/fake_claude.py (ARIEKEI_CLAUDE): a small terminal agent that commits when
 asked and reports through the hooks like Claude Code. With ARIEKEI_CLAUDE unset the user's
 real `claude` runs instead (two short turns; answer its trust dialog). Run it with
 `python3 e2e/run.py <test-app> agent`, which sets the environment (ARIEKEI_NO_POLL=1,
-ARIEKEI_IDLE_SECS=5, fake gh).
+ARIEKEI_IDLE_SECS=5, ARIEKEI_QUIET_SECS=5, fake gh).
 """
 
 import json
@@ -239,9 +241,30 @@ try:
     equal("in one hunk", len(diff["hunks"]), 1)
     s.screenshot(os.path.join(shots, "agent-review-commit.png"))
 
+    # Once a long command is allowed the agent works (no PostToolUse until it is done), also for
+    # longer than ARIEKEI_QUIET_SECS=5: it keeps redrawing its spinner.
+    tab(s, "Terminal")
+    keys(s, "Run a 12 second job")
+    keys(s, ENTER)
+    wait_agent(s, 42, {"waitingForPermission"}, timeout=30)
+    keys(s, ENTER)
+    wait_agent(s, 42, {"working"}, timeout=3)
+    time.sleep(8)
+    equal("the allowed command still runs", (row_info(s, 42) or {}).get("agent"), "working")
+    wait_agent(s, 42, {"finished"}, timeout=30)
+    print("[permission] allowed: working until the command was done")
+    # No at a permission prompt (Esc) ends the turn with no hook at all: the quiet terminal tells.
+    keys(s, "Append a line with the word four to a.txt, then commit with the message 'add four'.")
+    keys(s, ENTER)
+    wait_agent(s, 42, {"waitingForPermission"}, timeout=30)
+    keys(s, "\x1b")
+    t0 = time.monotonic()
+    wait_agent(s, 42, {"ready"}, timeout=30)
+    print(f"[permission] No: ready again after {time.monotonic() - t0:.0f}s")
+    equal("nothing was committed", git(worktree, "log", "-1", "--format=%s"), "add three")
+
     # Leave #42 (its terminal detaches); with ARIEKEI_IDLE_SECS=5 the idle agent closes, but
     # not while a background job it started still runs (closing would end the job).
-    tab(s, "Terminal")
     st = prompt(s, 42, "Run a 25 second job in the background")
     equal("the background job's turn finishes", st, "finished")
     select(s, 43)

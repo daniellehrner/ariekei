@@ -342,7 +342,9 @@ fn term_detach(state: State<'_, AppState>, id: i64, view: u32) {
 
 #[tauri::command]
 fn term_write(state: State<'_, AppState>, id: i64, data: String) -> Res<()> {
-    state.terminals.write(&id.to_string(), data.as_bytes())
+    let key = id.to_string();
+    state.terminals.typed(&key, data.as_bytes());
+    state.terminals.write(&key, data.as_bytes())
 }
 
 #[tauri::command]
@@ -634,6 +636,7 @@ pub fn run() {
                     .map(|a| a.split_whitespace().map(str::to_owned).collect())
                     .unwrap_or_default(),
                 idle_after: Duration::from_secs(env_secs("ARIEKEI_IDLE_SECS", 15 * 60)),
+                quiet_after: Duration::from_secs(env_secs("ARIEKEI_QUIET_SECS", 30)),
                 env: vec![],
             });
             match &launch {

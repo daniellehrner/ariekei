@@ -4,10 +4,12 @@
 
 """A stand-in for `claude`, for E2E tests (point ARIEKEI_CLAUDE at this file).
 
-A minimal terminal agent that reports through the hooks of `--settings` like Claude Code does (UserPromptSubmit, PermissionRequest, PostToolUse, Stop, SessionEnd):
+A minimal terminal agent that reports through the hooks of `--settings` like Claude Code does (UserPromptSubmit, PreToolUse, PermissionRequest, PostToolUse, Stop, SessionEnd), with its spinner redrawn while it works:
 - a `❯` prompt with "? for shortcuts", and `/code-review` offered while a `/` command is typed;
 - "Append a line with the word W to F, then commit with the message 'M'" asks permission to
-  run git (Enter allows), then appends, commits and finishes the turn;
+  run git (Enter allows; Esc says No, which ends the turn with no hook, as in Claude Code), then
+  appends, commits and finishes the turn;
+- "Run a N second job" asks permission to run it (likewise), then works for N seconds;
 - "Open a pull request titled 'T'" pushes the branch and opens the PR, "Open an issue titled
   'T'" opens the issue (both through $ARIEKEI_GH, the fake gh), reporting them as the
   `gh pr create` / `gh issue create` Bash call it stands for, with the URL it printed;
@@ -184,10 +186,34 @@ def interactive(argv):
         keys.restore()
 
 
+def busy(seconds):
+    """Waits as a working Claude Code does: redrawing its spinner and timer all the while."""
+    start = time.monotonic()
+    frames = "·✢✳✶✻✽"
+    while (spent := time.monotonic() - start) < seconds:
+        out(f"\r\x1b[2K{frames[int(spent * 5) % len(frames)]} Working… ({int(spent)}s · esc to interrupt)")
+        time.sleep(min(0.2, seconds - spent))
+    out("\r\x1b[2K")
+
+
+def allowed(command, hook, keys):
+    """Asks to run `command` as Claude Code does (PreToolUse, then PermissionRequest) and waits
+    for the answer: Enter allows. No (Esc) interrupts the turn, which Claude Code reports with
+    no hook at all."""
+    hook("PreToolUse", tool_name="Bash", tool_input={"command": command})
+    out(f"Bash({command})\n  Do you want to proceed?\n  ❯ 1. Yes\n    2. No\n")
+    hook("PermissionRequest", tool_name="Bash", tool_input={"command": command})
+    while (c := keys.read()) not in ("\r", "esc", "\x03", "\x04"):
+        pass
+    if c != "\r":
+        out("  ⎿  Interrupted · What should Claude do instead?\n")
+    return c == "\r"
+
+
 def turn(text, say, hook, keys):
     say(f"> {text}")
     hook("UserPromptSubmit", prompt=text)
-    time.sleep(0.8)  # a turn takes a moment, as the real one does
+    busy(0.8)  # a turn takes a moment, as the real one does
     task = re.search(r"word (\S+) to (\S+?),? then commit with the message '([^']+)'", text)
     create = re.search(r"open (a pull request|an issue) titled '([^']+)'", text, re.I)
     if create:
@@ -211,16 +237,9 @@ def turn(text, say, hook, keys):
     elif task:
         word, path, message = task.groups()
         command = f"git commit -am '{message}'"
-        out(f"Bash({command})\n  Do you want to proceed?\n  ❯ 1. Yes\n    2. No\n")
-        hook("PermissionRequest", tool_name="Bash", tool_input={"command": command})
-        while (c := keys.read()) not in ("\r", "esc", "\x03", "\x04"):
-            pass
-        if c != "\r":
-            say("Not run.")
-            hook("Stop")
+        if not allowed(command, hook, keys):
             return
-        hook("PreToolUse", tool_name="Bash", tool_input={"command": command})
-        time.sleep(0.8)
+        busy(0.8)
         with open(path, "a", encoding="utf-8") as f:
             f.write(word + "\n")
         git = ["git", "-c", "user.name=agent", "-c", "user.email=agent@example.com", "-c", "commit.gpgsign=false"]
@@ -235,11 +254,19 @@ def turn(text, say, hook, keys):
         threading.Thread(target=proc.wait, daemon=True).start()  # reaped when it ends, as Claude Code does
         hook("PostToolUse", tool_name="Bash", tool_input={"command": command, "run_in_background": True})
         say(f"⏺ Started {command} in the background")
+    elif job := re.search(r"(\d+) second job", text):
+        command = f"sleep {job.group(1)}"
+        if not allowed(command, hook, keys):
+            return
+        busy(int(job.group(1)))
+        hook("PostToolUse", tool_name="Bash", tool_input={"command": command})
+        say(f"⏺ Ran {command}")
     elif "ask" in text:
         command = "./gradlew :ethereum:eth:test --tests '*SnapSync*'"
+        hook("PreToolUse", tool_name="Bash", tool_input={"command": command})
         out(f"Bash({command})\n  Do you want to proceed?\n  ❯ 1. Yes\n    2. No\n")
         hook("PermissionRequest", tool_name="Bash", tool_input={"command": command})
-        return  # waits like the real one; the next prompt goes on
+        return  # waits; unlike the real one, the next prompt goes on
     else:
         say("⏺ Done.")
     hook("Stop")
