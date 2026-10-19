@@ -12,7 +12,7 @@ How the review view works, and the research it is based on.
 - **Noise and layout:** ignore whitespace (`w`, whitespace-only files labelled), unified or
   side-by-side (`u`; unified by default when the diff column is under 880 px, and always for an
   added or deleted file), syntax highlighting for any language, git-exact hunks, unchanged code
-  collapsed; the Inbox and the file panel collapse (below a 1200 px window the Inbox steps aside
+  collapsed, long lines scrolled sideways by a scrollbar pinned in view; the Inbox and the file panel collapse (below a 1200 px window the Inbox steps aside
   by itself once the file panel opens).
 - **Keys:** `n`/`p` next/previous change (the change you are on is marked in the gutter;
   past a file's last change `n` goes on to the next file's first one, `p` back to the previous

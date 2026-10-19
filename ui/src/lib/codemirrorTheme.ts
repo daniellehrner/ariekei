@@ -9,7 +9,14 @@ import { tags as t } from "@lezer/highlight";
 
 export const ariekeiTheme = EditorView.theme({
   "&": { backgroundColor: "var(--surface-editor)", color: "var(--text)", fontSize: "var(--fs-code)" },
-  ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "var(--lh-code)" },
+  // Its own horizontal scrollbar would sit below the last line: hscroll.ts pins one in view.
+  ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "var(--lh-code)", scrollbarWidth: "none" },
+  ".cm-scroller::-webkit-scrollbar": { display: "none" },
+  ".ak-hscroll": { minHeight: "12px", overflowX: "auto", overflowY: "hidden", backgroundColor: "var(--surface-editor)" },
+  ".ak-hscroll > div": { height: "1px" },
+  ".cm-panels": { backgroundColor: "var(--surface-2)", color: "var(--text)" },
+  ".cm-panels-bottom": { borderTop: "none" },
+  ".cm-panels-bottom .cm-search": { borderTop: "1px solid var(--border)" },
   ".cm-content": { caretColor: "var(--you)" },
   ".cm-cursor, .cm-dropCursor": { borderLeft: "2px solid var(--you)" },
   // The selection is drawn above the text, as a tint: below it, the changed lines' backgrounds

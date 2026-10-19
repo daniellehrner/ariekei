@@ -62,6 +62,8 @@ def branch(upstream, name, number, edit):
 upstream, clone = os.path.join(work, "github-proj"), os.path.join(work, "proj")
 subprocess.run(["git", "init", "-q", "-b", "main", upstream], check=True)
 lines = [f"line{i}" for i in range(1, 13)]
+# A line wider than the diff pane (the pinned scrollbar).
+lines[11] = "line12 " + "wide " * 80
 write(os.path.join(upstream, "a.txt"), "\n".join(lines) + "\n")
 write(os.path.join(upstream, "w.txt"), "keep\n")
 d_lines = [f"d{i}" for i in range(1, 7)]
@@ -74,7 +76,8 @@ sha42 = branch(upstream, "feature/x", 42, lambda: (
 sha43 = branch(upstream, "feature/y", 43, lambda: (
     write(os.path.join(upstream, "a.txt"), "\n".join(lines[:9] + ["line10 changed"] + lines[10:]) + "\n"),
     write(os.path.join(upstream, "b.txt"), "new file\n"),
-    write(os.path.join(upstream, "c.rs"), "fn main() {\n    let answer = 42; // highlighted\n}\n"),
+    write(os.path.join(upstream, "c.rs"), "fn main() {\n    let answer = 42; // highlighted\n    // " + "wide " * 80 + "\n"
+          + "    let x = 0;\n" * 120 + "}\n"),
     os.makedirs(os.path.join(upstream, "tests"), exist_ok=True),
     write(os.path.join(upstream, "tests", "parser_test.rs"), "#[test]\nfn parses() {}\n"),
     write(os.path.join(upstream, "Cargo.lock"), "# generated\n"),
@@ -302,8 +305,28 @@ try:
     lig = s.js("const st = getComputedStyle(document.querySelector('.diff .cm-line')); return [st.fontVariantLigatures, st.fontFeatureSettings]")
     print("[review] code ligatures:", lig)
     check("the diff draws no ligatures", lig[0] == "none" and '"calt" 0' in lig[1], lig)
+    # Lines wider than the pane: a scrollbar pinned to the bottom of the visible diff (the
+    # editor's own sits below its last line), which scrolls the code.
+    bar = eventually("a wide file shows the pinned scrollbar", lambda: s.js("""
+        const d = document.querySelector('.diff').getBoundingClientRect(), bars = [...document.querySelectorAll('.diff .ak-hscroll')];
+        const ed = document.querySelector('.diff .cm-editor').getBoundingClientRect();
+        return bars.map((b) => { const r = b.getBoundingClientRect(); return [!b.hidden, r.bottom <= d.bottom + 1, ed.bottom > d.bottom + 100]; });"""),
+        lambda v: v == [[True, True, True]], timeout=10)
+    print("[hscroll] c.rs bar shown, in view, editor taller than the diff:", bar)
+    scrolled = s.js("""const bar = document.querySelector('.diff .ak-hscroll'); bar.scrollLeft = 80;
+        bar.dispatchEvent(new Event('scroll')); await new Promise((r) => setTimeout(r, 50));
+        const diff = document.querySelector('.diff');
+        return [document.querySelector('.diff .cm-scroller').scrollLeft, diff.scrollWidth <= diff.clientWidth];""")
+    print("[hscroll] code scrollLeft after the bar's, the diff itself not wider:", scrolled)
+    check("the pinned scrollbar scrolls the code, not the diff", scrolled == [80, True], scrolled)
+    s.click(s.wait(".files [data-file='b.txt']"))
+    wait_new_side(s, 1)
+    eventually("a file whose lines fit shows no scrollbar",
+               lambda: s.js("return [...document.querySelectorAll('.diff .ak-hscroll')].map((b) => b.hidden)"), lambda v: v == [True], timeout=10)
     s.click(s.wait(".files [data-file='a.txt']"))
     wait_new_side(s, 10)
+    eventually("side by side, each pane has its pinned scrollbar",
+               lambda: s.js("return [...document.querySelectorAll('.diff .ak-hscroll')].map((b) => b.hidden)"), lambda v: v == [False, False], timeout=10)
     # A selection shows on changed lines too: it is drawn above their background.
     select_lines(s, 10, 10)
     # CodeMirror draws the selection layer in its next measure cycle, so wait for it.

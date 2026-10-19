@@ -303,6 +303,8 @@ whitespace changed, and a small blue square if you have draft comments on it.
 - Hide or show whitespace changes (**w**).
 - Syntax highlighting for any language; unchanged code is collapsed. Code is shown as written
   (no font ligatures, so `->` or `<=` never turn into arrows).
+- Long lines are not wrapped: a horizontal scrollbar stays at the bottom of the visible diff
+  (one per side, side by side) while the line numbers stay put.
 - **n** / **p** jump to the next or previous change. Past a file's last change, **n** goes on
   to the next file's first one, and **p** back to the previous file's last one (files in
   folded groups are skipped). At either end of the scope a note by the change says there is no

@@ -46,6 +46,7 @@
   import { currentChange } from "./lib/currentChange";
   import { draftLines, draftMarks, setDraftLines } from "./lib/draftMarks";
   import { gitOverride } from "./lib/gitDiff";
+  import { hscroll } from "./lib/hscroll";
   import { externalLinks } from "./lib/html";
   import { isTyping } from "./lib/keys";
   import { shortcuts } from "./lib/layout.svelte";
@@ -241,7 +242,7 @@
     }
     host.textContent = "";
     if (onlyWhitespace) return land();
-    const common: Extension[] = [basicSetup, ...lang, ariekeiTheme, syntaxHighlighting(ariekeiHighlight)];
+    const common: Extension[] = [basicSetup, ...lang, ariekeiTheme, syntaxHighlighting(ariekeiHighlight), hscroll];
     const onUpdate = EditorView.updateListener.of((u) => {
       if (u.docChanged) {
         editedPath = path;
@@ -1019,6 +1020,10 @@
   .diff:focus-within { box-shadow: inset 0 0 0 1px var(--focus-soft); }
   .diff :global(.cm-editor) { font-size: var(--fs-code); }
   .diff :global(.cm-editor.cm-focused) { outline: none; }
+  /* Side by side, the panes must not be scroll containers: the diff is, and the editors'
+     bottom panels (the pinned scrollbar, hscroll.ts) stick to it. */
+  .diff :global(.cm-mergeView) { overflow: visible; }
+  .diff :global(.cm-mergeViewEditor) { overflow: visible; min-width: 0; }
   .ws-only { position: absolute; top: 120px; left: var(--sp-9); display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-3); }
   .ws-only strong { font-weight: var(--fw-semibold); }
 
