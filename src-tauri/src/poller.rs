@@ -219,6 +219,12 @@ pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), Stri
         .filter(|t| !known.contains(t))
         .collect();
     let others = github::pr_stamps(o, n, &tracked)?;
+    // Tracked items GitHub does not know any more (see `finish_gone`).
+    let mut gone: Vec<(&str, i64)> = tracked
+        .iter()
+        .filter(|t| !others.iter().any(|s| s.number == **t))
+        .map(|t| ("pr", *t))
+        .collect();
 
     let mut stamps: Vec<github::PrStamp> = vec![];
     for stamp in [mine, assigned, requested, reviewed, others]
@@ -281,10 +287,14 @@ pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), Stri
         .into_iter()
         .filter(|t| !assigned_numbers.contains(t) && !followed.contains(t))
         .collect();
-    let issues: Vec<_> = assigned
-        .into_iter()
-        .chain(github::issues_by_number(o, n, me, &tracked_issues)?)
-        .collect();
+    let by_number = github::issues_by_number(o, n, me, &tracked_issues)?;
+    gone.extend(
+        tracked_issues
+            .iter()
+            .filter(|t| !by_number.iter().any(|i| i.number == **t))
+            .map(|t| ("issue", *t)),
+    );
+    let issues: Vec<_> = assigned.into_iter().chain(by_number).collect();
 
     let polled: Vec<PolledPr> = prs
         .iter()
@@ -308,6 +318,7 @@ pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), Stri
         }))
         .collect();
     state.store.sync_found(repo.id, &polled, &cut_short)?;
+    finish_gone(state, &before, &gone)?;
 
     for item in state.store.items(repo.id)? {
         // Not in the Inbox (cleaned up, or marked done, and nothing brought it back): its
@@ -339,6 +350,31 @@ pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), Stri
         }
     }
     crate::lifecycle::after_poll(state, repo)?;
+    Ok(())
+}
+
+/// Tracked items that GitHub does not know any more (`gone`: kind and number), e.g. an issue
+/// deleted or moved to another repository, are finished: else one with a worktree would stay
+/// in the Inbox as open on GitHub but not found, for no reason the user can see. Said once,
+/// then cleaned up like a closed one.
+fn finish_gone(
+    state: &crate::AppState,
+    before: &[crate::store::WorkItem],
+    gone: &[(&str, i64)],
+) -> Result<(), String> {
+    for item in before
+        .iter()
+        .filter(|i| gone.contains(&(i.kind.as_str(), i.number)))
+        .filter(|i| i.snapshot["state"].as_str().unwrap_or("OPEN") == "OPEN")
+    {
+        state.store.mark_gone(item.id)?;
+        crate::notify::lifecycle(
+            state,
+            &item.id.to_string(),
+            &item.label(),
+            "It is gone from GitHub (deleted, or moved to another repository), so it is finished.",
+        );
+    }
     Ok(())
 }
 
@@ -590,6 +626,41 @@ mod tests {
             let rows = app.rows();
             assert_eq!(rows.iter().filter(|r| r.kind == "pr").count(), 130);
             assert_eq!(rows.iter().filter(|r| r.kind == "issue").count(), 60);
+        }
+
+        #[test]
+        fn a_tracked_issue_gone_from_github_is_finished_and_says_why() {
+            let app = TestApp::new();
+            app.add_issue(json!({"number": 6, "title": "Moved", "assigned": true}));
+            app.add_issue(json!({"number": 7, "title": "Deleted", "assigned": true}));
+            app.poll().unwrap();
+            // Opened, then Start working, as in the UI.
+            let wt = |n| {
+                let id = app.item(n).id;
+                crate::workitem::mark_seen(&app.state, id).unwrap();
+                crate::workitem::prepare(&app.state, id).unwrap().path
+            };
+            let (moved, deleted) = (wt(6), wt(7));
+            crate::testkit::write(&deleted.join("x.txt"), "not committed\n");
+            app.remove("issues", 6);
+            app.remove("issues", 7);
+            app.poll().unwrap();
+            app.poll().unwrap();
+            let mut gone: Vec<String> = app
+                .events
+                .notices()
+                .into_iter()
+                .filter(|(_, _, body)| body.starts_with("It is gone from GitHub"))
+                .map(|(_, title, _)| title)
+                .collect();
+            gone.sort();
+            assert_eq!(gone, ["#6 Moved", "#7 Deleted"], "told once each");
+            assert!(!moved.exists() && app.item(6).hidden, "cleaned up");
+            assert!(deleted.exists());
+            assert_eq!(
+                app.row(7).and_then(|r| r.attention),
+                Some("finished, cleanup blocked")
+            );
         }
 
         #[test]

@@ -62,8 +62,9 @@ PRs and issues, or be thrown away.
 
 ## Cleanup
 
-- **Automatic** when GitHub reports the PR merged/closed (or the issue closed), and **Done**
-  (header button, with confirmation) at any time.
+- **Automatic** when GitHub reports the PR merged/closed (or the issue closed), or no longer
+  knows an item Ariekei follows by number (deleted, or an issue moved to another repository;
+  a notice says so), and **Done** (header button, with confirmation) at any time.
 - Refused while anything would be lost, with the reasons shown on the item and in the Inbox
   ("finished, cleanup blocked"):
   - uncommitted changes, including untracked files (listed);

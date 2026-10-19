@@ -481,7 +481,8 @@ Inbox shows **All closed** and a notice suggests marking it done.
 Items are cleaned up:
 
 - **automatically** when GitHub reports the PR merged or closed, or the issue closed (never
-  just because a PR dropped out of a search result), and
+  just because a PR dropped out of a search result), or when an item you opened is gone from
+  GitHub (deleted, or moved to another repository; a notice says so), and
 - **on Done**, at any time, after you confirm (**Clean up**).
 
 Cleanup is **refused while anything would be lost**. The reasons are shown on the item, and a

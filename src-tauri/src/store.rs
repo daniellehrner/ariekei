@@ -641,6 +641,12 @@ impl Store {
         self.update(id, "cleanup_blockers = ?2", value)
     }
 
+    /// Item `id` is gone from GitHub (deleted, or moved to another repository): it counts as
+    /// closed.
+    pub fn mark_gone(&self, id: i64) -> Result<(), String> {
+        self.update(id, "snapshot = json_set(snapshot, '$.state', ?2)", "CLOSED")
+    }
+
     /// After cleanup: forget the worktree and agent session, and hide the item.
     pub fn mark_cleaned(&self, id: i64) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
