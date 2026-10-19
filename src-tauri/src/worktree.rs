@@ -113,17 +113,17 @@ fn fetch(repo: &Path, remote: &str, branch: &str) -> Result<String, String> {
 /// An existing worktree for the branch `tracking`: its branch tracks it, is `own` (the
 /// item's own name, e.g. `pr-<N>`), or is `plain` (the remote's branch name) with no
 /// upstream. The main checkout counts too (git checks a branch out in one place only), unless
-/// it is on `base`, the branch everything starts from.
+/// it is on `base`, the branch everything starts from (`None`: the work is on that branch).
 fn find_existing(
     repo: &Path,
     own: &str,
     plain: &str,
     tracking: &str,
-    base: &str,
+    base: Option<&str>,
 ) -> Result<Option<git::Worktree>, String> {
     Ok(git::worktrees(repo)?
         .into_iter()
-        .filter(|w| w.path.exists() && !(w.main && w.branch.as_deref() == Some(base)))
+        .filter(|w| w.path.exists() && !(w.main && base.is_some() && w.branch.as_deref() == base))
         .find(|w| {
             w.branch.as_deref().is_some_and(|b| {
                 b == own
@@ -314,7 +314,10 @@ pub fn prepare_task_on(
         }
     };
     let own = task_branch(n, title);
-    if let Some(w) = find_existing(&repo.path, &own, branch, &tracking, default_branch)? {
+    // A task on the default branch itself works in the clone if that is where it is.
+    let on_base = remote == repo.base_remote && branch == default_branch;
+    let base = (!on_base).then_some(default_branch);
+    if let Some(w) = find_existing(&repo.path, &own, branch, &tracking, base)? {
         return Ok(Prepared {
             path: w.path,
             branch: w.branch.unwrap_or_default(),
@@ -523,7 +526,7 @@ pub fn prepare(repo: &Repo, pr: &PrSummary) -> Result<Prepared, String> {
         &format!("pr-{}", pr.number),
         &pr.head_ref,
         &tracking,
-        &pr.base_ref,
+        Some(&pr.base_ref),
     )? {
         return Ok(Prepared {
             path: w.path,
@@ -970,5 +973,20 @@ mod tests {
         };
         let err = prepare(&repo, &from_main).unwrap_err();
         assert!(err.contains("is checked out in"), "{err}");
+    }
+
+    #[test]
+    fn a_task_on_the_default_branch_works_in_the_clone_on_it() {
+        let (_root, repo, _) = setup();
+        let main = BranchRef {
+            owner: "owner".into(),
+            repo: "proj".into(),
+            branch: "main".into(),
+        };
+        let p = prepare_task_on(&repo, 1, "", &main, "main").unwrap();
+        assert_eq!(
+            (canon(&p.path), p.branch.as_str(), p.adopted),
+            (canon(&repo.path), "main", true)
+        );
     }
 }

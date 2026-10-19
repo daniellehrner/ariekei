@@ -551,8 +551,12 @@ fn polled_pr(repo: &Repo, number: i64) -> Result<PolledPr, String> {
 
 /// The branch the item's worktree is on instead of the item's (`""`: a detached HEAD), if
 /// it was switched. Mostly the user's own checkout, which Ariekei adopts but the user also
-/// works in.
+/// works in. Not once the PR or issue is finished: its branch is done with (often the agent
+/// that merged it switched back to the base branch).
 pub fn moved_to(item: &WorkItem) -> Option<String> {
+    if !item.open {
+        return None;
+    }
     let dir = item.worktree_path.as_deref().filter(|p| p.exists())?;
     let branch = item.branch.as_deref().filter(|b| !b.is_empty())?;
     let now = git::current_branch(dir).ok()?.unwrap_or_default();
@@ -1363,6 +1367,15 @@ mod tests {
         // Switched away: the agent gets nothing until it is back.
         git(&app.clone, &["checkout", "-q", "main"]);
         assert_eq!(moved_to(&item).as_deref(), Some("main"));
+        let finished = WorkItem {
+            open: false,
+            ..item.clone()
+        };
+        assert_eq!(
+            moved_to(&finished),
+            None,
+            "a finished item's branch is done with"
+        );
         let err = session_plan(&app.state, &app.state.data_dir, id).unwrap_err();
         assert!(err.contains("is on main now, not on feat/evm"), "{err}");
 

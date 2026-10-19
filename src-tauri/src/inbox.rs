@@ -61,11 +61,12 @@ pub struct Row {
 /// Rank of the row's most urgent reason; lower is more urgent.
 fn attention(row: &Row) -> (u8, Option<&'static str>) {
     use AgentStatus::*;
-    if !row.open && row.cleanup_blockers.is_none() {
-        return (7, None);
-    }
+    // Also on a finished item: its cleanup waits for the agent's turn.
     if row.agent == Some(WaitingForPermission) {
         return (0, Some("agent needs you"));
+    }
+    if !row.open && row.cleanup_blockers.is_none() {
+        return (7, None);
     }
     // Only a finished item waits for its cleanup; an open one whose Done was refused shows
     // the reasons on the item, and its other states still count.

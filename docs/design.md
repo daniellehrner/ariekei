@@ -79,7 +79,8 @@ told apart in grey-scale and with colour blindness:
   "Answer in Terminal". Below a 1200 px window the command wraps instead of being cut.
 - When the agent's worktree is on another branch than the item's (it may be the user's own
   checkout), a red banner says so, the terminal is dimmed and inert, and every way to send the
-  agent work is disabled with that reason.
+  agent work is disabled with that reason. Not for a merged or closed item: its branch is done
+  with.
 - Lifecycle notes ("Created the worktree …") are one line and go after six seconds.
 - Done asks with a neutral (amber) confirm: it only cleans up what is safe. Discard is a quiet
   button and asks with a red confirm, listing what would be lost.

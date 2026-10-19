@@ -68,8 +68,10 @@ PRs and issues, or be thrown away.
   - uncommitted changes, including untracked files (listed);
   - commits that are neither on a remote branch nor in GitHub's copy of the PR head
     (`refs/pull/<N>/head`, fetched before the check, so squash-merged PRs with deleted
-    branches are recognised);
-  - an agent in the middle of a turn.
+    branches are recognised).
+- Waits while the agent is in the middle of a turn (working, or waiting for permission): not a
+  blocker, nothing is recorded or told; the first poll after the turn cleans up, and Done is
+  refused until then.
 - Removes: the agent process; its Claude session transcript (and subagent transcripts); the
   worktree and its branch **if Ariekei created them** (`git worktree remove` without `--force`,
   so git refuses too if something changed); `refs/ariekei/pull/<N>/head`; the context file; the Inbox entry (hidden; opening the PR

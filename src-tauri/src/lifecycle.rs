@@ -20,16 +20,19 @@ use crate::worktree;
 use serde::Serialize;
 use std::path::Path;
 
+/// Item `id`'s agent is in the middle of a turn (working, or waiting for permission): its
+/// cleanup waits.
+fn busy(state: &AppState, id: i64) -> bool {
+    matches!(
+        state.terminals.status(&id.to_string()),
+        Some(AgentStatus::Working | AgentStatus::WaitingForPermission)
+    )
+}
+
 /// Why the item cannot be cleaned up without losing something; empty if it can. A worktree
 /// Ariekei adopted (e.g. the user's own checkout) is kept, so what is in it is not lost.
-pub fn blockers(repo: &Repo, item: &WorkItem, agent: Option<AgentStatus>) -> Vec<String> {
+pub fn blockers(repo: &Repo, item: &WorkItem) -> Vec<String> {
     let mut found = vec![];
-    if matches!(
-        agent,
-        Some(AgentStatus::Working | AgentStatus::WaitingForPermission)
-    ) {
-        found.push("The agent is in the middle of a turn".to_owned());
-    }
     let Some(dir) = item
         .worktree_path
         .as_deref()
@@ -107,14 +110,20 @@ pub enum Cleanup {
 }
 
 /// Cleans up item `id` if nothing would be lost; otherwise records and returns why not.
-/// A task is deleted afterwards (its PRs and issues stay, unlinked).
+/// A task is deleted afterwards (its PRs and issues stay, unlinked). Refused while its agent
+/// is in the middle of a turn.
 pub fn clean_up(state: &AppState, id: i64) -> Result<Cleanup, String> {
+    if busy(state, id) {
+        return Err(
+            "The agent is in the middle of a turn: press Done again once it has finished".into(),
+        );
+    }
     let item = state.store.item(id)?;
     let repo = state
         .store
         .repo(item.repo_id)?
         .ok_or("repository not found")?;
-    let found = blockers(&repo, &item, state.terminals.status(&id.to_string()));
+    let found = blockers(&repo, &item);
     if !found.is_empty() {
         state.store.set_cleanup_blockers(id, Some(&found))?;
         return Ok(Cleanup::Blocked { blockers: found });
@@ -136,7 +145,7 @@ pub fn discard_losses(state: &AppState, id: i64) -> Result<Vec<String>, String> 
         .store
         .repo(item.repo_id)?
         .ok_or("repository not found")?;
-    Ok(blockers(&repo, &item, None))
+    Ok(blockers(&repo, &item))
 }
 
 /// Deletes task `id` with its worktree and branch even if that loses work (the user
@@ -150,10 +159,7 @@ pub fn discard(state: &AppState, id: i64) -> Result<Cleanup, String> {
         .store
         .repo(item.repo_id)?
         .ok_or("repository not found")?;
-    if matches!(
-        state.terminals.status(&id.to_string()),
-        Some(AgentStatus::Working | AgentStatus::WaitingForPermission)
-    ) {
+    if busy(state, id) {
         return Ok(Cleanup::Blocked {
             blockers: vec!["The agent is in the middle of a turn".to_owned()],
         });
@@ -257,12 +263,7 @@ pub fn remove_repo(state: &AppState, id: i64) -> Result<(), String> {
     let items = state.store.items(id)?;
     let busy: Vec<String> = items
         .iter()
-        .filter(|item| {
-            matches!(
-                state.terminals.status(&item.id.to_string()),
-                Some(AgentStatus::Working | AgentStatus::WaitingForPermission)
-            )
-        })
+        .filter(|item| busy(state, item.id))
         .map(|item| item.title().to_owned())
         .collect();
     if !busy.is_empty() {
@@ -322,7 +323,8 @@ pub fn after_poll(state: &AppState, repo: &Repo) -> Result<(), String> {
         let state_on_github = item.snapshot["state"].as_str().unwrap_or("OPEN");
         let finished =
             !item.hidden && !item.is_task() && matches!(state_on_github, "MERGED" | "CLOSED");
-        if !finished {
+        // An agent in the middle of a turn loses nothing by waiting: a later poll cleans up.
+        if !finished || busy(state, item.id) {
             continue;
         }
         let had_blockers = item.cleanup_blockers.is_some();
@@ -521,7 +523,7 @@ mod tests {
     }
 
     #[test]
-    fn blocks_on_uncommitted_changes_unpushed_commits_and_a_busy_agent() {
+    fn blocks_on_uncommitted_changes_and_unpushed_commits() {
         let upstream = git_repo();
         let root = tempfile::tempdir().unwrap();
         let clone = root.path().join("c");
@@ -541,20 +543,19 @@ mod tests {
         let it = item(&clone);
 
         assert!(
-            blockers(&repo, &it, None).is_empty(),
+            blockers(&repo, &it).is_empty(),
             "a clean clone at origin/main loses nothing"
         );
-        assert_eq!(blockers(&repo, &it, Some(AgentStatus::Working)).len(), 1);
 
         std::fs::write(clone.join("new.txt"), "x").unwrap();
-        let b = blockers(&repo, &it, Some(AgentStatus::Finished));
+        let b = blockers(&repo, &it);
         assert!(
             b.len() == 1 && b[0].starts_with("1 uncommitted change: new.txt"),
             "{b:?}"
         );
 
         commit(&clone, "local work");
-        let b = blockers(&repo, &it, None);
+        let b = blockers(&repo, &it);
         assert!(
             b.len() == 1
                 && b[0].contains("1 commit is not on GitHub")
@@ -564,10 +565,7 @@ mod tests {
 
         git(&clone, &["push", "-q", "origin", "HEAD:refs/heads/feature"]).unwrap();
         git(&clone, &["fetch", "-q", "origin"]).unwrap();
-        assert!(
-            blockers(&repo, &it, None).is_empty(),
-            "pushed commits are safe"
-        );
+        assert!(blockers(&repo, &it).is_empty(), "pushed commits are safe");
     }
 
     #[test]
@@ -746,6 +744,35 @@ mod tests {
                     .iter()
                     .any(|(_, _, body)| body.starts_with("Cleaned up"))
             );
+        }
+
+        #[test]
+        fn a_merged_pr_waits_quietly_for_its_agents_turn() {
+            let app = TestApp::new();
+            let (id, wt) = app.pr_with_worktree(10, "feature/x");
+            app.start_agent(id);
+            app.state
+                .report(&id.to_string(), AgentStatus::Working, None);
+            let err = clean_up(&app.state, id).unwrap_err();
+            assert!(err.contains("middle of a turn"), "{err}");
+
+            // The agent merged it itself.
+            app.set("prs", 10, json!({"state": "MERGED"}));
+            app.poll().unwrap();
+            let item = app.state.store.item(id).unwrap();
+            assert!(wt.exists() && !item.hidden && item.cleanup_blockers.is_none());
+            assert!(
+                app.events
+                    .notices()
+                    .iter()
+                    .all(|(_, _, body)| !body.contains("kept so no work is lost")),
+                "nothing to tell"
+            );
+
+            app.state
+                .report(&id.to_string(), AgentStatus::Finished, None);
+            app.poll().unwrap();
+            assert!(!wt.exists() && app.state.store.item(id).unwrap().hidden);
         }
 
         #[test]

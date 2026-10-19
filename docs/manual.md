@@ -423,7 +423,8 @@ pushes only when you ask). Once pushed, a PR opened for it is linked to the task
 branch is neither on GitHub nor in your clone, no task is created.
 
 If the branch is already checked out, in another worktree or in your clone itself, the task
-works there instead of in a new worktree.
+works there instead of in a new worktree. That includes the default branch: a task on `main`
+works in your clone while it is on `main`.
 
 ### Your own checkout
 
@@ -435,7 +436,9 @@ made), it is still yours:
 - If you switch it to another branch, the item says so ("proj is on main now, not on
   feature-y"), its terminal is greyed out and takes no input, and nothing can be sent to the
   agent: its work would land on the other branch. Switch back and it carries on. Ariekei
-  notices when its window gets the focus again, or on the next poll.
+  notices when its window gets the focus again, or on the next poll. Once the PR is merged or
+  closed (or the issue closed), the switch no longer matters: an agent that merges its PR and
+  goes back to `main` is simply finished.
 
 ### PRs and issues from a task
 
@@ -474,10 +477,13 @@ finished item says "Cleanup blocked" in the Inbox:
 
 - uncommitted changes, including untracked files;
 - commits that are neither on a remote branch nor in GitHub's copy of the PR head (so
-  squash-merged PRs with deleted branches are recognised as safe);
-- an agent in the middle of a turn.
+  squash-merged PRs with deleted branches are recognised as safe).
 
 Commit and push, or discard the changes, then press **Done** again.
+
+Cleanup also waits for an agent in the middle of a turn, e.g. one that merged its own PR and
+is still wrapping up: the item is cleaned up on the first poll after the turn ends, and
+**Done** is refused until then.
 
 Cleanup removes the agent process and its Claude Code session transcript, the worktree and its
 branch **if Ariekei created them** (worktrees Ariekei adopted are only detached), Ariekei's ref
