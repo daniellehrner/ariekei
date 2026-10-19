@@ -657,7 +657,7 @@ pub fn run() {
                 extra_args: std::env::var("ARIEKEI_CLAUDE_ARGS")
                     .map(|a| a.split_whitespace().map(str::to_owned).collect())
                     .unwrap_or_default(),
-                idle_after: Duration::from_secs(env_secs("ARIEKEI_IDLE_SECS", 15 * 60)),
+                idle_after: Duration::from_secs(env_secs("ARIEKEI_IDLE_SECS", 45 * 60)),
                 quiet_after: Duration::from_secs(env_secs("ARIEKEI_QUIET_SECS", 30)),
                 claude_dir: claude::config_dir(),
                 env: vec![],

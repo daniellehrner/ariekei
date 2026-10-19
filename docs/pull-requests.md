@@ -50,7 +50,7 @@ tasks and cleanup: [lifecycle.md](lifecycle.md). The review view in detail:
   others are listed in the review text, and the panel says which is which.
 - **Switching and resume:** each item's tab, review scope, selected file and pending comments are
   stored with the item. Terminals keep running while you look at other items. A terminal nobody
-  looks at whose agent has been waiting for 15 minutes is closed, unless the agent still runs
+  looks at whose agent has been waiting for 45 minutes is closed, unless the agent still runs
   processes of its own (e.g. background shells, which would end with it and which resuming does
   not restart); opening the item resumes the conversation (`--resume`). Restarting the app does
   the same.

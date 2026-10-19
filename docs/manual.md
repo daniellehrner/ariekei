@@ -275,7 +275,7 @@ crash also brings a notice when you are not looking at the item.
 ### Switching items and restarting
 
 Terminals keep running while you look at other items. A terminal nobody looks at whose agent
-has been waiting for 15 minutes is closed, unless the agent still runs processes of its own
+has been waiting for 45 minutes is closed, unless the agent still runs processes of its own
 (e.g. shells it started in the background, which would end with it); opening the item again
 resumes the conversation. Restarting Ariekei does the same: conversations continue where they
 were.
