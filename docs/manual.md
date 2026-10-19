@@ -660,8 +660,9 @@ activity, a grey bar for lifecycle news.
   or `gh` is not logged in.
 - **"Could not refresh from GitHub"**: check `gh auth status` and your network. If GitHub's API
   budget is used up, the Inbox says so and waits for the reset. A repository renamed or moved
-  to another owner on GitHub is followed by itself; one that is gone (deleted, or you lost
-  access) is named in the error.
+  to another owner on GitHub is followed by itself, and your clone's remote is pointed at the
+  new name (GitHub redirects the old one only until another repository takes it); one that is
+  gone (deleted, or you lost access) is named in the error.
 - **The agent exits immediately on a new repository**: Claude Code's trust prompt preselects
   "No, exit". Press **Start again** in its terminal and choose to trust the folder.
 - **The agent's status never changes from Ready**: Claude Code runs no hooks for it, e.g. with

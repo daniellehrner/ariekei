@@ -414,6 +414,15 @@ pub fn poll_following_moves(
         {
             tracing::info!("{}/{} is {owner}/{name} now", repo.owner, repo.name);
             state.store.set_slug(repo.id, &owner, &name)?;
+            let old = (repo.owner.as_str(), repo.name.as_str());
+            if let Err(e) =
+                crate::git::follow_rename(&repo.path, &repo.base_remote, old, &owner, &name)
+            {
+                tracing::warn!(
+                    "could not point {} at {owner}/{name}: {e}",
+                    repo.base_remote
+                );
+            }
             poll(
                 state,
                 &Repo {
@@ -597,7 +606,7 @@ mod tests {
 
     mod with_app {
         use super::super::*;
-        use crate::testkit::TestApp;
+        use crate::testkit::{TestApp, git};
         use serde_json::json;
 
         /// The PR numbers a poll fetched the details of.
@@ -703,11 +712,26 @@ mod tests {
             let mut data = app.data();
             data["full_name"] = json!("new-owner/proj-next");
             app.set_data(&data);
+            // GitHub's new URL leads to the same repo.
+            git(
+                &app.clone,
+                &[
+                    "config",
+                    "--add",
+                    &format!("url.{}.insteadOf", app.upstream.to_string_lossy()),
+                    "git@github.com:new-owner/proj-next.git",
+                ],
+            );
             poll_following_moves(&app.state, &app.repo, false).unwrap();
             let repo = app.state.store.repo(app.repo.id).unwrap().unwrap();
             assert_eq!(
                 (repo.owner.as_str(), repo.name.as_str()),
                 ("new-owner", "proj-next")
+            );
+            assert_eq!(
+                git(&app.clone, &["config", "--get", "remote.origin.url"]),
+                "git@github.com:new-owner/proj-next.git",
+                "the clone's remote follows"
             );
             assert!(crate::workitem::inbox(&app.state, Some(repo)).unwrap()[0].number == 7);
 

@@ -45,6 +45,41 @@ pub fn github_slug(url: &str) -> Option<(String, String)> {
         .then(|| (owner.to_owned(), name.to_owned()))
 }
 
+/// `url` pointed at `owner/name` when it is the GitHub URL of `old` (`owner/name` as it was),
+/// in the same form (ssh or https, with or without `.git`); `None` for any other URL.
+pub fn renamed_url(url: &str, old: (&str, &str), owner: &str, name: &str) -> Option<String> {
+    let (o, n) = github_slug(url)?;
+    if !(o.eq_ignore_ascii_case(old.0) && n.eq_ignore_ascii_case(old.1)) {
+        return None;
+    }
+    let at = url.find(&format!("{o}/{n}"))?;
+    let rest = &url[at + o.len() + 1 + n.len()..];
+    Some(format!("{}{owner}/{name}{rest}", &url[..at]))
+}
+
+/// Points `remote` (its URL and push URL) at GitHub's `owner/name` where it names the repo's
+/// old slug `old`: GitHub redirects the old one only until a new repo takes that name.
+pub fn follow_rename(
+    repo: &Path,
+    remote: &str,
+    old: (&str, &str),
+    owner: &str,
+    name: &str,
+) -> Result<(), String> {
+    for key in [
+        format!("remote.{remote}.url"),
+        format!("remote.{remote}.pushurl"),
+    ] {
+        let Ok(url) = git_str(repo, &["config", "--get", &key]) else {
+            continue;
+        };
+        if let Some(new) = renamed_url(&url, old, owner, name) {
+            git(repo, &["config", &key, &new])?;
+        }
+    }
+    Ok(())
+}
+
 /// `(name, url)` of every remote, as configured (`insteadOf` rewrites not applied, so a
 /// GitHub URL stays recognizable).
 pub fn remotes(repo: &Path) -> Result<Vec<(String, String)>, String> {
@@ -701,6 +736,25 @@ pub mod tests {
         assert_eq!(github_slug("ssh://git@github.com/a/b.git/"), o("a", "b"));
         assert_eq!(github_slug("git@gitlab.com:a/b.git"), None);
         assert_eq!(github_slug("https://github.com/a"), None);
+    }
+
+    #[test]
+    fn a_renamed_repo_s_url_keeps_its_form() {
+        let renamed = |url: &str| renamed_url(url, ("Owner", "proj"), "new-owner", "proj-next");
+        assert_eq!(
+            renamed("git@github.com:owner/proj.git").as_deref(),
+            Some("git@github.com:new-owner/proj-next.git")
+        );
+        assert_eq!(
+            renamed("https://github.com/owner/proj").as_deref(),
+            Some("https://github.com/new-owner/proj-next")
+        );
+        assert_eq!(
+            renamed("ssh://git@github.com/owner/proj.git/").as_deref(),
+            Some("ssh://git@github.com/new-owner/proj-next.git/")
+        );
+        assert_eq!(renamed("git@github.com:friend/proj.git"), None, "a fork");
+        assert_eq!(renamed("/srv/git/proj.git"), None);
     }
 
     #[test]
