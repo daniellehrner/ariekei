@@ -6,10 +6,9 @@
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub fn git(cwd: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    let out = Command::new("git")
+    let out = crate::tools::quiet("git")
         .arg("-C")
         .arg(cwd)
         .args(args)

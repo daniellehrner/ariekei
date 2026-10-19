@@ -6,8 +6,9 @@
 //! not honour the script's `#!` line. `ARIEKEI_PYTHON` names the interpreter (default
 //! `python3`).
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
+use std::process::Command;
 
 /// The program to start for `path`, and the arguments that go before the caller's.
 pub fn program(path: &Path) -> (OsString, Vec<OsString>) {
@@ -19,10 +20,24 @@ pub fn program(path: &Path) -> (OsString, Vec<OsString>) {
     }
 }
 
-/// A `Command` for `path` (see [`program`]).
-pub fn command(path: &Path) -> std::process::Command {
+/// A `Command` that opens no window: on Windows a console program (git, gh, Python) started
+/// by Ariekei, a GUI app, would get a console window of its own, which takes the focus too.
+pub fn quiet(program: impl AsRef<OsStr>) -> Command {
+    #[allow(unused_mut)] // changed on Windows only
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
+/// A `Command` for `path` (see [`program`]), with no window (see [`quiet`]).
+pub fn command(path: &Path) -> Command {
     let (program, prefix) = program(path);
-    let mut cmd = std::process::Command::new(program);
+    let mut cmd = quiet(program);
     cmd.args(prefix);
     cmd
 }

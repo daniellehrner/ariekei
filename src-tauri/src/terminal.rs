@@ -127,6 +127,9 @@ pub struct TerminalManager {
     /// Why terminals cannot start (e.g. `claude` not found), reported on open.
     launch: Result<Launch, String>,
     terms: Mutex<HashMap<String, Arc<Term>>>,
+    /// Held while an item's terminal opens: a second open of the same item (two views mounted
+    /// at once) waits, then shows the agent the first one started instead of starting another.
+    opening: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
 
 /// Arguments for `claude`: resume the item's conversation or start one under a session
@@ -186,6 +189,7 @@ impl TerminalManager {
             me: me.clone(),
             launch,
             terms: Mutex::default(),
+            opening: Mutex::default(),
         });
         if let Ok(launch) = manager.launch.as_ref() {
             let (idle_after, quiet_after) = (launch.idle_after, launch.quiet_after);
@@ -362,6 +366,14 @@ impl TerminalManager {
         size: PtySize,
         view: Channel<InvokeResponseBody>,
     ) -> Result<Opened, String> {
+        let gate = self
+            .opening
+            .lock()
+            .unwrap()
+            .entry(key.to_owned())
+            .or_default()
+            .clone();
+        let _one_at_a_time = gate.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(term) = self.terms.lock().unwrap().get(key).cloned() {
             let mut out = term.output.lock().unwrap();
             let replay: Vec<u8> = out.scrollback.iter().copied().collect();
@@ -758,6 +770,44 @@ mod tests {
                 .send_to_agent(&key, "hello", Duration::ZERO)
                 .unwrap_err();
             assert!(err.contains("not running"), "{err}");
+        }
+
+        #[test]
+        fn two_views_opened_at_once_share_one_agent() {
+            let app = TestApp::new();
+            let task = create_task(&app.state, Some(app.repo.clone()), "Twice", "", "").unwrap();
+            let key = task.to_string();
+            let item = app.state.store.item(task).unwrap();
+            let cwd = item.worktree_path.clone().unwrap();
+            let opened: Vec<Opened> = std::thread::scope(|s| {
+                let open = || {
+                    app.state
+                        .terminals
+                        .open(
+                            &key,
+                            &item.label(),
+                            &cwd,
+                            || {
+                                // As slow as a first start that writes the agent's context.
+                                std::thread::sleep(Duration::from_millis(200));
+                                crate::workitem::session_plan(&app.state, &app.state.data_dir, task)
+                            },
+                            PtySize::default(),
+                            tauri::ipc::Channel::new(|_| Ok(())),
+                        )
+                        .unwrap()
+                };
+                let (a, b) = (s.spawn(open), s.spawn(open));
+                vec![a.join().unwrap(), b.join().unwrap()]
+            });
+            let started = app
+                .events
+                .take()
+                .iter()
+                .filter(|e| **e == Sent::Status(key.clone(), AgentStatus::Starting))
+                .count();
+            assert_eq!(started, 1, "one agent");
+            assert_eq!(opened.iter().filter(|o| o.reattached).count(), 1);
         }
 
         #[test]

@@ -276,9 +276,10 @@ try:
     s.click(s.wait(".thread button", text="Reply on GitHub"))
     wrote("/replies", 0)
     s.type(s.wait("label.compose textarea"), "Overall looks good.")
-    s.click(s.wait("[data-send-comment]"))
+    # Enabled once the reply's request has finished, not only once its write arrived.
+    s.click(s.wait("[data-send-comment]:not(:disabled)", timeout=20))
     wrote("issues/43/comments", 0)
-    s.click(s.wait(".thread button", text="Resolve"))
+    s.click(s.wait(".thread button:not(:disabled)", text="Resolve", timeout=20))
     wrote("resolveReviewThread", 0)
     s.screenshot(os.path.join(shots, "r2-comments.png"))
     for w in writes():

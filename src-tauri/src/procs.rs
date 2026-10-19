@@ -34,16 +34,13 @@ fn list_command() -> Command {
 
 #[cfg(windows)]
 fn list_command() -> Command {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let mut cmd = Command::new("powershell");
+    let mut cmd = crate::tools::quiet("powershell");
     cmd.args([
         "-NoProfile",
         "-NonInteractive",
         "-Command",
         "Get-CimInstance Win32_Process | ForEach-Object { '{0} {1} R {2}' -f $_.ProcessId, $_.ParentProcessId, ($(if ($_.CommandLine) { $_.CommandLine -replace '\\s+', ' ' } else { $_.Name })) }",
-    ])
-    .creation_flags(CREATE_NO_WINDOW);
+    ]);
     cmd
 }
 

@@ -20,7 +20,7 @@ fn gh_command() -> Command {
     }
     match std::env::var_os("ARIEKEI_GH") {
         Some(fake) => crate::tools::command(std::path::Path::new(&fake)),
-        None => Command::new("gh"),
+        None => crate::tools::quiet("gh"),
     }
 }
 
