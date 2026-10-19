@@ -316,6 +316,18 @@ try:
     equal("the turn after /clear is seen", st, "finished")
     check("the new conversation is the item's", after[0] != before[0] and after[1] and before[1] in json.loads(after[2] or "[]"), after)
 
+    # An agent that crashes says so in its terminal, and starts again from there.
+    keys(s, "Exit with code 3")
+    keys(s, ENTER)
+    exited = s.text(s.wait(".terminal:not(.hidden) [data-exited]", timeout=30))
+    print("[crash]", exited.replace("\n", " | "))
+    check("the terminal says the agent exited", "exited (exit 3)" in exited, exited)
+    s.click(s.wait(".terminal:not(.hidden) [data-restart]"))
+    wait_agent(s, 42, {"ready"}, timeout=40)
+    wait_screen(s, key, "Hello after clearing", timeout=30)
+    check("started again, it takes keys", not s.find(".terminal:not(.hidden) [data-exited]"))
+    print("[crash] started again, resuming the conversation")
+
     # Quitting (closing the last window) while a background job runs asks first, naming the
     # agent, its worktree and the job; Cancel keeps everything, Quit anyway quits.
     tab(s, "Terminal")

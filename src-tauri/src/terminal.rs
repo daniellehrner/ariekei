@@ -287,7 +287,7 @@ impl TerminalManager {
             .unwrap()
             .get(key)
             .cloned()
-            .ok_or_else(|| format!("no terminal for {key}"))
+            .ok_or_else(|| "the agent is not running; start it in its Terminal".to_owned())
     }
 
     /// Every running agent: its item key, process and status.
@@ -342,10 +342,11 @@ impl TerminalManager {
 
     /// Attaches `view` to the item's terminal, starting `claude` in `cwd` if it isn't
     /// running (`plan` is only evaluated then). The scrollback is replayed into `view`
-    /// before live output continues.
+    /// before live output continues. `label` names the item in a notice if its agent crashes.
     pub fn open(
         &self,
         key: &str,
+        label: &str,
         cwd: &Path,
         plan: impl FnOnce() -> Result<SessionPlan, String>,
         size: PtySize,
@@ -450,6 +451,7 @@ impl TerminalManager {
             .map_err(|e| e.to_string())?;
 
         let (wait_manager, wait_key, wait_term) = (self.me.clone(), key.to_owned(), term.clone());
+        let label = label.to_owned();
         std::thread::Builder::new()
             .name(format!("pty-wait {key}"))
             .spawn(move || {
@@ -459,11 +461,12 @@ impl TerminalManager {
                     return;
                 };
                 let mut terms = manager.terms.lock().unwrap();
-                // Only forget the entry if it is still this process (not a restarted one).
-                if terms
+                // Only forget the entry if it is still this process (not a restarted one, nor
+                // one Ariekei closed: then it did not end by itself).
+                let by_itself = terms
                     .get(&wait_key)
-                    .is_some_and(|t| Arc::ptr_eq(t, &wait_term))
-                {
+                    .is_some_and(|t| Arc::ptr_eq(t, &wait_term));
+                if by_itself {
                     terms.remove(&wait_key);
                 }
                 drop(terms);
@@ -473,7 +476,10 @@ impl TerminalManager {
                     .map(|s| format!("exit {}", s.exit_code()));
                 manager
                     .events
-                    .agent_status(&wait_key, AgentStatus::Stopped, detail);
+                    .agent_status(&wait_key, AgentStatus::Stopped, detail.clone());
+                if by_itself && let Some(detail) = detail {
+                    crate::notify::agent_exited(&*manager.events, &wait_key, &label, &detail);
+                }
             })
             .map_err(|e| e.to_string())?;
 
@@ -659,8 +665,46 @@ mod tests {
 
     mod with_app {
         use super::super::*;
+        use crate::events::Sent;
         use crate::testkit::TestApp;
         use crate::workitem::create_task;
+
+        #[test]
+        fn an_agent_that_crashes_says_so_and_one_ariekei_closes_does_not() {
+            let app = TestApp::new();
+            let task = create_task(&app.state, Some(app.repo.clone()), "Crash", "", "").unwrap();
+            let key = task.to_string();
+            app.start_agent(task);
+            app.state.terminals.close(&key);
+            app.wait_for(|| {
+                app.events
+                    .take()
+                    .contains(&Sent::Status(key.clone(), AgentStatus::Stopped))
+            });
+            assert!(app.events.notices().is_empty(), "closed by Ariekei");
+
+            app.start_agent(task);
+            app.state
+                .terminals
+                .send_to_agent(&key, "Exit with code 3")
+                .unwrap();
+            app.wait_for(|| app.state.terminals.status(&key).is_none());
+            app.wait_for(|| !app.events.notices().is_empty());
+            assert_eq!(
+                app.events.notices(),
+                [(
+                    "error".to_owned(),
+                    "T1 Crash".to_owned(),
+                    "it exited (exit 3)".to_owned()
+                )]
+            );
+            let err = app
+                .state
+                .terminals
+                .send_to_agent(&key, "hello")
+                .unwrap_err();
+            assert!(err.contains("not running"), "{err}");
+        }
 
         #[test]
         fn an_answered_or_interrupted_turn_is_not_left_waiting_or_working() {

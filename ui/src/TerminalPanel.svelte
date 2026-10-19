@@ -10,9 +10,10 @@
   import { Unicode11Addon } from "@xterm/addon-unicode11";
   import { WebglAddon } from "@xterm/addon-webgl";
   import "@xterm/xterm/css/xterm.css";
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
+  import Button from "./controls/Button.svelte";
   import StatusDot, { AGENT_LABEL } from "./controls/StatusDot.svelte";
-  import type { AgentStatus } from "./lib/agent.svelte";
+  import { agents, exits, type AgentStatus } from "./lib/agent.svelte";
   import { api } from "./lib/api";
   import { shortPath } from "./lib/paths";
   import { monoFont, token, xtermTheme } from "./lib/xtermTheme";
@@ -23,6 +24,7 @@
     status = null,
     path = "",
     paused = false,
+    onrestart,
   }: {
     id: number;
     visible?: boolean;
@@ -30,12 +32,19 @@
     path?: string;
     /** The worktree is on another branch: the agent is shown but takes no input. */
     paused?: boolean;
+    /** Starts the agent again (a new view) after it exited. */
+    onrestart?: () => void;
   } = $props();
 
   let host: HTMLElement;
   let error: string | null = $state(null);
   let fit: FitAddon | null = null;
   let term: Terminal | null = null;
+  // The agent this view shows ended (crashed, or quit with /exit): its output stays readable,
+  // but it takes no keys until it is started again.
+  const exitsBefore = untrack(() => exits[String(id)] ?? 0);
+  const exited = $derived((exits[String(id)] ?? 0) > exitsBefore);
+  const exitDetail = $derived(agents[String(id)]?.detail);
 
   // Fit only when the panel has a real size (it is display:none while another tab shows).
   function refit() {
@@ -85,7 +94,8 @@
     // the process until xterm's answer arrives; a lost answer left the agent hanging.
     let pending: string[] = [];
     const send = (data: string) => {
-      if (opened) api.termWrite(id, data);
+      if (exited) return;
+      if (opened) api.termWrite(id, data).catch(() => {});
       else pending.push(data);
     };
     t.onData(send);
@@ -139,7 +149,13 @@
       <code title={path}>claude — {shortPath(path)}</code>
     </div>
     {#if error}<p class="error">{error}</p>{/if}
-    <div class="host" bind:this={host}></div>
+    {#if exited}
+      <div class="exited" role="status" data-exited>
+        <span>The agent exited{exitDetail ? ` (${exitDetail})` : ""}.</span>
+        {#if onrestart}<Button size="sm" icon="play" onclick={onrestart} data-restart>Start again</Button>{/if}
+      </div>
+    {/if}
+    <div class="host" class:gone={exited} inert={exited} bind:this={host}></div>
   </div>
 </div>
 
@@ -160,4 +176,9 @@
   .host { flex: 1; min-height: 0; padding: 10px 14px; }
   .host :global(.xterm-viewport) { background-color: var(--term-bg) !important; }
   .error { color: var(--bad); margin: var(--sp-4) var(--sp-6); font-size: var(--fs-12); }
+  .exited {
+    flex: none; display: flex; align-items: center; gap: var(--sp-5); padding: var(--sp-3) var(--sp-5);
+    border-bottom: 1px solid var(--border); font-size: var(--fs-12); color: var(--text);
+  }
+  .host.gone { opacity: 0.6; }
 </style>

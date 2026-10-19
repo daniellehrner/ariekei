@@ -352,12 +352,16 @@ impl TestApp {
     /// Starts item `id`'s agent (the fake one) in its worktree, as opening its terminal does.
     pub fn start_agent(&self, id: i64) {
         let item = self.state.store.item(id).unwrap();
-        let cwd = item.worktree_path.expect("the item has no worktree");
+        let cwd = item
+            .worktree_path
+            .clone()
+            .expect("the item has no worktree");
         let view = tauri::ipc::Channel::new(|_| Ok(()));
         self.state
             .terminals
             .open(
                 &id.to_string(),
+                &item.label(),
                 &cwd,
                 || crate::workitem::session_plan(&self.state, &self.state.data_dir, id),
                 portable_pty::PtySize::default(),

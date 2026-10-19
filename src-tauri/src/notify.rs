@@ -8,6 +8,7 @@
 //! front, and some desktops don't show one then); otherwise it is an OS notification.
 
 use crate::AppState;
+use crate::events::Events;
 use crate::github::PrSummary;
 use crate::hooks::AgentStatus;
 
@@ -68,6 +69,14 @@ pub fn agent_status(
         && !state.events.watching(key)
     {
         state.events.notice(key, kind, &label(state, key), &message);
+    }
+}
+
+/// The agent of item `key` (`label`) ended by itself with a failure (`detail`, e.g. "exit 1"):
+/// it crashed, or could not start. Its terminal says so too, with a way to start it again.
+pub fn agent_exited(events: &dyn Events, key: &str, label: &str, detail: &str) {
+    if !events.watching(key) {
+        events.notice(key, "error", label, &format!("it exited ({detail})"));
     }
 }
 

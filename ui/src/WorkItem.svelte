@@ -51,6 +51,8 @@
   // Without a worktree the review reads the PR head fetched into the clone.
   let fetched = $state(false);
   let preparing = $state(false);
+  // Times the user started the agent again after it exited (a new terminal view each time).
+  let restarts = $state(0);
   let error: string | null = $state(null);
   // Lifecycle news ("Created the worktree …"); `code` spans are written `like this`. It goes by
   // itself after a while: it is news, nothing to act on.
@@ -432,9 +434,11 @@
       {#key id}
         {#if row.worktree}
           <!-- Stays mounted under the other tabs so the terminal keeps running in view. -->
-          <!-- Opened again once the worktree is back on its branch: only then does the agent start. -->
-          {#key moved == null}
-            <TerminalPanel {id} visible={tab === "terminal"} {status} path={row.worktree} paused={moved != null} />
+          <!-- Opened again once the worktree is back on its branch: only then does the agent start.
+               Also opened again to start an agent that exited. -->
+          {#key `${moved == null}:${restarts}`}
+            <TerminalPanel {id} visible={tab === "terminal"} {status} path={row.worktree} paused={moved != null}
+              onrestart={() => restarts++} />
           {/key}
         {/if}
         {#if isTask && (tab === "overview" || tab === "comments")}

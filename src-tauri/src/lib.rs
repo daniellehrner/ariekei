@@ -319,13 +319,14 @@ async fn term_open(
     output: Channel<InvokeResponseBody>,
 ) -> Res<Opened> {
     blocking(app, move |s| {
-        let cwd = s
-            .store
-            .item(id)?
+        let item = s.store.item(id)?;
+        let cwd = item
             .worktree_path
+            .clone()
             .ok_or("the worktree is not ready")?;
         s.terminals.open(
             &id.to_string(),
+            &item.label(),
             &cwd,
             || workitem::session_plan(s, &s.data_dir, id),
             pty_size(cols, rows),

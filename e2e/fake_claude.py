@@ -15,6 +15,7 @@ A minimal terminal agent that reports through the hooks of `--settings` like Cla
   `gh pr create` / `gh issue create` Bash call it stands for, with the URL it printed;
 - "Run a N second job in the background" starts a process that sleeps N seconds, as a
   background Bash call does (a child of the agent), and finishes the turn;
+- "Exit with code N" crashes: exits with N at once, without SessionEnd;
 - a line containing "ask" asks permission for a Bash command and waits;
 - `/clear` ends the conversation (SessionEnd, reason "clear") and goes on in a new one, with a
   new session id;
@@ -261,6 +262,9 @@ def turn(text, say, hook, keys):
         busy(int(job.group(1)))
         hook("PostToolUse", tool_name="Bash", tool_input={"command": command})
         say(f"⏺ Ran {command}")
+    elif crash := re.search(r"exit with code (\d+)", text, re.I):
+        out("fake claude crashed\n")
+        os._exit(int(crash.group(1)))  # no SessionEnd, as a crash sends none
     elif "ask" in text:
         command = "./gradlew :ethereum:eth:test --tests '*SnapSync*'"
         hook("PreToolUse", tool_name="Bash", tool_input={"command": command})

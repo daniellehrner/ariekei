@@ -263,6 +263,10 @@ prompt), so Ariekei watches the terminal too: once you answer a permission promp
 working again (until the command is done), and a working agent whose terminal has shown nothing
 new for 30 seconds is ready again (while Claude Code works it keeps redrawing its spinner).
 
+When the agent exits by itself (it crashed, could not start, or you typed `/exit`), its terminal
+says so above its last output and takes no keys; **Start again** resumes the conversation. A
+crash also brings a notice when you are not looking at the item.
+
 ### Switching items and restarting
 
 Terminals keep running while you look at other items. A terminal nobody looks at whose agent
@@ -648,7 +652,7 @@ activity, a grey bar for lifecycle news.
   to another owner on GitHub is followed by itself; one that is gone (deleted, or you lost
   access) is named in the error.
 - **The agent exits immediately on a new repository**: Claude Code's trust prompt preselects
-  "No, exit". Open the item again and choose to trust the folder.
+  "No, exit". Press **Start again** in its terminal and choose to trust the folder.
 - **Done is refused**: read the listed reasons; commit and push or discard the work, then press
   Done again.
 - **Send to agent is greyed out** (in the Ask agent box or under the drafts): the agent is
