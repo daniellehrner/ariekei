@@ -37,17 +37,13 @@ The gallery's fixture repository (`owner/proj`, made-up PRs and people) is safe 
 
 ## Deploy
 
-The site, https://ariekei.com, is served by Caddy on the web server. That server's `/etc/caddy/Caddyfile` comes from a private
-repository and imports `/etc/caddy/sites/*.caddy`; this site's block is `deploy/ariekei.caddy`.
+The site, https://ariekei.com, is served by Caddy from `/var/www/ariekei`. The server's Caddyfile
+imports `/etc/caddy/sites/*.caddy`; this site's block is `deploy/ariekei.caddy`.
 
 ```
 site/deploy.sh            # build, then rsync dist/ to /var/www/ariekei
 site/deploy.sh --caddy    # also install the Caddy block and reload Caddy
 ```
 
-Once, before the first deploy:
-
-1. DNS for ariekei.com: `A` and `AAAA` records for the server.
-2. On the server: `sudo install -d -o <deploy user> -g <deploy user> /var/www/ariekei && sudo install -d /etc/caddy/sites`.
-3. Install the server's Caddyfile with the `import` line.
-4. `site/deploy.sh --caddy`. Caddy gets the certificate on the first request.
+`deploy.sh` connects to the SSH host `ariekei.com` (`ARIEKEI_SERVER` overrides it), so the port
+and user come from your `~/.ssh/config`. The user needs passwordless `sudo` for `--caddy`.
