@@ -195,7 +195,9 @@ between items freely.
 
 **Start working** on a PR creates `../<clone>_pr<N>` next to your clone, on the PR's branch and
 tracking the PR head, so a plain `git push` in the worktree updates the PR. For PRs from forks,
-the fork's remote is added the way `gh pr checkout` does it.
+the fork's remote is added the way `gh pr checkout` does it. If the fork was deleted, the
+worktree gets the PR's commits (GitHub's copy of the PR head) on a local branch `pr-<N>`;
+nothing can be pushed to such a PR, and Ariekei says so.
 
 If a worktree with the PR's branch (or `pr-<N>`, or a branch tracking the PR head) already
 exists, Ariekei reuses it, even your clone's own checkout (unless it is on the PR's base

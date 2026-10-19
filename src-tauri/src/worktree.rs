@@ -544,6 +544,9 @@ fn sibling(repo: &Repo, suffix: &str) -> PathBuf {
 /// Makes the PR's worktree ready: fetches the head and base branches, then adopts or
 /// creates the worktree. Safe to call again (it finds what it created before).
 pub fn prepare(repo: &Repo, pr: &PrSummary) -> Result<Prepared, String> {
+    if pr.head_repo.is_empty() {
+        return prepare_without_head_repo(repo, pr);
+    }
     let remote = head_remote(repo, pr)?;
     let tracking = fetch(&repo.path, &remote, &pr.head_ref)?;
     // The base is needed for the default review marker (merge-base); not fatal if it fails.
@@ -584,6 +587,59 @@ pub fn prepare(repo: &Repo, pr: &PrSummary) -> Result<Prepared, String> {
         &tracking,
         &format!("the PR ({tracking})"),
     )?;
+    Ok(Prepared {
+        path,
+        branch,
+        adopted: false,
+        branch_created,
+        note,
+    })
+}
+
+/// A worktree for a PR whose head repository is gone (GitHub has none for it when its fork
+/// was deleted): GitHub keeps the PR's commits (`refs/pull/<N>/head`), so they are checked
+/// out on a local branch `pr-<N>`, which has nowhere to be pushed to. Safe to call again.
+fn prepare_without_head_repo(repo: &Repo, pr: &PrSummary) -> Result<Prepared, String> {
+    let head = fetch_pr_head(&repo.path, &repo.base_remote, pr.number, &pr.base_ref)?;
+    let branch = format!("pr-{}", pr.number);
+    let note = Some(format!(
+        "The PR's fork was deleted, so its branch is gone: the worktree has the PR's commits on a \
+         local branch {branch}, and nothing can be pushed to the PR."
+    ));
+    if let Some(w) = git::worktrees(&repo.path)?
+        .into_iter()
+        .find(|w| w.path.exists() && w.branch.as_deref() == Some(&branch))
+    {
+        return Ok(Prepared {
+            path: w.path,
+            branch,
+            adopted: true,
+            branch_created: false,
+            note,
+        });
+    }
+    let path = worktree_path(repo, pr.number);
+    if path.exists() {
+        return Err(format!(
+            "{} already exists; move it away to start working on the PR",
+            path.display()
+        ));
+    }
+    let path_arg = path.to_string_lossy().into_owned();
+    let branch_created = !git::branch_exists(&repo.path, &branch);
+    if branch_created {
+        git(
+            &repo.path,
+            &[
+                "worktree", "add", "--quiet", "-b", &branch, &path_arg, &head,
+            ],
+        )?;
+    } else {
+        git(
+            &repo.path,
+            &["worktree", "add", "--quiet", &path_arg, &branch],
+        )?;
+    }
     Ok(Prepared {
         path,
         branch,
@@ -868,6 +924,49 @@ mod tests {
                 assert_eq!(f.join().unwrap().as_deref(), Ok(head.as_str()));
             }
         });
+    }
+
+    #[test]
+    fn a_pr_whose_fork_was_deleted_gets_its_commits_on_a_local_branch() {
+        let (root, repo, pr) = setup();
+        let up = git_str(
+            &repo.path,
+            &["config", "--get-regexp", "^url\\..*\\.insteadof$"],
+        )
+        .unwrap();
+        let upstream = PathBuf::from(
+            up.split_whitespace()
+                .next()
+                .unwrap()
+                .trim_start_matches("url.")
+                .trim_end_matches(".insteadof"),
+        );
+        git(&upstream, &["update-ref", "refs/pull/42/head", "feature/x"]).unwrap();
+        // GitHub's headRepository is null.
+        let pr = PrSummary {
+            head_owner: String::new(),
+            head_repo: String::new(),
+            head_ssh_url: String::new(),
+            head_https_url: String::new(),
+            ..pr
+        };
+        let p = prepare(&repo, &pr).unwrap();
+        assert_eq!(canon(&p.path), canon(&root.path().join("proj_pr42")));
+        assert_eq!((p.branch.as_str(), p.adopted), ("pr-42", false));
+        assert!(
+            p.note
+                .as_deref()
+                .is_some_and(|n| n.contains("fork was deleted")),
+            "{:?}",
+            p.note
+        );
+        assert_eq!(
+            std::fs::read_to_string(p.path.join("a.txt")).unwrap(),
+            "feature\n"
+        );
+        assert_eq!(git::upstream(&repo.path, "pr-42"), None);
+        assert_eq!(git_str(&repo.path, &["remote"]).unwrap(), "origin");
+        assert!(prepare(&repo, &pr).unwrap().adopted);
     }
 
     #[test]
