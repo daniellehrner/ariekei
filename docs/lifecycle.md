@@ -68,7 +68,8 @@ PRs and issues, or be thrown away.
   - uncommitted changes, including untracked files (listed);
   - commits that are neither on a remote branch nor in GitHub's copy of the PR head
     (`refs/pull/<N>/head`, fetched before the check, so squash-merged PRs with deleted
-    branches are recognised).
+    branches are recognised), nor in the reflog of the branch's upstream (the newest 500
+    entries: the old version of a PR whose author rebased and force-pushed it).
 - Waits while the agent is in the middle of a turn (working, or waiting for permission): not a
   blocker, nothing is recorded or told; the first poll after the turn cleans up, and Done is
   refused until then.

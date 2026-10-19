@@ -477,7 +477,8 @@ finished item says "Cleanup blocked" in the Inbox:
 
 - uncommitted changes, including untracked files;
 - commits that are neither on a remote branch nor in GitHub's copy of the PR head (so
-  squash-merged PRs with deleted branches are recognised as safe).
+  squash-merged PRs with deleted branches are recognised as safe), and were never on the
+  branch's upstream either (so a PR you only reviewed, whose author rebased it since, is safe).
 
 Commit and push, or discard the changes, then press **Done** again.
 

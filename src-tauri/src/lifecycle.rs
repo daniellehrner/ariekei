@@ -58,7 +58,8 @@ pub fn blockers(repo: &Repo, item: &WorkItem) -> Vec<String> {
         Ok(_) => {}
         Err(e) => found.push(format!("Could not check for uncommitted changes: {e}")),
     }
-    // Commits are safe when a remote branch or GitHub's copy of a PR head has them.
+    // Commits are safe when a remote branch or GitHub's copy of a PR head has them, or the
+    // upstream had them once: a reviewed PR whose author rebased it since is not your work.
     if item.kind == "pr" {
         let _ = worktree::fetch_pr_head(
             &repo.path,
@@ -67,17 +68,17 @@ pub fn blockers(repo: &Repo, item: &WorkItem) -> Vec<String> {
             &summary_base(item),
         );
     }
-    match git::git_str(
-        dir,
-        &[
-            "log",
-            "--format=%h %s",
-            "HEAD",
-            "--not",
-            "--remotes",
-            "--glob=refs/ariekei/pull/*",
-        ],
-    ) {
+    let fetched = git::upstream_history(dir);
+    let mut args = vec![
+        "log",
+        "--format=%h %s",
+        "HEAD",
+        "--not",
+        "--remotes",
+        "--glob=refs/ariekei/pull/*",
+    ];
+    args.extend(fetched.iter().map(String::as_str));
+    match git::git_str(dir, &args) {
         Ok(log) if !log.is_empty() => {
             let commits: Vec<&str> = log.lines().collect();
             found.push(format!(
@@ -566,6 +567,51 @@ mod tests {
         git(&clone, &["push", "-q", "origin", "HEAD:refs/heads/feature"]).unwrap();
         git(&clone, &["fetch", "-q", "origin"]).unwrap();
         assert!(blockers(&repo, &it).is_empty(), "pushed commits are safe");
+    }
+
+    #[test]
+    fn a_pr_its_author_rebased_since_loses_nothing() {
+        let upstream = git_repo();
+        let up = upstream.path();
+        let root = tempfile::tempdir().unwrap();
+        let clone = root.path().join("c");
+        git(root.path(), &["clone", "-q", &up.to_string_lossy(), "c"]).unwrap();
+        // The PR's first version, fetched (as Ariekei does) and checked out.
+        git(up, &["checkout", "-q", "-b", "feature"]).unwrap();
+        std::fs::write(up.join("f.txt"), "first\n").unwrap();
+        commit(up, "first version");
+        git(&clone, &["fetch", "-q", "origin"]).unwrap();
+        git(&clone, &["checkout", "-q", "feature"]).unwrap();
+        let repo = Repo {
+            id: 1,
+            path: clone.clone(),
+            owner: "o".into(),
+            name: "c".into(),
+            base_remote: "origin".into(),
+            viewer: "me".into(),
+        };
+        let it = item(&clone);
+
+        // The author rewrites the branch and force-pushes; the clone fetches it.
+        git(up, &["checkout", "-q", "feature"]).unwrap();
+        git(up, &["reset", "-q", "--hard", "main"]).unwrap();
+        std::fs::write(up.join("f.txt"), "second\n").unwrap();
+        commit(up, "second version");
+        git(&clone, &["fetch", "-q", "origin"]).unwrap();
+        assert!(
+            blockers(&repo, &it).is_empty(),
+            "the first version was on GitHub"
+        );
+
+        std::fs::write(clone.join("mine.txt"), "x").unwrap();
+        commit(&clone, "my own work");
+        let b = blockers(&repo, &it);
+        assert!(
+            b.len() == 1
+                && b[0].starts_with("1 commit is not on GitHub")
+                && b[0].contains("my own work"),
+            "{b:?}"
+        );
     }
 
     #[test]

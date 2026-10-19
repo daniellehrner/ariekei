@@ -151,6 +151,33 @@ pub fn branch_exists(repo: &Path, branch: &str) -> bool {
     .is_ok()
 }
 
+/// Where the upstream of the branch checked out at `cwd` has been, as its reflog remembers
+/// (the newest 500; empty without an upstream or reflog). Commits there came from the
+/// remote, also those a force-push (e.g. a rebased PR) took off it since.
+pub fn upstream_history(cwd: &Path) -> Vec<String> {
+    let Ok(upstream) = git_str(cwd, &["rev-parse", "--symbolic-full-name", "@{upstream}"]) else {
+        return vec![];
+    };
+    let mut seen = std::collections::HashSet::new();
+    git_str(
+        cwd,
+        &[
+            "reflog",
+            "show",
+            "-n",
+            "500",
+            "--format=%H",
+            &upstream,
+            "--",
+        ],
+    )
+    .unwrap_or_default()
+    .lines()
+    .filter(|h| seen.insert(h.to_string()))
+    .map(str::to_owned)
+    .collect()
+}
+
 pub fn commit_exists(repo: &Path, rev: &str) -> bool {
     git(repo, &["cat-file", "-e", &format!("{rev}^{{commit}}")]).is_ok()
 }
