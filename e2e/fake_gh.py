@@ -9,7 +9,7 @@ GraphQL mutations) to $FAKE_GH_DIR/writes.jsonl, so a test can check what would 
 sent to GitHub. Supports only the calls Ariekei makes.
 
 data.json: {"viewer": "me", "upstream": <path of the "GitHub" git repo, optional>,
-            "default_branch": <name, default main>,
+            "default_branch": <name, default main>, "now": <GitHub's clock, RFC 3339, optional>,
             "prs": [{number, title, author, head_ref, head_owner (a fork; default owner), head_sha,
                      base_ref, state, requested (bool),
                      assigned (bool), reviewed (bool, by the viewer), draft (bool), decision, ci,
@@ -20,6 +20,8 @@ see it; a test can set a PR's "state" to MERGED in data.json. A PR or issue with
 owner/<name>; without it, to owner/proj.
 """
 
+import calendar
+import email.utils
 import json
 import os
 import re
@@ -228,6 +230,12 @@ def main(argv):
     log_call(argv)
     # While $FAKE_GH_DIR/rate-limited exists, GitHub's API budget is used up (resetting in two
     # minutes); `gh api rate_limit` itself always answers, as on GitHub.
+    if argv[:3] == ["api", "--include", "rate_limit"]:
+        # GitHub's clock: "now" in data.json (RFC 3339), else the real time.
+        now = DATA.get("now")
+        stamp = calendar.timegm(time.strptime(now, "%Y-%m-%dT%H:%M:%SZ")) if now else time.time()
+        print(f"HTTP/2.0 200 OK\nDate: {email.utils.formatdate(stamp, usegmt=True)}\n\n{{}}")
+        return 0
     if argv[:2] == ["api", "rate_limit"]:
         limited = os.path.exists(os.path.join(DIR, "rate-limited"))
         reset = int(time.time()) + 120

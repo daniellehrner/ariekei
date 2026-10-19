@@ -153,6 +153,31 @@ fn exhausted_reset(v: &Value) -> Option<u64> {
         .max()
 }
 
+/// Now by GitHub's clock, as RFC 3339 (from the Date header of an answer that costs nothing).
+pub fn server_time() -> Option<String> {
+    let out = gh(&["api", "--include", "rate_limit"]).ok()?;
+    http_date(&String::from_utf8_lossy(&out))
+}
+
+/// The Date header of an HTTP answer (`Date: Mon, 19 Oct 2026 10:00:00 GMT`), as RFC 3339.
+fn http_date(answer: &str) -> Option<String> {
+    let date = answer
+        .lines()
+        .take_while(|l| !l.trim().is_empty())
+        .find_map(|l| {
+            let (name, value) = l.split_once(':')?;
+            name.eq_ignore_ascii_case("date").then(|| value.trim())
+        })?;
+    let mut parts = date.split_whitespace().skip(1);
+    let (day, month, year, time) = (parts.next()?, parts.next()?, parts.next()?, parts.next()?);
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let month = MONTHS.iter().position(|m| *m == month)? + 1;
+    let day: u32 = day.parse().ok()?;
+    (year.len() == 4 && time.len() == 8).then(|| format!("{year}-{month:02}-{day:02}T{time}Z"))
+}
+
 pub fn viewer() -> Result<String, String> {
     let out = gh(&["api", "user", "--jq", ".login"])?;
     Ok(String::from_utf8_lossy(&out).trim().to_owned())
@@ -1137,6 +1162,17 @@ mod tests {
             (c.checks[0].name.as_str(), c.checks[0].outcome.as_str()),
             ("build", "IN_PROGRESS")
         );
+    }
+
+    #[test]
+    fn githubs_time_is_read_from_the_date_header() {
+        let answer = "HTTP/2.0 200 OK\nContent-Type: application/json\ndate: Mon, 9 Feb 2026 08:05:03 GMT\n\n{\"date\": \"x\"}";
+        assert_eq!(http_date(answer).as_deref(), Some("2026-02-09T08:05:03Z"));
+        assert_eq!(
+            http_date("HTTP/2.0 200 OK\n\nDate: Mon, 9 Feb 2026 08:05:03 GMT"),
+            None
+        );
+        assert_eq!(http_date("Date: yesterday"), None);
     }
 
     #[test]

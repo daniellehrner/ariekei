@@ -15,8 +15,9 @@
 
 use crate::github::{self, PrSummary};
 use crate::store::{PolledPr, Repo};
+use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
 /// Seconds between polls; `ARIEKEI_POLL_SECS` shortens it for tests.
@@ -31,6 +32,8 @@ fn interval() -> Duration {
 
 pub struct Poller {
     wake: Sender<()>,
+    /// How far GitHub's clock is ahead of the local one (seconds), and when that was asked.
+    clock: Mutex<Option<(Instant, i64)>>,
 }
 
 impl Poller {
@@ -42,18 +45,46 @@ impl Poller {
                 .name("github-poller".into())
                 .spawn(move || run(app, rx));
         }
-        Self { wake }
+        Self {
+            wake,
+            clock: Mutex::default(),
+        }
     }
 
     /// A poller that never polls (tests drive `poll` themselves).
     #[cfg(test)]
     pub fn idle() -> Self {
-        Self { wake: channel().0 }
+        Self {
+            wake: channel().0,
+            clock: Mutex::default(),
+        }
     }
 
     /// Polls now instead of waiting for the next interval.
     pub fn refresh(&self) {
         let _ = self.wake.send(());
+    }
+
+    /// Now by GitHub's clock (Unix seconds), which its timestamps are in: the local clock may
+    /// be off (one ahead would make a PR that just changed look settled long ago). How far off
+    /// is asked once an hour.
+    fn github_now(&self) -> u64 {
+        let mut clock = self.clock.lock().unwrap_or_else(|p| p.into_inner());
+        let known = clock.filter(|(at, _)| at.elapsed() < Duration::from_secs(3600));
+        let ahead = match known {
+            Some((_, ahead)) => ahead,
+            None => {
+                let asked = github::server_time()
+                    .as_deref()
+                    .and_then(rfc3339_secs)
+                    .map(|github| github as i64 - now_secs() as i64);
+                if let Some(ahead) = asked {
+                    *clock = Some((Instant::now(), ahead));
+                }
+                asked.unwrap_or(0)
+            }
+        };
+        now_secs().saturating_add_signed(ahead)
     }
 }
 
@@ -153,13 +184,13 @@ const CHECKS_START_SECS: u64 = 15 * 60;
 
 /// Whether the stored details of a PR are still current for `stamp`: nothing changed on it,
 /// and its checks are not running or about to start (check results do not change a PR's
-/// `updatedAt`). `now`: Unix seconds.
-fn current(stored: &PrSummary, stamp: &github::PrStamp, now: u64) -> bool {
+/// `updatedAt`). `now`: Unix seconds by GitHub's clock, asked only if needed.
+fn current(stored: &PrSummary, stamp: &github::PrStamp, now: impl FnOnce() -> u64) -> bool {
     let checks_settled = match stored.ci.as_deref() {
         Some("PENDING" | "EXPECTED") => false,
         Some(_) => true,
         None => rfc3339_secs(&stamp.updated_at)
-            .is_none_or(|changed| now.saturating_sub(changed) > CHECKS_START_SECS),
+            .is_none_or(|changed| now().saturating_sub(changed) > CHECKS_START_SECS),
     };
     stored.updated_at == stamp.updated_at && stored.state == stamp.state && checks_settled
 }
@@ -243,7 +274,9 @@ pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), Stri
     };
     let stale: Vec<i64> = stamps
         .iter()
-        .filter(|s| full || !stored(s.number).is_some_and(|p| current(&p, s, now_secs())))
+        .filter(|s| {
+            full || !stored(s.number).is_some_and(|p| current(&p, s, || state.poller.github_now()))
+        })
         .map(|s| s.number)
         .collect();
     let fetched = github::prs_by_number(o, n, me, &stale)?;
@@ -426,31 +459,33 @@ mod tests {
         };
         let changed = rfc3339_secs("2026-10-01T00:00:00Z").unwrap();
         let later = changed + 3600;
-        assert!(current(&stored, &stamp, later));
+        assert!(current(&stored, &stamp, || later));
         let updated = github::PrStamp {
             updated_at: "2026-10-02T00:00:00Z".into(),
             ..stamp.clone()
         };
-        assert!(!current(&stored, &updated, later));
+        assert!(!current(&stored, &updated, || later));
         let merged = github::PrStamp {
             state: "MERGED".into(),
             ..stamp.clone()
         };
-        assert!(!current(&stored, &merged, later));
+        assert!(!current(&stored, &merged, || later));
         for state in ["PENDING", "EXPECTED"] {
             let running = PrSummary {
                 ci: Some(state.into()),
                 ..stored.clone()
             };
-            assert!(!current(&running, &stamp, later), "{state}");
+            assert!(!current(&running, &stamp, || later), "{state}");
         }
         // No checks yet: right after a change they may still start, later there are none.
         let no_checks = PrSummary {
             ci: None,
             ..stored.clone()
         };
-        assert!(!current(&no_checks, &stamp, changed + 60));
-        assert!(current(&no_checks, &stamp, changed + CHECKS_START_SECS + 1));
+        assert!(!current(&no_checks, &stamp, || changed + 60));
+        assert!(current(&no_checks, &stamp, || changed
+            + CHECKS_START_SECS
+            + 1));
     }
 
     #[test]
@@ -553,6 +588,21 @@ mod tests {
             // Finished: no longer followed.
             app.poll().unwrap();
             assert_eq!(detailed(&app), Vec::<i64>::new());
+        }
+
+        #[test]
+        fn a_pr_without_checks_yet_is_followed_by_githubs_clock() {
+            let app = TestApp::new();
+            // The local clock is days ahead of GitHub's: the PR changed (10:01 by GitHub's
+            // clock) four minutes ago, so its checks may still start.
+            let mut data = app.data();
+            data["now"] = json!("2026-10-13T10:05:00Z");
+            app.set_data(&data);
+            app.add_pr(json!({"number": 7, "title": "Seven", "head_ref": "main", "ci": null}));
+            app.poll().unwrap();
+            assert_eq!(detailed(&app), [7]);
+            app.poll().unwrap();
+            assert_eq!(detailed(&app), [7], "followed while its checks may start");
         }
 
         #[test]
