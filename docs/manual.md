@@ -620,7 +620,8 @@ activity, a grey bar for lifecycle news.
 ## 16. Where your data lives
 
 - Ariekei's state (work items, stars, view state, drafts) is in an SQLite database
-  `ariekei.db` in the app data directory.
+  `ariekei.db` in the app data directory. One Ariekei runs on it at a time: starting Ariekei
+  again brings the running one's window to the front.
 - Worktrees are created next to your clone (`../<clone>_pr<N>`, `_issue<N>`, `_task<n>`).
 - Branches and Ariekei's refs live in your clone: `refs/ariekei/pull/<N>/head` holds the PR
   head fetched for read-only review.

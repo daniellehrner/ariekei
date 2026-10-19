@@ -10,6 +10,7 @@ mod git;
 mod github;
 mod hooks;
 mod inbox;
+mod instance;
 mod lifecycle;
 mod notify;
 mod poller;
@@ -598,6 +599,24 @@ pub fn run() {
                 None => app.path().app_data_dir()?,
             };
             std::fs::create_dir_all(&data_dir)?;
+            // One Ariekei per data directory (see `instance`): a second one shows the first.
+            let handle = app.handle().clone();
+            let show = move || {
+                let windows = handle.webview_windows();
+                if let Some(window) = windows.get("main").or_else(|| windows.values().next()) {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            };
+            let Some(instance) = instance::claim(&data_dir, show)? else {
+                tracing::info!(
+                    "Ariekei runs already on {}: it was asked to show its window",
+                    data_dir.display()
+                );
+                std::process::exit(0);
+            };
+            app.manage(instance);
 
             let handle = app.handle().clone();
             let hook_server =

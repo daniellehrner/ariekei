@@ -4,7 +4,8 @@
 """E2E: two repos, switching between them, and a window per repo, against a fake GitHub.
 
 Covers: connecting a second repo from the repo menu, the poller keeping both Inboxes
-current, switching back (the window title follows), opening a repo in a new window, a
+current, a second Ariekei on the same data showing the first one's window instead of running
+too, switching back (the window title follows), opening a repo in a new window, a
 repo shown in another window being focused instead of opened twice, the selected item
 remembered per repo, the open windows coming back after a restart, closing one of them,
 an empty window (New window) picking a connected repo, and removing a repo from Ariekei.
@@ -20,7 +21,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from check import check, equal  # noqa: E402
+from check import check, equal, eventually  # noqa: E402
 from ui import open_inbox  # noqa: E402
 from wd import Session  # noqa: E402
 
@@ -112,6 +113,15 @@ try:
     print("[connect] proj:", header(s), rows(s), "| title:", s.s("GET", "/title"))
     equal("proj's PRs", rows(s), ["43", "42"])
     equal("window title", s.s("GET", "/title"), "owner/proj — Ariekei")
+
+    # Ariekei started again on the same data: it shows this one's window instead and exits.
+    again = subprocess.run([app], capture_output=True, text=True, timeout=60)
+    print("[second instance] exit:", again.returncode)
+    equal("a second Ariekei exits", again.returncode, 0)
+    if getattr(s, "log_path", None):
+        eventually("this one was asked to show its window", lambda: open(s.log_path, errors="replace").read(),
+                   lambda log: "another Ariekei was started" in log, timeout=10)
+    equal("this one still works", rows(s), ["43", "42"])
 
     # A second repo, connected from the repo menu, replaces the first in this window.
     print("[menu]", menu(s))

@@ -48,7 +48,7 @@ about: [docs/spike-results.md](docs/spike-results.md).
 ## Requirements
 
 - `git`, the GitHub CLI `gh` (logged in), and Claude Code (`claude`).
-- To build: Rust 1.88+, Node 22+, and on Linux the WebKitGTK 4.1 / GTK 3 development packages
+- To build: Rust 1.89+, Node 22+, and on Linux the WebKitGTK 4.1 / GTK 3 development packages
   (see `.github/workflows/ci.yml`).
 
 ## Develop
