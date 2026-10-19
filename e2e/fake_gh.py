@@ -195,7 +195,8 @@ def search(q, prs, all_issues):
         return found, issue_summary
     head = re.search(r"head:(\S+)", q)
     if head:
-        found = [p for p in prs if p["head_ref"] == head.group(1) and is_open(p)]
+        state = "MERGED" if "is:merged" in q else "OPEN"
+        found = [p for p in prs if p["head_ref"] == head.group(1) and p.get("state", "OPEN") == state]
     elif f"-author:{ME}" in q:
         found = [p for p in prs if p["author"] != ME and is_open(p)]
     elif f"author:{ME}" in q:

@@ -354,10 +354,15 @@ pub fn poll_pr_stamps(owner: &str, name: &str, terms: &str) -> Result<Searched<P
 /// Open PRs in `owner/name` matching GitHub search `terms`, most recently updated first:
 /// the first 50.
 pub fn search_pr_stamps(owner: &str, name: &str, terms: &str) -> Result<Vec<PrStamp>, String> {
+    pr_stamps_in(owner, name, "is:open", terms)
+}
+
+/// `search_pr_stamps` for PRs in `state` (`is:open`, `is:merged`).
+fn pr_stamps_in(owner: &str, name: &str, state: &str, terms: &str) -> Result<Vec<PrStamp>, String> {
     let query = format!(
         "query($q: String!) {{ search(query: $q, type: ISSUE, first: 50) {{ nodes {{ ... on PullRequest {{ {STAMP_FIELDS} }} }} }} }}"
     );
-    let q = format!("repo:{owner}/{name} is:pr is:open {terms} sort:updated-desc");
+    let q = format!("repo:{owner}/{name} is:pr {state} {terms} sort:updated-desc");
     let v = graphql(&query, &[("q", &q)], &[])?;
     Ok(parse_stamps(&v["data"]["search"]["nodes"]))
 }
@@ -385,7 +390,9 @@ pub fn pr_stamps(owner: &str, name: &str, numbers: &[i64]) -> Result<Vec<PrStamp
 
 /// Open PRs in `owner/name` matching GitHub search `terms`, most recently updated first,
 /// with their details (a stamp search, then the details by number: 1 point per PR).
-/// `viewer` decides what counts as activity by others.
+/// `viewer` decides what counts as activity by others. (The poll pages through its own
+/// searches; this one is for the live tests.)
+#[cfg(test)]
 pub fn search_prs(
     owner: &str,
     name: &str,
@@ -657,15 +664,21 @@ pub fn default_branch(owner: &str, name: &str) -> Result<String, String> {
         .ok_or_else(|| format!("{owner}/{name} has no default branch"))
 }
 
-/// The open PR whose head is `head_owner:branch`, if any.
+/// The PR in `state` (`is:open`, `is:merged`) whose head is `head_owner:branch`, if any; the
+/// most recently updated one.
 pub fn pull_for_head(
     owner: &str,
     name: &str,
     viewer: &str,
     head_owner: &str,
     branch: &str,
+    state: &str,
 ) -> Result<Option<PrSummary>, String> {
-    Ok(search_prs(owner, name, viewer, &format!("head:{branch}"))?
+    let numbers: Vec<i64> = pr_stamps_in(owner, name, state, &format!("head:{branch}"))?
+        .iter()
+        .map(|p| p.number)
+        .collect();
+    Ok(prs_by_number(owner, name, viewer, &numbers)?
         .into_iter()
         .find(|p| p.head_ref == branch && p.head_owner.eq_ignore_ascii_case(head_owner)))
 }

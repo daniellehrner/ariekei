@@ -393,7 +393,8 @@ Markdown is rendered by GitHub and sanitized; links open in your system browser.
    before anything is pushed.
 4. Ariekei opens no PR itself. Open one for the pushed branch, or ask the agent to
    (`gh pr create`). On the next poll the item becomes that PR ("from issue #N") and keeps its
-   worktree, agent conversation and view state. The issue is not listed again while the PR is
+   worktree, agent conversation and view state (also when the PR was merged already, e.g. by
+   the agent right after opening it: then it is cleaned up as usual). The issue is not listed again while the PR is
    open; if the PR is closed without merging, the issue comes back.
 
 ## 10. Tasks: work without a PR or issue

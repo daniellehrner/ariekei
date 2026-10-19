@@ -383,7 +383,7 @@ pub fn after_poll(state: &AppState, repo: &Repo) -> Result<(), String> {
             }
         }
         // Only GitHub's own state counts: a PR that merely dropped out of a search (e.g.
-        // past its 50 results) is not finished. Items with a worktree or session are
+        // one a search cut short) is not finished. Items with a worktree or session are
         // tracked, so they are always fetched by number and have a real state.
         let state_on_github = item.snapshot["state"].as_str().unwrap_or("OPEN");
         let finished =
@@ -460,14 +460,23 @@ fn follow_pr(state: &AppState, repo: &Repo, item: &WorkItem) -> Result<bool, Str
     let Some((head_owner, head_ref)) = pushed_head(repo, branch)? else {
         return Ok(false); // not pushed yet
     };
-    let Some(found) = github::pull_for_head(
-        &repo.owner,
-        &repo.name,
-        &repo.viewer,
-        &head_owner,
-        &head_ref,
-    )?
-    else {
+    // Also one already merged: the agent may open and merge it between two polls. Not a
+    // closed one, which may be an earlier attempt (and would end the issue's work).
+    let mut found = None;
+    for pr_state in ["is:open", "is:merged"] {
+        found = github::pull_for_head(
+            &repo.owner,
+            &repo.name,
+            &repo.viewer,
+            &head_owner,
+            &head_ref,
+            pr_state,
+        )?;
+        if found.is_some() {
+            break;
+        }
+    }
+    let Some(found) = found else {
         return Ok(false); // no PR yet
     };
     let number = found.number;
@@ -553,6 +562,7 @@ pub fn link_branch_pr(
         &repo.viewer,
         &head_owner,
         &head_ref,
+        "is:open",
     )?
     else {
         return Ok(None);
@@ -1192,6 +1202,26 @@ mod tests {
                     .any(|(_, title, body)| title == "#100 Fix the crash"
                         && body == "Issue #5 now follows its pull request.")
             );
+        }
+
+        #[test]
+        fn an_issue_whose_pr_was_merged_between_two_polls_follows_it_and_is_cleaned_up() {
+            let app = TestApp::new();
+            app.add_issue(json!({"number": 7, "title": "Quick", "assigned": true}));
+            app.poll().unwrap();
+            let id = app.item(7).id;
+            let prepared = prepare(&app.state, id).unwrap();
+            write(&prepared.path.join("a.txt"), "quick fix\n");
+            commit(&prepared.path, "fix", "me");
+            git(&prepared.path, &["push", "-q"]);
+            // An earlier attempt, closed, and the one the agent opened and merged at once.
+            app.add_pr(json!({"number": 140, "title": "Try", "head_ref": prepared.branch, "state": "CLOSED"}));
+            app.add_pr(json!({"number": 141, "title": "Quick fix", "head_ref": prepared.branch, "state": "MERGED"}));
+            app.poll().unwrap();
+            let pr = app.state.store.item(id).unwrap();
+            assert_eq!((pr.kind.as_str(), pr.number), ("pr", 141));
+            app.poll().unwrap();
+            assert!(app.state.store.item(id).unwrap().hidden && !prepared.path.exists());
         }
 
         #[test]

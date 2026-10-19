@@ -15,9 +15,10 @@ reviewing it: [pull-requests.md](pull-requests.md).
   and comments as context and waits for you. **Review** works on the worktree before anything
   is pushed (no "Submit to GitHub" yet).
 - **The issue's PR:** Ariekei opens no PR. Once the branch is on its push remote and a PR is
-  open for it (opened by you or the agent, e.g. `gh pr create`), the next poll finds it. The
-  item becomes that PR ("from issue #N") and keeps its worktree, agent conversation and view
-  state.
+  open for it (opened by you or the agent, e.g. `gh pr create`), the next poll finds it, or a
+  merged one if none is open (opened and merged between two polls; a closed one may be an
+  earlier attempt and is not followed). The item becomes that PR ("from issue #N") and keeps
+  its worktree, agent conversation and view state.
 
 ## Tasks
 
