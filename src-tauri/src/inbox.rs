@@ -45,6 +45,11 @@ pub struct Row {
     pub adopted: bool,
     /// Why the row is where it is (for the UI), most urgent first.
     pub attention: Option<&'static str>,
+    /// The PR or issue is "merged" or "closed" on GitHub (its cleanup waits while it is open
+    /// in a window, or because the user kept it).
+    pub finished: Option<&'static str>,
+    /// Finished, and the user keeps it until Done.
+    pub kept: bool,
     /// Why the finished item was not cleaned up, if it was not.
     pub cleanup_blockers: Option<Vec<String>>,
     /// For a PR or issue a task's agent opened: the task.
@@ -148,6 +153,8 @@ mod tests {
             update: None,
             adopted: false,
             attention: None,
+            finished: None,
+            kept: false,
             cleanup_blockers: None,
             task_id: None,
             agent_item: None,

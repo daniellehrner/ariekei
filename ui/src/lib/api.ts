@@ -37,6 +37,11 @@ export interface Row {
   kind: "pr" | "issue" | "task";
   issueNumber: number | null;
   cleanupBlockers: string[] | null;
+  /** The PR or issue is merged or closed on GitHub, not cleaned up yet: it is open in a
+   *  window (it asks), the user kept it, its agent is mid-turn, or work would be lost. */
+  finished: "merged" | "closed" | null;
+  /** Finished, and the user keeps it until Done. */
+  kept: boolean;
   title: string;
   author: string;
   /** Why it is in the Inbox, the strongest reason (see `poller::role_of`). */
@@ -259,6 +264,7 @@ export const api = {
   postComment: (id: number, body: string) => invoke<void>("post_comment", { id, body }),
   resolveThread: (threadId: string, resolved: boolean) => invoke<void>("resolve_thread", { threadId, resolved }),
   markDone: (id: number) => invoke<Cleanup>("mark_done", { id }),
+  keepItem: (id: number) => invoke<void>("keep_item", { id }),
   discardLosses: (id: number) => invoke<string[]>("discard_losses", { id }),
   discardTask: (id: number) => invoke<Cleanup>("discard_task", { id }),
   // `loaded`: the file as the editor got it; the save is refused if it changed on disk since.

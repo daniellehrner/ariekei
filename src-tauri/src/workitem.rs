@@ -201,6 +201,8 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             update: None,
             adopted: false,
             attention: None,
+            finished: None,
+            kept: false,
             cleanup_blockers: None,
             issue_number: None,
             task_id: None,
@@ -236,6 +238,8 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             update: None,
             adopted: false,
             attention: None,
+            finished: None,
+            kept: false,
             cleanup_blockers: None,
             issue_number: None,
             task_id: None,
@@ -271,6 +275,8 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             update: None,
             adopted: false,
             attention: None,
+            finished: None,
+            kept: false,
             cleanup_blockers: None,
             issue_number: item.issue_number,
             task_id: None,
@@ -292,6 +298,14 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
     row.adopted = worktree.is_some() && !item.worktree_created;
     row.removable = removable(&item);
     row.worktree = worktree.map(|p| p.to_string_lossy().into_owned());
+    if !item.is_task() {
+        row.finished = match item.snapshot["state"].as_str() {
+            Some("MERGED") => Some("merged"),
+            Some("CLOSED") => Some("closed"),
+            _ => None,
+        };
+    }
+    row.kept = item.kept;
     row.cleanup_blockers = item.cleanup_blockers;
     Some(row)
 }

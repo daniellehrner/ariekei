@@ -29,6 +29,11 @@ fn busy(state: &AppState, id: i64) -> bool {
     )
 }
 
+/// Item `id` is open in a window.
+fn shown(state: &AppState, id: i64) -> bool {
+    !state.windows.showing(&id.to_string()).is_empty()
+}
+
 /// Why the item cannot be cleaned up without losing something; empty if it can: uncommitted
 /// changes in its worktree, and commits at its HEAD or on its branch (deleted with it) that no
 /// remote has or had. `prs` are the PRs whose heads GitHub keeps (the item's own, a task's
@@ -419,8 +424,13 @@ pub fn after_poll(state: &AppState, repo: &Repo) -> Result<(), String> {
         let state_on_github = item.snapshot["state"].as_str().unwrap_or("OPEN");
         let finished =
             !item.hidden && !item.is_task() && matches!(state_on_github, "MERGED" | "CLOSED");
+        if !finished && item.kept {
+            state.store.set_kept(item.id, false)?; // reopened
+        }
         // An agent in the middle of a turn loses nothing by waiting: a later poll cleans up.
-        if !finished || busy(state, item.id) {
+        // Neither does one the user has open (they may be reading its agent's answer): the
+        // item asks them, and is cleaned up after they left it. One they kept waits for Done.
+        if !finished || busy(state, item.id) || item.kept || shown(state, item.id) {
             continue;
         }
         let had_blockers = item.cleanup_blockers.is_some();
@@ -635,6 +645,7 @@ mod tests {
             task_id: None,
             starred: false,
             past_transcripts: vec![],
+            kept: false,
         }
     }
 
@@ -991,6 +1002,58 @@ mod tests {
                 .report(&id.to_string(), AgentStatus::Finished, None);
             app.poll().unwrap();
             assert!(!wt.exists() && app.state.store.item(id).unwrap().hidden);
+        }
+
+        #[test]
+        fn a_merged_pr_open_in_a_window_waits_for_the_user() {
+            let app = TestApp::new();
+            let (id, wt) = app.pr_with_worktree(10, "feature/x");
+            app.state.windows.set_item("main", Some(id.to_string()));
+            app.set("prs", 10, json!({"state": "MERGED"}));
+            app.poll().unwrap();
+            app.poll().unwrap();
+            assert!(wt.exists() && !app.state.store.item(id).unwrap().hidden);
+            let row = app.row(10).unwrap();
+            assert_eq!((row.finished, row.kept), (Some("merged"), false));
+
+            // Left without an answer: cleaned up as usual.
+            app.state.windows.set_item("main", None);
+            app.poll().unwrap();
+            assert!(!wt.exists() && app.state.store.item(id).unwrap().hidden);
+        }
+
+        #[test]
+        fn a_finished_item_the_user_kept_waits_for_done() {
+            let app = TestApp::new();
+            let (id, wt) = app.pr_with_worktree(10, "feature/x");
+            app.state.windows.set_item("main", Some(id.to_string()));
+            app.set("prs", 10, json!({"state": "CLOSED"}));
+            app.poll().unwrap();
+            app.state.store.set_kept(id, true).unwrap();
+            app.state.windows.set_item("main", None);
+            app.poll().unwrap();
+            assert!(wt.exists() && app.row(10).is_some_and(|r| r.kept));
+
+            // Reopened, it is no longer kept: closed again, it is cleaned up.
+            app.set("prs", 10, json!({"state": "OPEN"}));
+            app.poll().unwrap();
+            assert!(!app.state.store.item(id).unwrap().kept);
+            app.set("prs", 10, json!({"state": "CLOSED"}));
+            app.poll().unwrap();
+            assert!(!wt.exists());
+
+            // Done on a kept one cleans it up, and forgets it was kept.
+            let (id, wt) = app.pr_with_worktree(11, "feature/y");
+            app.set("prs", 11, json!({"state": "MERGED"}));
+            app.state.store.set_kept(id, true).unwrap();
+            app.poll().unwrap();
+            assert!(wt.exists());
+            assert!(matches!(
+                clean_up(&app.state, id),
+                Ok(Cleanup::Cleaned { .. })
+            ));
+            let item = app.state.store.item(id).unwrap();
+            assert!(!wt.exists() && item.hidden && !item.kept);
         }
 
         #[test]

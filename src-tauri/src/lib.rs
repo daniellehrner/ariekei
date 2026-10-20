@@ -514,6 +514,12 @@ async fn mark_done(app: tauri::AppHandle, id: i64) -> Res<lifecycle::Cleanup> {
     blocking(app, move |s| workitem::mark_done(s, id)).await
 }
 
+/// Keeps the finished item until Done instead of cleaning it up automatically.
+#[tauri::command]
+fn keep_item(state: State<'_, AppState>, id: i64) -> Res<()> {
+    state.store.set_kept(id, true)
+}
+
 /// What discarding the task would lose (uncommitted changes, commits not on GitHub).
 #[tauri::command]
 async fn discard_losses(app: tauri::AppHandle, id: i64) -> Res<Vec<String>> {
@@ -764,6 +770,7 @@ pub fn run() {
             post_comment,
             resolve_thread,
             mark_done,
+            keep_item,
             discard_losses,
             discard_task,
             self_rss_kib,

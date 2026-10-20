@@ -530,6 +530,11 @@ Items are cleaned up:
   GitHub (deleted, or moved to another repository; a notice says so), and
 - **on Done**, at any time, after you confirm (**Clean up**).
 
+Not while you have the item open: then a bar says it was merged or closed and asks. **Clean
+up** cleans it up now, **Keep until Done** keeps it (worktree, agent and all) until you press
+Done; reopened on GitHub, it is no longer kept. If you just open another item, the next poll
+cleans it up.
+
 Cleanup is **refused while anything would be lost**. The reasons are shown on the item, and a
 finished item says "Cleanup blocked" in the Inbox:
 

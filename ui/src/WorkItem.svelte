@@ -275,6 +275,20 @@
     }
   }
 
+  // Finished while open: the user keeps it until Done instead of the automatic cleanup.
+  let keeping = $state(false);
+  async function keep() {
+    keeping = true;
+    try {
+      await api.keepItem(id);
+      onchanged();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      keeping = false;
+    }
+  }
+
   // Discard (tasks only): delete the task with its worktree and branch, after the user saw
   // what that loses.
   let losses = $state<string[] | null>(null);
@@ -440,6 +454,19 @@
         {#snippet action()}
           <Button size="sm" variant="gh" mark="gh" loading={fixing === "update"} disabled={!!fixing} onclick={() => fix("update", () => api.updateBranch(row.id))}
             data-update-branch>Update {row.branch}</Button>
+        {/snippet}
+      </Banner>
+    </div>
+  {/if}
+  {#if row.finished && !row.kept && !shownBlockers && !isTask}
+    <div class="banner">
+      <Banner tone="gh" icon="done" data-finished={row.finished}>
+        <span>{row.kind === "pr" ? "This PR" : "This issue"} was {row.finished} on GitHub. {row.worktree
+          ? `Clean up ${row.adopted ? "its agent" : "its worktree and agent"}`
+          : "Clean it up"} now, or keep it until you press Done? If you just open another item, it is cleaned up then.</span>
+        {#snippet action()}
+          <Button size="sm" disabled={keeping} onclick={keep} data-keep>Keep until Done</Button>
+          <Button size="sm" variant="primary" disabled={keeping} onclick={done} data-clean-up>Clean up</Button>
         {/snippet}
       </Banner>
     </div>

@@ -88,6 +88,9 @@ told apart in grey-scale and with colour blindness:
   exited (exit 1).") with **Start again**; its last output stays, dimmed and inert. Not for a merged or closed item: its branch is done
   with.
 - Lifecycle notes ("Created the worktree …") are one line and go after six seconds.
+- A PR or issue that GitHub finishes while it is open in a window is not cleaned up under the
+  user (they may be reading its agent's answer): a bar asks, **Clean up** or **Keep until
+  Done**; left without an answer, it is cleaned up on the next poll.
 - Done asks with a neutral (amber) confirm: it only cleans up what is safe. Discard is a quiet
   button and asks with a red confirm, listing what would be lost.
 

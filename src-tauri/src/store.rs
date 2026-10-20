@@ -126,6 +126,11 @@ ALTER TABLE work_items ADD COLUMN past_transcripts TEXT;
 -- while the current one loads.
 ALTER TABLE work_items ADD COLUMN conversation TEXT;
 "#,
+    r#"
+-- The user kept the finished item (it finished while they had it open): no automatic cleanup,
+-- Done cleans it up.
+ALTER TABLE work_items ADD COLUMN kept INTEGER NOT NULL DEFAULT 0;
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -168,6 +173,8 @@ pub struct WorkItem {
     pub starred: bool,
     /// Transcripts of the item's earlier conversations (see `switch_session`).
     pub past_transcripts: Vec<PathBuf>,
+    /// Finished, and the user chose to keep it until Done: no automatic cleanup.
+    pub kept: bool,
 }
 
 impl WorkItem {
@@ -246,7 +253,7 @@ fn err(e: rusqlite::Error) -> String {
 const ITEM_COLUMNS: &str = "id, repo_id, number, snapshot, open, worktree_path, branch, session_id, \
      session_started, transcript_path, last_seen, ui_state, role, tracked, kind, \
      issue_number, worktree_created, hidden, cleanup_blockers, task_id, starred, branch_created, \
-     past_transcripts";
+     past_transcripts, kept";
 
 fn item_from_row(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
     let json = |s: Option<String>| s.and_then(|s| serde_json::from_str(&s).ok());
@@ -279,6 +286,7 @@ fn item_from_row(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
             .get::<_, Option<String>>(22)?
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default(),
+        kept: r.get(23)?,
     })
 }
 
@@ -680,6 +688,12 @@ impl Store {
         self.update(id, "cleanup_blockers = ?2", value)
     }
 
+    /// The user keeps finished item `id` until Done: no automatic cleanup (`false`: it is
+    /// open again).
+    pub fn set_kept(&self, id: i64, kept: bool) -> Result<(), String> {
+        self.update(id, "kept = ?2", kept)
+    }
+
     /// Item `id` is gone from GitHub (deleted, or moved to another repository): it counts as
     /// closed.
     pub fn mark_gone(&self, id: i64) -> Result<(), String> {
@@ -692,7 +706,7 @@ impl Store {
         conn.execute(
             "UPDATE work_items SET worktree_path = NULL, branch = NULL, worktree_created = 0, session_id = NULL,
              session_started = 0, transcript_path = NULL, past_transcripts = NULL, cleanup_blockers = NULL,
-             hidden = 1 WHERE id = ?1",
+             kept = 0, hidden = 1 WHERE id = ?1",
             [id],
         )
         .map(|_| ())

@@ -8,7 +8,8 @@ through insteadOf. Covers: an assigned issue in the Inbox, Start working (branch
 issue-<N>-<slug> from main, push set up), Done refused while a commit is unpushed and while
 a file is uncommitted, git push → no PR opened, a PR opened for the branch → the item becomes the PR,
 the PR merged → automatic cleanup (worktree, branch, agent, item); and an adopted worktree
-that is kept when its PR is merged. Also: the rate limit used up (the Inbox says so; a
+that is kept when its PR is merged while it is open: the item asks, Keep until Done keeps it
+after the user left it, and Done cleans it up. Also: the rate limit used up (the Inbox says so; a
 refresh recovers), a tracked issue deleted on GitHub (polling goes on), CI going from
 running to failing without the PR changing, automatic cleanup kept back while a merged PR's
 worktree has uncommitted work, and an issue whose branch already has a PR when it is pushed.
@@ -266,7 +267,21 @@ try:
     s.wait(".item [data-notice]", timeout=60)
     print("[adopt]", s.js("return document.querySelector('.item [data-notice]').textContent"))
     contains("an existing worktree is adopted", s.js("return document.querySelector('.item [data-notice]').textContent"), "existing worktree")
+    # Merged while the user has it open: not cleaned up behind their back, the item asks.
     set_state(42, "MERGED")
+    s.wait(".item [data-finished='merged']", timeout=30)
+    time.sleep(4)  # another poll
+    check("a merged PR open in the window waits for the user", "42" in (rows(s) or []) and os.path.isdir(mine), rows(s))
+    # Kept: it stays after the user left it, until Done.
+    s.click(s.wait(".item [data-keep]"))
+    eventually("kept, the bar goes", lambda: bool(s.find(".item [data-finished]")), lambda v: not v, timeout=20)
+    select_row(s, 130)
+    s.wait(".item header .title", timeout=30, text="#130")
+    time.sleep(7)  # two polls
+    check("a kept item is not cleaned up", "42" in (rows(s) or []), rows(s))
+    select_row(s, 42)
+    s.wait(".item header .title", timeout=30, text="Feature x")
+    press_done(s)
     wait_gone(s, 42)
     print("[merged] adopted worktree kept:", os.path.isdir(mine), "| its branch kept:",
           subprocess.run(["git", "-C", clone, "show-ref", "--verify", "--quiet", "refs/heads/pr-42"]).returncode == 0)
