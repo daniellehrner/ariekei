@@ -181,7 +181,7 @@ A work item is a pull request, an issue or a task. Selecting it shows its header
 | Tab | Content |
 |---|---|
 | **Overview** | State, branches (`author wants to merge head into base`), labels, description, reviewers, checks (click a check to open it), the discussion and a link to GitHub. For a task: what to look into, and its linked PRs and issues. |
-| **Comments** | Review threads by file, unresolved first, with their diff snippet; the conversation; reply, resolve and comment. Not shown for tasks. |
+| **Comments** | Review threads, unresolved first and the latest commented first, with their diff snippet; the conversation; reply, resolve and comment. Not shown for tasks. |
 | **Review** | The diff review (see [Reviewing changes](#7-reviewing-changes)). |
 | **Terminal** | The agent, running in the item's worktree. Only with a worktree. |
 
@@ -195,6 +195,7 @@ between items freely.
 
 An item shows at once what Ariekei loaded before: Overview and Comments show the PR or issue as
 GitHub last gave it, and replace that by themselves once GitHub answers (and after every poll).
+If GitHub does not answer, a bar says so above what was loaded before.
 The Review shows what your clone has, and asks GitHub in the background (see
 [the review bar](#7-reviewing-changes)).
 
@@ -395,12 +396,17 @@ approval.
 
 The **Comments** tab shows:
 
-- **Review threads**, unresolved first, each with the file and line, an `outdated` label where
-  it applies, the last lines of the diff it refers to, and its comments.
+- **Review threads**, unresolved first, and among those the latest commented first (a reply to an
+  old thread brings it to the top), each with the file and line, an `outdated` label where it
+  applies, the last lines of the diff it refers to, and its comments.
   - **Reply** → **Reply on GitHub**.
   - **Resolve** / **Unresolve** (resolved threads are folded; click to open).
   - **Show in Review** opens the file in the Review tab.
 - The **Conversation**: comments and reviews in order.
+
+Comments and reviews by others since you last opened the item are labeled `new`, and the heading
+counts the threads that have some. With the item open, new ones arrive with each poll; the item
+does not show the violet diamond in the Inbox for what is in front of you.
 - **New comment** → **Comment on GitHub**.
 
 Markdown is rendered by GitHub and sanitized; links open in your system browser.

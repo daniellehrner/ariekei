@@ -207,7 +207,8 @@ export const api = {
   openItem: (id: number) => invoke<void>("open_item", { id }),
   inbox: () => invoke<Row[]>("inbox"),
   refresh: () => invoke<void>("refresh"),
-  markSeen: (id: number) => invoke<void>("mark_seen", { id }),
+  /** How far the user had seen the item's activity (its latest by others) before this, and now. */
+  markSeen: (id: number) => invoke<{ before: string | null; after: string | null }>("mark_seen", { id }),
   reviewSeen: (agentItem: number) => invoke<void>("review_seen", { agentItem }),
   setActiveItem: (id: number | null) => invoke<void>("set_active_item", { id }),
   selectedItem: () => invoke<number | null>("selected_item"),

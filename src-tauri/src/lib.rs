@@ -242,7 +242,7 @@ fn refresh(state: State<'_, AppState>) {
 }
 
 #[tauri::command]
-fn mark_seen(state: State<'_, AppState>, id: i64) -> Res<()> {
+fn mark_seen(state: State<'_, AppState>, id: i64) -> Res<workitem::Seen> {
     workitem::mark_seen(&state, id)
 }
 

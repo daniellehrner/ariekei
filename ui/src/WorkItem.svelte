@@ -27,6 +27,7 @@
     row,
     rows,
     repoId,
+    viewer,
     onchanged,
     onselect,
   }: {
@@ -34,6 +35,8 @@
     /** The Inbox rows: a task's PRs and issues, a PR's or issue's task. */
     rows: Row[];
     repoId: number;
+    /** The user's GitHub login. */
+    viewer: string;
     onchanged: () => void;
     onselect: (id: number) => void;
   } = $props();
@@ -48,6 +51,13 @@
   let ui = $state<ItemUi | null>(null);
   let conv = $state<Conversation | null>(null);
   let convError: string | null = $state(null);
+  // Conversation loads started, and the latest one shown: one that took longer than a later
+  // one must not replace what that showed.
+  let convLoads = 0;
+  let convShown = 0;
+  // How far the user had seen the item's activity when they opened it: Comments marks what is
+  // newer as new.
+  let since: string | null = $state(null);
   let preparing = $state(false);
   // Polls of this repo since the item opened: the review checks GitHub for newer after each.
   let polls = $state(0);
@@ -102,14 +112,20 @@
 
   async function loadConversation(current: number) {
     if (isTask) return;
+    const n = ++convLoads;
     try {
       const c = await api.conversation(current);
-      if (current === id) {
-        conv = c;
-        convError = null;
-      }
+      if (current !== id || n < convShown) return;
+      convShown = n;
+      conv = c;
+      convError = null;
+      // What the user sees now is seen: the Inbox no longer says it has new activity (a poll
+      // with new comments says so while the item is open).
+      api.markSeen(current).then((s) => {
+        if (s.before !== s.after) onchanged();
+      }, () => {});
     } catch (e) {
-      if (current === id) convError = String(e);
+      if (current === id && n > convShown) convError = String(e);
     }
   }
 
@@ -124,6 +140,7 @@
     ui = null;
     conv = null;
     convError = error = notice = null;
+    since = null;
     blockers = null;
     confirmDone = false;
     losses = null;
@@ -141,7 +158,10 @@
       if (openOn.item === current && openOn.tab && (openOn.tab !== "terminal" || row.worktree)) ui.tab = openOn.tab;
       openOn.item = openOn.tab = null;
     });
-    api.markSeen(current).then(onchanged);
+    api.markSeen(current).then((s) => {
+      if (current === id) since = s.before;
+      onchanged();
+    });
     api.setActiveItem(current);
     // As it was last loaded, at once; the current one replaces it when GitHub answers.
     if (!isTask) {
@@ -442,7 +462,12 @@
           <TaskOverview task={row} {links} {onselect} />
         {:else if tab === "overview" || tab === "comments"}
           {#if conv}
-            {#if tab === "overview"}<Overview {conv} />{:else}<Comments {id} {conv} onchanged={changed} onshow={hasReview ? showInReview : undefined} />{/if}
+            {#if convError}
+              <div class="banner">
+                <Banner tone="warn" data-stale>Shown as GitHub last gave it: could not update it ({convError}). Ariekei tries again with the next poll.</Banner>
+              </div>
+            {/if}
+            {#if tab === "overview"}<Overview {conv} />{:else}<Comments {id} {conv} {since} {viewer} onchanged={changed} onshow={hasReview ? showInReview : undefined} />{/if}
           {:else}
             <p class="hint">{convError ? `Could not load the ${row.kind === "pr" ? "pull request" : "issue"} from GitHub: ${convError}` : "Loading…"}</p>
           {/if}

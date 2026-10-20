@@ -5,16 +5,27 @@
   import Button from "./controls/Button.svelte";
   import Icon from "./controls/Icon.svelte";
   import Pill from "./controls/Pill.svelte";
-  import { api, type Conversation, type Thread } from "./lib/api";
+  import { api, type Conversation, type GhComment, type Thread } from "./lib/api";
+  import { byLatest, isNew } from "./lib/conversation";
   import { hunkTail } from "./lib/hunk";
   import { externalLinks, sanitize } from "./lib/html";
 
   let {
     id,
     conv,
+    since,
+    viewer,
     onchanged,
     onshow,
-  }: { id: number; conv: Conversation; onchanged: () => void; onshow?: (path: string) => void } = $props();
+  }: {
+    id: number;
+    conv: Conversation;
+    /** How far the user had seen the item's activity when they opened it: what is newer is new. */
+    since: string | null;
+    viewer: string;
+    onchanged: () => void;
+    onshow?: (path: string) => void;
+  } = $props();
 
   let replyTo: string | null = $state(null);
   let replyText = $state("");
@@ -52,8 +63,10 @@
     return items.sort((a, b) => a.at.localeCompare(b.at));
   });
 
-  const unresolved = $derived(conv.threads.filter((t) => !t.resolved));
-  const resolved = $derived(conv.threads.filter((t) => t.resolved));
+  const fresh = (c: GhComment) => isNew({ author: c.author, at: c.createdAt }, since, viewer);
+  const unresolved = $derived(byLatest(conv.threads.filter((t) => !t.resolved)));
+  const resolved = $derived(byLatest(conv.threads.filter((t) => t.resolved)));
+  const withNew = $derived(conv.threads.filter((t) => t.comments.some(fresh)).length);
 
   async function act(f: () => Promise<void>) {
     busy = true;
@@ -84,9 +97,9 @@
 
 {#snippet comments(t: Thread)}
   {#each t.comments as c (c.id)}
-    <div class="comment">
+    <div class="comment" data-new={fresh(c) || undefined}>
       <div class="said">
-        <span class="who"><strong>{c.author}</strong> <span class="muted">· {ago(c.createdAt)}</span></span>
+        <span class="who"><strong>{c.author}</strong> <span class="muted">· {ago(c.createdAt)}</span>{#if fresh(c)} <Pill size="sm" tone="gh">new</Pill>{/if}</span>
         <div class="markdown">{@html sanitize(c.bodyHtml)}</div>
       </div>
     </div>
@@ -128,7 +141,7 @@
     {#if error}<p class="error">{error}</p>{/if}
 
     {#if conv.threads.length}
-      <h2>Review threads · {unresolved.length} unresolved</h2>
+      <h2>Review threads · {unresolved.length} unresolved{withNew ? ` · ${withNew} with new comments` : ""}</h2>
       {#each unresolved as t (t.id)}{@render thread(t)}{/each}
       {#each resolved as t (t.id)}
         {@const open = opened.includes(t.id)}
@@ -138,6 +151,7 @@
             <code>{short(t.path)}{t.line ? `:${t.line}` : ""}</code>
             {#if t.outdated}<Pill size="sm">outdated</Pill>{/if}
             <Pill size="sm" tone="ok">resolved</Pill>
+            {#if t.comments.some(fresh)}<Pill size="sm" tone="gh">new</Pill>{/if}
             <span class="summary">{t.comments[0] ? `${t.comments[0].author}: ${text(t.comments[0].bodyHtml)}` : ""}</span>
           </button>
           {#if open}
@@ -157,12 +171,13 @@
       <ol class="timeline">
         {#each timeline as item}
           {@const look = item.kind === "review" ? REVIEW_STATE[item.state] : null}
-          <li>
+          <li data-new={isNew(item, since, viewer) || undefined}>
             <div class="said">
               <span class="who">
                 <strong>{item.author}</strong>
                 <span class="muted">{item.kind === "review" ? "reviewed" : "commented"} · {ago(item.at)}</span>
                 {#if look?.[1]}<Pill size="sm" tone={look[1]}>{look[0]}</Pill>{/if}
+                {#if isNew(item, since, viewer)}<Pill size="sm" tone="gh">new</Pill>{/if}
               </span>
               {#if item.html.trim()}<div class="markdown">{@html sanitize(item.html)}</div>{/if}
             </div>

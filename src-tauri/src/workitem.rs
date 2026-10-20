@@ -304,9 +304,19 @@ pub fn mark_done(state: &AppState, id: i64) -> Result<crate::lifecycle::Cleanup,
     crate::lifecycle::clean_up(state, id)
 }
 
+/// How far the user had seen an item's GitHub activity (its `latest_activity`), before and
+/// after `mark_seen`.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Seen {
+    pub before: Option<String>,
+    pub after: Option<String>,
+}
+
 /// Opening an item counts as seeing its current GitHub activity, and keeps it in the
-/// Inbox from now on (e.g. after the review request is gone because the user reviewed).
-pub fn mark_seen(state: &AppState, id: i64) -> Result<(), String> {
+/// Inbox from now on (e.g. after the review request is gone because the user reviewed). So
+/// does loading its conversation while it is open. `before` tells the item which comments are
+/// new to the user.
+pub fn mark_seen(state: &AppState, id: i64) -> Result<Seen, String> {
     let item = state.store.item(id)?;
     if !item.tracked {
         state.store.set_tracked(id)?;
@@ -315,10 +325,14 @@ pub fn mark_seen(state: &AppState, id: i64) -> Result<(), String> {
         "issue" => issue_summary(&item).ok().and_then(|i| i.latest_activity),
         _ => summary(&item).ok().and_then(|p| p.latest_activity),
     };
-    if let Some(at) = latest {
-        state.store.set_last_seen(id, &at)?;
+    if let Some(at) = &latest {
+        state.store.set_last_seen(id, at)?;
     }
-    Ok(())
+    let before = item.last_seen.filter(|s| !s.is_empty());
+    Ok(Seen {
+        after: latest.or(before.clone()),
+        before,
+    })
 }
 
 pub fn prepare(state: &AppState, id: i64) -> Result<Prepared, String> {
@@ -1179,7 +1193,7 @@ fn inside_worktree(path: &str) -> bool {
 mod tests {
     use super::*;
     use crate::testkit::{TestApp, commit, git, write};
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     #[test]
     fn edits_are_written_only_inside_the_worktree() {
@@ -1301,6 +1315,55 @@ mod tests {
             review_state(&app.state, id, false).unwrap().head,
             git(&app.upstream, &["rev-parse", "feat"])
         );
+    }
+
+    #[test]
+    fn seeing_an_item_says_how_far_the_user_had_seen_it() {
+        let app = TestApp::new();
+        let thread = |replies: Value| {
+            json!([{"id": "T1", "path": "a.txt", "line": 1, "comment_id": 1, "author": "me",
+                    "html": "<p>Why?</p>", "replies": replies}])
+        };
+        let carol =
+            |id: i64, at: &str| json!({"comment_id": id, "author": "carol", "html": "", "at": at});
+        app.add_pr(json!({"number": 5, "title": "Feat", "head_ref": "main", "author": "bob", "requested": true,
+                          "threads": thread(json!([carol(2, "2026-10-12T08:00:00Z")]))}));
+        app.poll().unwrap();
+        let id = app.item(5).id;
+        let new_activity = || {
+            app.rows()
+                .into_iter()
+                .find(|r| r.id == id)
+                .unwrap()
+                .new_activity
+        };
+        // Found with Carol's reply: that is not new to the user.
+        let first = Some("2026-10-12T08:00:00Z".to_owned());
+        assert_eq!(
+            mark_seen(&app.state, id).unwrap(),
+            Seen {
+                before: first.clone(),
+                after: first.clone()
+            }
+        );
+
+        // Carol replies again while the item is open; the poll says so, and the conversation
+        // loading after it clears that.
+        let replies = json!([
+            carol(2, "2026-10-12T08:00:00Z"),
+            carol(3, "2026-10-13T08:00:00Z")
+        ]);
+        app.set("prs", 5, json!({"threads": thread(replies)}));
+        app.poll().unwrap();
+        assert!(new_activity());
+        assert_eq!(
+            mark_seen(&app.state, id).unwrap(),
+            Seen {
+                before: first,
+                after: Some("2026-10-13T08:00:00Z".into())
+            }
+        );
+        assert!(!new_activity());
     }
 
     #[test]
