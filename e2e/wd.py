@@ -3,7 +3,7 @@
 
 """Drives the Ariekei app for the e2e scenarios (stdlib only).
 
-By default the app is a test build (`cargo build --features e2e`, see src-tauri/src/e2e.rs):
+By default the app is a test build (`npx tauri build --no-bundle --features e2e`, see e2e/run.py):
 `Session(app)` starts it with the e2e bridge on a free localhost port and runs JavaScript in
 its windows through it. This works on Linux, macOS and Windows. The environment of the
 calling process (fake gh/claude, data dir, …) is the app's environment.

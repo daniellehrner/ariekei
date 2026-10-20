@@ -93,7 +93,7 @@ json.dump({"viewer": "me", "prs": [
     {"number": 43, "title": "Add y to the parser", "author": "alice", "head_ref": "feature/y", "head_sha": sha43, "base_ref": "main",
      "body_html": "<p>Adds <strong>y</strong>. See <a href=\"https://example.com/spec\">the spec</a>.</p>"
                   "<script>window.__pwned = 1</script><img src=\"x\" onerror=\"window.__pwned = 2\">",
-     "comments": [{"author": "carol", "html": "<p>Nice idea.</p>", "at": "2026-10-11T12:00:00Z"}],
+     "comments": [{"author": "carol", "html": "<p>Nice idea.</p>"}],
      "threads": [{"id": "T1", "path": "a.txt", "line": 10, "comment_id": 101, "author": "bob", "html": "<p>Why this change?</p>",
                   "diff_hunk": "@@ -9,2 +9,2 @@\n line9\n-line10\n+line10 changed"}]},
     {"number": 44, "title": "Add z", "author": "dave", "head_ref": "feature/z", "head_sha": sha44, "base_ref": "main", "requested": True},
@@ -527,15 +527,32 @@ try:
     eventually("Reload shows the push", marker, lambda v: "2 commits" in v, timeout=30)
     check("and the bar goes", not s.find("[data-newer]"))
 
+    # Carol's comment becomes activity the poll sees; loading the open item's conversation after
+    # the poll counts as seeing it. Left on Comments, #43 comes back on Comments.
+    def edit_43(change):
+        data = json.load(open(os.path.join(gh_dir, "data.json")))
+        change(next(pr for pr in data["prs"] if pr["number"] == 43))
+        json.dump(data, open(os.path.join(gh_dir, "data.json"), "w"))
+    def poll():
+        s.js("document.querySelector('[data-refresh]').click()")
+        eventually("the poll is done", lambda: bool(s.find("[data-refreshing]")), lambda v: not v, timeout=20)
+    edit_43(lambda pr: pr["comments"][0].update(at="2026-10-11T12:00:00Z"))
+    tab(s, "Comments")
+    poll()
+    time.sleep(2)
+    select_row(s, 44)
+    s.wait(".item header .title", timeout=30, text="#44")
+    select_row(s, 43)
+    s.wait(".item header .title", timeout=30, text="#43")
+    equal("#43 opens on the tab it was left on", s.js("return document.querySelector('.item [aria-selected=true][data-tab]')?.dataset.tab"), "comments")
+    check("nothing is new yet", not s.find("[data-new]"))
+
     # Carol answers in a thread while the item is open: once the poll brings it, Comments shows
     # that thread first, her reply marked new, and the Inbox does not say the item has news.
-    data = json.load(open(os.path.join(gh_dir, "data.json")))
-    next(pr for pr in data["prs"] if pr["number"] == 43)["threads"].append(
+    edit_43(lambda pr: pr["threads"].append(
         {"id": "T2", "path": "b.txt", "line": 1, "comment_id": 102, "author": "bob", "html": "<p>And this?</p>",
-         "replies": [{"comment_id": 103, "author": "carol", "html": "<p>Same question.</p>", "at": "2026-10-12T09:00:00Z"}]})
-    json.dump(data, open(os.path.join(gh_dir, "data.json"), "w"))
-    tab(s, "Comments")
-    s.js("document.querySelector('[data-refresh]').click()")
+         "replies": [{"comment_id": 103, "author": "carol", "html": "<p>Same question.</p>", "at": "2026-10-12T09:00:00Z"}]}))
+    poll()
     first = lambda: s.js("return document.querySelector('.thread')?.dataset.thread ?? ''")
     eventually("a thread with a new reply comes first", first, lambda v: v == "T2", timeout=30)
     equal("only Carol's reply is new", s.js("return document.querySelectorAll('[data-new]').length"), 1)

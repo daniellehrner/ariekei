@@ -3,8 +3,12 @@
 
 """Runs the e2e scenarios against a test build of the app, each in a fresh work directory.
 
-  cd src-tauri && cargo build --release --features e2e   (after `npm run build`)
+  npx tauri build --no-bundle --features e2e
   python3 e2e/run.py src-tauri/target/release/ariekei [scenario ...]
+
+Not `cargo build`: without Tauri's custom-protocol feature (which `tauri build` turns on) the app
+loads its page from the Vite dev server (devUrl, localhost:1420) instead of dist/, and with none
+running the window stays empty and no scenario gets past the start.
 
 Scenarios: review, windows, lifecycle, task, agent (default: all). GitHub is e2e/fake_gh.py and the
 agent e2e/fake_claude.py, so nothing leaves the machine. On Linux the app runs on a private
@@ -55,6 +59,21 @@ def start(args):
     return proc, out.decode().strip()
 
 
+BUS_CONFIG = """<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:tmpdir=/tmp</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+"""
+
+
 def isolated():
     """Linux: a private Xvfb display and D-Bus session for the app (and their environment).
     Only DISPLAY would not do: GTK prefers Wayland while WAYLAND_DISPLAY is set."""
@@ -65,7 +84,15 @@ def isolated():
     xvfb, display = start(["Xvfb", "-displayfd", "{fd}", "-screen", "0", "1400x900x24", "-nolisten", "tcp"])
     procs, env = [xvfb], {"DISPLAY": f":{display}", "GDK_BACKEND": "x11"}
     if shutil.which("dbus-daemon"):
-        bus, address = start(["dbus-daemon", "--session", "--nofork", "--print-address={fd}"])
+        # The session bus's own config would start the desktop's services on demand: the
+        # portal (where the app looks up the dark theme) then never answers there, and the
+        # app's start waits out D-Bus's 25 s timeout. Without them a lookup fails at once.
+        with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as conf:
+            conf.write(BUS_CONFIG)
+        try:
+            bus, address = start(["dbus-daemon", f"--config-file={conf.name}", "--nofork", "--print-address={fd}"])
+        finally:
+            os.unlink(conf.name)
         procs.append(bus)
         env["DBUS_SESSION_BUS_ADDRESS"] = address
     return procs, env
