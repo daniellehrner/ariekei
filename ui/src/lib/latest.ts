@@ -20,3 +20,27 @@ export function newestLoad() {
     failed: (n: number) => n > shown,
   };
 }
+
+/** Reloads of what is shown, and checks in the background whether there is newer: a check
+ *  that overlaps a reload compares with a state that is not (or no longer) the one shown, so
+ *  its answer does not count. */
+export function reloadsAndChecks() {
+  let started = 0;
+  let running = 0;
+  return {
+    /** A reload starts: call the result when it ends, however it ends. */
+    reload() {
+      started++;
+      running++;
+      let ended = false;
+      return () => {
+        if (!ended) running--;
+        ended = true;
+      };
+    },
+    /** A check starts: its number, for `counts`. */
+    check: () => (running === 0 ? started : -1),
+    /** Check `n` has its answer: whether it counts. */
+    counts: (n: number) => n === started,
+  };
+}

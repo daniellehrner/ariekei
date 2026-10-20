@@ -50,6 +50,7 @@
   import { hscroll } from "./lib/hscroll";
   import { externalLinks } from "./lib/html";
   import { isTyping } from "./lib/keys";
+  import { reloadsAndChecks } from "./lib/latest";
   import { shortcuts } from "./lib/layout.svelte";
   import { durationToken } from "./lib/tokens";
   import { languageFor } from "./lib/languages";
@@ -205,9 +206,13 @@
   const shownRev = $derived(range ? (range[1] ?? (review?.dirty ? null : review?.head ?? null)) : null);
   const editable = $derived(range?.[1] === null);
 
+  // A `check` that overlaps a Reload would compare with the review shown before it.
+  const shown = reloadsAndChecks();
+
   // What the clone has, at once; then `check` asks GitHub in the background.
   async function load(refresh = false) {
     error = null;
+    const ended = refresh ? shown.reload() : () => {};
     if (refresh) newer = null;
     try {
       review = await api.reviewState(id, refresh);
@@ -226,6 +231,8 @@
         fetching = false;
       }
       return;
+    } finally {
+      ended();
     }
     if (!refresh) check();
   }
@@ -247,9 +254,10 @@
     try {
       do {
         again = false;
+        const n = shown.check();
         await api.reviewFetch(id);
         const next = await api.reviewState(id);
-        if (review) newer = whatMoved(review, next) ?? newer;
+        if (review && shown.counts(n)) newer = whatMoved(review, next) ?? newer;
       } while (again);
     } catch (e) {
       console.warn(`review: could not check GitHub for newer: ${e}`);

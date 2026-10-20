@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { newestLoad } from "./latest.ts";
+import { newestLoad, reloadsAndChecks } from "./latest.ts";
 
 test("a slow load that finishes after a newer one is not shown", () => {
   const loads = newestLoad();
@@ -30,4 +30,35 @@ test("an older load that succeeds after a newer one failed is still shown", () =
   const [older, newer] = [loads.start(), loads.start()];
   assert.ok(loads.failed(newer));
   assert.ok(loads.succeeded(older), "better than what was there before");
+});
+
+test("a check that overlaps a reload does not count", () => {
+  const shown = reloadsAndChecks();
+  const before = shown.check();
+  const ended = shown.reload();
+  const during = shown.check();
+  assert.ok(!shown.counts(before), "it began before the reload: compared with the old state");
+  ended();
+  assert.ok(!shown.counts(during), "it began during the reload: compared with the old state");
+  const after = shown.check();
+  assert.ok(shown.counts(after));
+});
+
+test("a check during a reload does not count, even if it ends before the reload does", () => {
+  const shown = reloadsAndChecks();
+  const ended = shown.reload();
+  assert.ok(!shown.counts(shown.check()));
+  ended();
+  ended();
+  assert.ok(shown.counts(shown.check()), "ending a reload twice counts once");
+});
+
+test("checks between reloads count", () => {
+  const shown = reloadsAndChecks();
+  assert.ok(shown.counts(shown.check()));
+  shown.reload()();
+  const next = shown.check();
+  assert.ok(shown.counts(next));
+  shown.reload();
+  assert.ok(!shown.counts(next), "a later reload began before it had its answer");
 });

@@ -525,8 +525,13 @@ try:
     s.screenshot(os.path.join(shots, "r5-newer.png"))
     print("[newer] bar:", s.js("return document.querySelector('[data-newer]').textContent.trim()"), "| marker:", marker().strip())
     check("the diff waits for Reload", "1 commit" in marker())
+    # A poll's check of GitHub that overlaps the Reload compares with the review shown before
+    # it: its answer must not bring the bar back.
+    s.js("document.querySelector('[data-refresh]').click()")
     s.click(s.wait("[data-newer-reload]"))
     eventually("Reload shows the push", marker, lambda v: "2 commits" in v, timeout=30)
+    eventually("the poll is done", lambda: s.find("[data-refreshing]"), lambda v: not v, timeout=30)
+    time.sleep(1)
     check("and the bar goes", not s.find("[data-newer]"))
 
     # Carol's comment becomes activity the poll sees; loading the open item's conversation after
