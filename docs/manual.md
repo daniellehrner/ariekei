@@ -212,6 +212,13 @@ branch): git checks a branch out in one place only, so the agent works where the
 A reused branch is fast-forwarded to the PR head; if it has commits of its own it is left as it
 is and Ariekei tells you. See [Your own checkout](#your-own-checkout) for what changes then.
 
+When the PR on GitHub has commits the worktree's branch lacks (someone pushed to it), a bar
+says so, with **Update `<branch>`**: it fetches the PR head and fast-forwards the branch. If
+the author rewrote the PR's history (rebased or force-pushed it), Update replaces the branch
+with GitHub's version, but only when that drops no commit GitHub does not have; otherwise it
+lists them and leaves the branch as it is. Uncommitted changes stay, or git refuses. Commits
+of your own that are not pushed yet bring no bar.
+
 You do not need a worktree to review someone else's PR: its Review tab fetches the PR head
 read-only (the first time, and whenever the PR has new commits), and works on that.
 
@@ -478,8 +485,13 @@ made), it is still yours:
   changes stay, and they do not block cleanup.
 - If you switch it to another branch, the item says so ("proj is on main now, not on
   feature-y"), its terminal is greyed out and takes no input, and nothing can be sent to the
-  agent: its work would land on the other branch. Switch back and it carries on. Ariekei
-  notices when its window gets the focus again, or on the next poll. Once the PR is merged or
+  agent: its work would land on the other branch. Switch back (or press **Switch back to
+  `<branch>`** in that banner) and it carries on. Ariekei notices when its window gets the
+  focus again, or on the next poll. With a detached HEAD, **Switch back** takes commits made
+  on it along when they build on the branch, and refuses when they would be left behind;
+  **Move `<branch>` here** puts the branch on the checked out commit instead (e.g. a newer
+  version of the PR you checked out), unless the branch has commits GitHub does not have.
+  The same goes for a worktree Ariekei made. Once the PR is merged or
   closed (or the issue closed), the switch no longer matters: an agent that merges its PR and
   goes back to `main` is simply finished. A rebase or bisect of the item's own branch (by you
   or the agent, e.g. stopped on a conflict) detaches HEAD but does not count as a switch: the
@@ -678,7 +690,7 @@ activity, a grey bar for lifecycle news.
 - **Send to agent is greyed out** (in the Ask agent box or under the drafts): the agent is
   waiting for your permission. Answer it in the Terminal first (**Answer in Terminal**). Or
   its checkout is on another branch (see [Your own checkout](#your-own-checkout)): switch it
-  back.
+  back, e.g. with **Switch back to `<branch>`** in the red banner.
 
 Not supported yet:
 

@@ -431,9 +431,10 @@ try:
     print("[own checkout] switched to main:", moved.strip(), "| terminal paused:", bool(s.find(".terminal.paused")))
     contains("the item says where the checkout went", moved, "proj is on main now, not on feature-y")
     check("the agent's terminal is paused", bool(s.find(".terminal.paused")))
-    git(clone, "checkout", "-q", "feature-y")
-    s.js("window.dispatchEvent(new Event('focus'))")
+    check("not detached: nothing to move", not s.find(".item [data-move-branch]"))
+    s.click(s.wait(".item [data-switch-back]"))
     s.wait_js("return !document.querySelector('.item [data-moved]') && !document.querySelector('.terminal.paused')", timeout=30)
+    equal("Switch back puts the checkout back on its branch", git(clone, "rev-parse", "--abbrev-ref", "HEAD"), "feature-y")
     # Done keeps the checkout, its branch and the user's own changes.
     open(os.path.join(clone, "mine.txt"), "w").write("wip\n")
     s.click(s.wait(".item header .actions button", text="Done"))

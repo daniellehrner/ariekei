@@ -59,6 +59,9 @@ export interface Row {
   /** The branch its worktree is on instead ("": a detached HEAD), when someone switched it;
    *  the agent gets nothing until it is back. */
   movedTo: string | null;
+  /** GitHub's PR head is one its worktree's branch lacks: not fetched yet, ahead of it, or
+   *  rewritten (the author rebased the PR). */
+  update: "new" | "fast-forward" | "rewritten" | null;
   /** Its worktree was there before (e.g. the user's own checkout): cleanup keeps it. */
   adopted: boolean;
   attention: string | null;
@@ -228,6 +231,12 @@ export const api = {
   reviewState: (id: number, refresh = false) => invoke<ReviewState>("review_state", { id, refresh }),
   /** Fetches what the review compares if GitHub may have newer; true if that moved it. */
   reviewFetch: (id: number, force = false) => invoke<boolean>("review_fetch", { id, force }),
+  /** Puts the agent's worktree back on its branch after someone switched it. */
+  switchBack: (id: number) => invoke<void>("switch_back", { id }),
+  /** Moves the item's branch to its worktree's detached HEAD. */
+  moveBranchHere: (id: number) => invoke<void>("move_branch_here", { id }),
+  /** Brings the PR's branch up to GitHub's head of it. */
+  updateBranch: (id: number) => invoke<void>("update_branch", { id }),
   reviewFiles: (id: number, from: string, to: string | null, ignoreWs: boolean) =>
     invoke<ReviewFile[]>("review_files", { id, from, to, ignoreWs }),
   reviewFile: (id: number, from: string, to: string | null, path: string, ignoreWs: boolean) =>

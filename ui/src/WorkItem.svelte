@@ -106,7 +106,7 @@
   const moved = $derived.by(() => {
     const r = agentRow;
     if (r?.movedTo == null || !r.worktree || !r.branch) return null;
-    return { folder: folderName(r.worktree), now: r.movedTo, branch: r.branch };
+    return { id: r.id, folder: folderName(r.worktree), now: r.movedTo, branch: r.branch };
   });
   const agentAway = $derived(moved && `${moved.folder} is on ${moved.now || "a detached HEAD"}, not on ${moved.branch}`);
 
@@ -205,6 +205,21 @@
     unsaved = null;
   }
   onMount(() => saveUi);
+
+  // Putting the agent's worktree right (Switch back, Move here, Update): one at a time.
+  let fixing: "switch" | "move" | "update" | null = $state(null);
+  async function fix(what: "switch" | "move" | "update", f: () => Promise<void>) {
+    fixing = what;
+    error = null;
+    try {
+      await f();
+      onchanged();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      fixing = null;
+    }
+  }
 
   async function start() {
     preparing = true;
@@ -405,6 +420,27 @@
       <Banner tone="bad" icon="branch" data-moved>
         <span><code>{moved.folder}</code> is on {#if moved.now}<code>{moved.now}</code>{:else}a detached HEAD{/if} now, not on
           <code>{moved.branch}</code>. The agent gets nothing until you switch it back.</span>
+        {#snippet action()}
+          {@const m = moved!}
+          {#if m.now === ""}
+            <Button size="sm" loading={fixing === "move"} disabled={!!fixing} onclick={() => fix("move", () => api.moveBranchHere(m.id))}
+              title="Put {m.branch} on the checked out commit, e.g. a newer version of the PR" data-move-branch>Move {m.branch} here</Button>
+          {/if}
+          <Button size="sm" variant="primary" loading={fixing === "switch"} disabled={!!fixing} onclick={() => fix("switch", () => api.switchBack(m.id))}
+            data-switch-back>Switch back to {m.branch}</Button>
+        {/snippet}
+      </Banner>
+    </div>
+  {/if}
+  {#if row.update && !moved && row.branch}
+    <div class="banner">
+      <Banner tone="gh" data-update={row.update}>
+        <span>The PR on GitHub has commits that <code>{row.branch}</code> lacks{#if row.update === "rewritten"}, and its history
+          was rewritten (e.g. rebased): updating replaces <code>{row.branch}</code> with GitHub's version{/if}.</span>
+        {#snippet action()}
+          <Button size="sm" variant="gh" mark="gh" loading={fixing === "update"} disabled={!!fixing} onclick={() => fix("update", () => api.updateBranch(row.id))}
+            data-update-branch>Update {row.branch}</Button>
+        {/snippet}
       </Banner>
     </div>
   {/if}

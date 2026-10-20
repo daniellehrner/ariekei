@@ -198,6 +198,7 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             worktree: None,
             branch: item.branch.clone(),
             moved_to: None,
+            update: None,
             adopted: false,
             attention: None,
             cleanup_blockers: None,
@@ -232,6 +233,7 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             worktree: None,
             branch: item.branch.clone(),
             moved_to: None,
+            update: None,
             adopted: false,
             attention: None,
             cleanup_blockers: None,
@@ -266,6 +268,7 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             worktree: None,
             branch: item.branch.clone(),
             moved_to: None,
+            update: None,
             adopted: false,
             attention: None,
             cleanup_blockers: None,
@@ -283,6 +286,9 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
     }
     row.ready_for_review = state.terminals.ready_for_review(&item.id.to_string());
     row.moved_to = moved_to(&item);
+    if worktree.is_some() && row.moved_to.is_none() {
+        row.update = update_of(&item);
+    }
     row.adopted = worktree.is_some() && !item.worktree_created;
     row.removable = removable(&item);
     row.worktree = worktree.map(|p| p.to_string_lossy().into_owned());
@@ -619,6 +625,151 @@ pub fn moved_to(item: &WorkItem) -> Option<String> {
         None => git::operation_branch(dir).unwrap_or_default(),
     };
     (now != branch).then_some(now)
+}
+
+/// Whether GitHub's head of PR `item` is one its worktree's branch lacks: "new" when the clone
+/// has not fetched it, "fast-forward" when the branch can move up to it, "rewritten" when the
+/// author rewrote the PR's history since (e.g. rebased it). Not when the branch is ahead with
+/// commits of its own: those are for pushing.
+pub fn update_of(item: &WorkItem) -> Option<&'static str> {
+    if item.kind != "pr" || !item.open {
+        return None;
+    }
+    let dir = item.worktree_path.as_deref().filter(|p| p.exists())?;
+    let branch = item.branch.as_deref().filter(|b| !b.is_empty())?;
+    let head = summary(item).ok()?.head_sha;
+    let tip = git::git_str(
+        dir,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ],
+    )
+    .ok()?;
+    if head.is_empty() || head == tip {
+        None
+    } else if !git::commit_exists(dir, &head) {
+        Some("new")
+    } else if git::is_ancestor(dir, &head, &tip) {
+        None
+    } else if git::is_ancestor(dir, &tip, &head) {
+        Some("fast-forward")
+    } else {
+        Some("rewritten")
+    }
+}
+
+/// "N commits are …: a; b": the commits an action will not leave behind.
+fn commits_list(commits: &[String]) -> String {
+    let more = match commits.len() {
+        n if n > 5 => format!("; and {} more", n - 5),
+        _ => String::new(),
+    };
+    format!(
+        "{} commit{} ({}{more})",
+        commits.len(),
+        if commits.len() == 1 { "" } else { "s" },
+        commits[..commits.len().min(5)].join("; ")
+    )
+}
+
+/// Puts item `id`'s worktree back on its branch after someone switched it (`moved_to`). A
+/// detached HEAD's commits that no branch or remote has go along when they build on the
+/// branch (it moves up to them); else switching would leave them in the reflog only, and it
+/// refuses. Uncommitted changes go along, or git refuses.
+pub fn switch_back(state: &AppState, id: i64) -> Result<(), String> {
+    let item = state.store.item(id)?;
+    let Some(now) = moved_to(&item) else {
+        return Ok(());
+    };
+    let dir = worktree_of(&item)?;
+    let branch = item.branch.clone().unwrap_or_default();
+    if now.is_empty() {
+        let head = git::head(&dir)?;
+        let loose = git::git_str(
+            &dir,
+            &[
+                "log",
+                "--format=%h %s",
+                "HEAD",
+                "--not",
+                "--branches",
+                "--remotes",
+                "--glob=refs/ariekei/pull/*",
+            ],
+        )?;
+        if !loose.is_empty() {
+            let loose: Vec<String> = loose.lines().map(str::to_owned).collect();
+            if !git::is_ancestor(&dir, &format!("refs/heads/{branch}"), "HEAD") {
+                return Err(format!(
+                    "HEAD has {} on no branch: switching to {branch} would leave them in the \
+                     reflog only. Move {branch} here, or put them on a branch first.",
+                    commits_list(&loose)
+                ));
+            }
+            git::git(&dir, &["switch", "--quiet", &branch])?;
+            return git::git(&dir, &["merge", "--ff-only", "--quiet", &head]).map(|_| ());
+        }
+    }
+    git::git(&dir, &["switch", "--quiet", &branch]).map(|_| ())
+}
+
+/// Moves item `id`'s branch to its worktree's detached HEAD and puts the worktree on it: for
+/// a checkout of a newer version (e.g. the author's rebased PR). Refuses while the branch has
+/// commits HEAD lacks that GitHub does not have.
+pub fn move_branch_here(state: &AppState, id: i64) -> Result<(), String> {
+    let (item, repo) = item_repo(state, id)?;
+    if moved_to(&item).as_deref() != Some("") {
+        return Err("its worktree is not on a detached HEAD".into());
+    }
+    let dir = worktree_of(&item)?;
+    let branch = item.branch.clone().unwrap_or_default();
+    let tip = format!("refs/heads/{branch}");
+    let lost =
+        crate::lifecycle::not_on_github(&repo.path, &dir, &[&tip], Some(&branch), &["HEAD"])?;
+    if !lost.is_empty() {
+        return Err(format!(
+            "{branch} has {} that HEAD lacks and GitHub does not have: moving it would leave \
+             them in the reflog only. Push them, or switch back to {branch}.",
+            commits_list(&lost)
+        ));
+    }
+    git::git(&dir, &["switch", "--quiet", "-C", &branch]).map(|_| ())
+}
+
+/// Brings item `id`'s branch up to GitHub's head of the PR (`update_of`): fast-forwards it,
+/// or, after the author rewrote the PR's history, resets it there when that drops nothing
+/// GitHub does not have. Uncommitted changes stay (`reset --keep`), or git refuses.
+pub fn update_branch(state: &AppState, id: i64) -> Result<(), String> {
+    let (item, repo) = item_repo(state, id)?;
+    if item.kind != "pr" {
+        return Err("only a PR's branch follows GitHub".into());
+    }
+    ensure_on_branch(state, id)?;
+    let dir = worktree_of(&item)?;
+    let branch = item.branch.clone().unwrap_or_default();
+    let pr = summary(&item)?;
+    let head = worktree::fetch_pr_head(&repo.path, &repo.base_remote, item.number, &pr.base_ref)?;
+    let tip = format!("refs/heads/{branch}");
+    // By the ref, not the commit: the branch's reflog then says it came from GitHub.
+    let pulled = worktree::pull_ref(item.number);
+    if git::is_ancestor(&dir, &head, &tip) {
+        return Ok(());
+    }
+    if git::is_ancestor(&dir, &tip, &head) {
+        return git::git(&dir, &["merge", "--ff-only", "--quiet", &pulled]).map(|_| ());
+    }
+    let lost = crate::lifecycle::not_on_github(&repo.path, &dir, &[&tip], Some(&branch), &[&head])?;
+    if !lost.is_empty() {
+        return Err(format!(
+            "{branch} has {} that GitHub does not have, and the PR's history was rewritten: \
+             updating would drop them. Rebase them onto the PR's head, or push them first.",
+            commits_list(&lost)
+        ));
+    }
+    git::git(&dir, &["reset", "--keep", "--quiet", &pulled]).map(|_| ())
 }
 
 /// Refuses work for the agent of item `id` while its worktree is on another branch: it would
@@ -1885,6 +2036,126 @@ mod tests {
         let item = app.state.store.item(id).unwrap();
         assert!(item.session_started);
         assert_eq!(item.transcript_path, Some(transcript), "deleted on cleanup");
+    }
+
+    /// Rebases `branch` of the "GitHub" repo onto `main`, and GitHub's head of PR `number`
+    /// with it (the author's force-push).
+    fn rebase_upstream(app: &TestApp, branch: &str, number: i64) {
+        let up = &app.upstream;
+        git(up, &["checkout", "-q", branch]);
+        let me = ["-c", "user.name=bob", "-c", "user.email=bob@example.com"];
+        git(up, &[&me[..], &["rebase", "-q", "main"]].concat());
+        git(up, &["checkout", "-q", "main"]);
+        git(
+            up,
+            &["update-ref", &format!("refs/pull/{number}/head"), branch],
+        );
+    }
+
+    #[test]
+    fn a_worktree_switched_away_goes_back_to_its_branch() {
+        let app = TestApp::new();
+        let (id, wt) = app.pr_with_worktree(5, "feat");
+        let branch = app.state.store.item(id).unwrap().branch.unwrap();
+        let on = || crate::git::current_branch(&wt).unwrap();
+        // Another branch, as in an IDE.
+        git(&wt, &["switch", "-q", "-c", "elsewhere"]);
+        switch_back(&app.state, id).unwrap();
+        assert_eq!(on(), Some(branch.clone()));
+
+        // A detached HEAD on an older commit.
+        git(&wt, &["checkout", "-q", "--detach", "HEAD~1"]);
+        switch_back(&app.state, id).unwrap();
+        assert_eq!(on(), Some(branch.clone()));
+
+        // A commit on a detached HEAD on top of the branch: the branch moves up to it.
+        git(&wt, &["checkout", "-q", "--detach"]);
+        write(&wt.join("c.txt"), "on top\n");
+        commit(&wt, "on top", "me");
+        let top = git(&wt, &["rev-parse", "HEAD"]);
+        switch_back(&app.state, id).unwrap();
+        assert_eq!(on(), Some(branch.clone()));
+        assert_eq!(git(&wt, &["rev-parse", &branch]), top);
+
+        // A commit on a detached HEAD off the branch: switching would leave it behind.
+        git(&wt, &["checkout", "-q", "--detach", "HEAD~2"]);
+        write(&wt.join("d.txt"), "stray\n");
+        commit(&wt, "stray", "me");
+        let err = switch_back(&app.state, id).unwrap_err();
+        assert!(err.contains("stray"), "{err}");
+        assert_eq!(on(), None);
+        // Nor can the branch move there: "on top" is not on GitHub.
+        let err = move_branch_here(&app.state, id).unwrap_err();
+        assert!(err.contains("on top"), "{err}");
+        assert_eq!(on(), None);
+    }
+
+    #[test]
+    fn a_detached_checkout_of_the_authors_rebased_pr_takes_the_branch_along() {
+        let app = TestApp::new();
+        let (id, wt) = app.pr_with_worktree(5, "feat");
+        let branch = app.state.store.item(id).unwrap().branch.unwrap();
+        app.push_to("main", &[("m.txt", "carol's\n")], "carol");
+        rebase_upstream(&app, "feat", 5);
+        // Someone checks out the author's new version: HEAD is detached there.
+        git(&wt, &["fetch", "-q", "origin", "feat"]);
+        git(&wt, &["checkout", "-q", "--detach", "FETCH_HEAD"]);
+        assert_eq!(
+            moved_to(&app.state.store.item(id).unwrap()).as_deref(),
+            Some("")
+        );
+
+        // The branch's old commits came from GitHub: it can move there.
+        move_branch_here(&app.state, id).unwrap();
+        assert_eq!(
+            crate::git::current_branch(&wt).unwrap(),
+            Some(branch.clone())
+        );
+        assert_eq!(
+            git(&wt, &["rev-parse", &branch]),
+            git(&app.upstream, &["rev-parse", "feat"])
+        );
+    }
+
+    #[test]
+    fn a_prs_branch_follows_the_authors_pushes_and_rebases() {
+        let app = TestApp::new();
+        let (id, wt) = app.pr_with_worktree(5, "feat");
+        let up = &app.upstream;
+        let update = || {
+            app.poll().unwrap();
+            app.rows().into_iter().find(|r| r.id == id).unwrap().update
+        };
+        let github = || git(up, &["rev-parse", "feat"]);
+        let here = || git(&wt, &["rev-parse", "HEAD"]);
+        git(up, &["update-ref", "refs/pull/5/head", "feat"]);
+        assert_eq!(update(), None);
+
+        // The author pushes: the branch can follow.
+        app.push_to("feat", &[("c.txt", "bob's\n")], "bob");
+        git(up, &["update-ref", "refs/pull/5/head", "feat"]);
+        assert_eq!(update(), Some("new"), "not fetched yet");
+        update_branch(&app.state, id).unwrap();
+        assert_eq!(here(), github());
+        assert_eq!(update(), None);
+
+        // A commit of the user's own, not pushed yet: nothing to update.
+        write(&wt.join("d.txt"), "mine\n");
+        commit(&wt, "mine, not pushed", "me");
+        assert_eq!(update(), None);
+
+        // The author rebases the PR: updating would drop the user's commit, so it refuses.
+        app.push_to("main", &[("m.txt", "carol's\n")], "carol");
+        rebase_upstream(&app, "feat", 5);
+        let err = update_branch(&app.state, id).unwrap_err();
+        assert!(err.contains("mine, not pushed"), "{err}");
+        assert_eq!(update(), Some("rewritten"), "fetched by the try");
+
+        // Without it, the branch takes the rebased PR: its old commits came from GitHub.
+        git(&wt, &["reset", "-q", "--hard", "HEAD~1"]);
+        update_branch(&app.state, id).unwrap();
+        assert_eq!(here(), github());
+        assert_eq!(update(), None);
     }
 
     #[test]

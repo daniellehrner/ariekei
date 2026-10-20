@@ -78,18 +78,15 @@ pub fn blockers(repo: &Repo, item: &WorkItem, prs: &[i64]) -> Vec<String> {
     if let Err(e) = worktree::fetch_pull_heads(&repo.path, &repo.base_remote, prs) {
         tracing::warn!("{}: could not fetch its PR heads: {e}", item.short_name());
     }
-    // Commits are safe when a remote branch or GitHub's copy of a PR head has them, or a
-    // remote had them once: a reviewed PR whose author rebased it since is not your work.
-    let fetched = own_branch
-        .map(|b| git::from_remotes(&repo.path, b))
-        .unwrap_or_default();
-    let mut args = vec!["log", "--format=%h %s"];
-    args.extend(tips.iter().map(String::as_str));
-    args.extend(["--not", "--remotes", "--glob=refs/ariekei/pull/*"]);
-    args.extend(fetched.iter().map(String::as_str));
-    match git::git_str(dir.unwrap_or(&repo.path), &args) {
-        Ok(log) if !log.is_empty() => {
-            let commits: Vec<&str> = log.lines().collect();
+    let tips: Vec<&str> = tips.iter().map(String::as_str).collect();
+    match not_on_github(
+        &repo.path,
+        dir.unwrap_or(&repo.path),
+        &tips,
+        own_branch,
+        &[],
+    ) {
+        Ok(commits) if !commits.is_empty() => {
             found.push(format!(
                 "{} commit{} not on GitHub: {}",
                 commits.len(),
@@ -101,6 +98,29 @@ pub fn blockers(repo: &Repo, item: &WorkItem, prs: &[i64]) -> Vec<String> {
         Err(e) => found.push(format!("Could not check for unpushed commits: {e}")),
     }
     found
+}
+
+/// The commits reachable from `tips` (run in `dir`) that GitHub does not have, as `%h %s`,
+/// newest first. Safe are those a remote branch or GitHub's copy of a PR head has, or a remote
+/// had once for `branch` (`git::from_remotes`: a reviewed PR whose author rebased it since is
+/// not your work), or that `kept` (other revisions) have.
+pub fn not_on_github(
+    repo: &Path,
+    dir: &Path,
+    tips: &[&str],
+    branch: Option<&str>,
+    kept: &[&str],
+) -> Result<Vec<String>, String> {
+    let fetched = branch
+        .map(|b| git::from_remotes(repo, b))
+        .unwrap_or_default();
+    let mut args = vec!["log", "--format=%h %s"];
+    args.extend(tips);
+    args.extend(["--not", "--remotes", "--glob=refs/ariekei/pull/*"]);
+    args.extend(fetched.iter().map(String::as_str));
+    args.extend(kept);
+    let log = git::git_str(dir, &args)?;
+    Ok(log.lines().map(str::to_owned).collect())
 }
 
 /// The PRs whose heads GitHub keeps for the item's commits: a PR's own, a task's linked ones.

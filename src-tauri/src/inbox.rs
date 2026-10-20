@@ -38,6 +38,9 @@ pub struct Row {
     /// The branch its worktree is on instead (`""`: a detached HEAD), when someone switched
     /// it; the agent gets nothing until it is back (`workitem::moved_to`).
     pub moved_to: Option<String>,
+    /// GitHub's PR head is one its worktree's branch lacks (`workitem::update_of`): "new" (not
+    /// fetched yet), "fast-forward", or "rewritten" (the author rewrote its history).
+    pub update: Option<&'static str>,
     /// Its worktree was there before (e.g. the user's own checkout): cleanup keeps it.
     pub adopted: bool,
     /// Why the row is where it is (for the UI), most urgent first.
@@ -142,6 +145,7 @@ mod tests {
             worktree: None,
             branch: None,
             moved_to: None,
+            update: None,
             adopted: false,
             attention: None,
             cleanup_blockers: None,

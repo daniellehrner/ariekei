@@ -187,9 +187,9 @@ pub fn branch_exists(repo: &Path, branch: &str) -> bool {
 
 /// Commits a remote had for `branch` once, as the reflogs remember (their newest 500
 /// entries): where its upstream was fetched to, and where the branch was set from a remote
-/// branch (created from it, fast-forwarded or reset to it, pulled). They came from GitHub,
-/// even if a force-push (e.g. a rebased PR) or a pruned branch took them off it since. The
-/// user's own pushes don't count: a force-push may have dropped them.
+/// branch (created from it, fast-forwarded or reset to it, pulled) or fetched into. They came
+/// from GitHub, even if a force-push (e.g. a rebased PR) or a pruned branch took them off it
+/// since. The user's own pushes don't count: a force-push may have dropped them.
 pub fn from_remotes(repo: &Path, branch: &str) -> Vec<String> {
     let reflog = |name: &str| {
         git_str(
@@ -204,7 +204,9 @@ pub fn from_remotes(repo: &Path, branch: &str) -> Vec<String> {
         .map(|(name, _)| name)
         .collect();
     let is_remote = |name: &str| {
+        // GitHub's PR heads, fetched into the clone (`worktree::pull_ref`).
         name.starts_with("refs/remotes/")
+            || name.starts_with("refs/ariekei/pull/")
             || remotes.iter().any(|r| {
                 name.strip_prefix(r.as_str())
                     .is_some_and(|rest| rest.starts_with('/'))
@@ -241,7 +243,9 @@ pub fn from_remotes(repo: &Path, branch: &str) -> Vec<String> {
                     .and_then(|m| m.strip_suffix(": Fast-forward"))
             });
         let pulled = why.starts_with("pull") && why.to_lowercase().ends_with(": fast-forward");
-        if pulled || from.is_some_and(is_remote) {
+        // Fetched into the branch, as Ariekei makes a PR's (`refs/pull/<N>/head:<branch>`).
+        let fetched = why.starts_with("fetch ");
+        if pulled || fetched || from.is_some_and(is_remote) {
             found.push(hash.to_owned());
         }
     }
@@ -292,6 +296,11 @@ pub fn operation_branch(cwd: &Path) -> Option<String> {
 
 pub fn merge_base(cwd: &Path, a: &str, b: &str) -> Result<String, String> {
     git_str(cwd, &["merge-base", a, b])
+}
+
+/// `a` is `b` or one of its ancestors (false also when either is unknown).
+pub fn is_ancestor(cwd: &Path, a: &str, b: &str) -> bool {
+    git(cwd, &["merge-base", "--is-ancestor", a, b]).is_ok()
 }
 
 /// Uncommitted changes, including untracked files.
@@ -571,6 +580,19 @@ pub mod tests {
         std::fs::write(p.join("gone.txt"), "bye\n").unwrap();
         commit(p, "init");
         dir
+    }
+
+    #[test]
+    fn a_branch_fetched_into_came_from_a_remote() {
+        // As Ariekei made a PR's branch: `git fetch <remote> refs/pull/<N>/head:<branch>`.
+        let up = repo();
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]).unwrap();
+        let up_path = up.path().to_str().unwrap();
+        git(p, &["fetch", "-q", up_path, "main:pr-5"]).unwrap();
+        let head = git_str(up.path(), &["rev-parse", "main"]).unwrap();
+        assert_eq!(from_remotes(p, "pr-5"), vec![head]);
     }
 
     #[test]

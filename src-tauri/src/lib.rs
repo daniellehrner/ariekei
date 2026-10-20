@@ -540,6 +540,24 @@ async fn review_state(
     .await
 }
 
+/// Puts the agent's worktree back on its branch after someone switched it.
+#[tauri::command]
+async fn switch_back(app: tauri::AppHandle, id: i64) -> Res<()> {
+    blocking(app, move |s| workitem::switch_back(s, id)).await
+}
+
+/// Moves the item's branch to its worktree's detached HEAD.
+#[tauri::command]
+async fn move_branch_here(app: tauri::AppHandle, id: i64) -> Res<()> {
+    blocking(app, move |s| workitem::move_branch_here(s, id)).await
+}
+
+/// Brings the PR's branch up to GitHub's head of it.
+#[tauri::command]
+async fn update_branch(app: tauri::AppHandle, id: i64) -> Res<()> {
+    blocking(app, move |s| workitem::update_branch(s, id)).await
+}
+
 /// Fetches what the review compares if GitHub may have newer; true if that moved it.
 #[tauri::command]
 async fn review_fetch(app: tauri::AppHandle, id: i64, force: Option<bool>) -> Res<bool> {
@@ -727,6 +745,9 @@ pub fn run() {
             send_pr_feedback,
             review_state,
             review_fetch,
+            switch_back,
+            move_branch_here,
+            update_branch,
             review_files,
             review_file,
             save_file,

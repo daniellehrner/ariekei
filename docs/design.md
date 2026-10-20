@@ -78,8 +78,12 @@ told apart in grey-scale and with colour blindness:
 - While the agent waits for permission, a strip under the header shows what it asks to run, with
   "Answer in Terminal". Below a 1200 px window the command wraps instead of being cut.
 - When the agent's worktree is on another branch than the item's (it may be the user's own
-  checkout), a red banner says so, the terminal is dimmed and inert, and every way to send the
-  agent work is disabled with that reason.
+  checkout), a red banner says so, with **Switch back to `<branch>`** (and, on a detached HEAD,
+  **Move `<branch>` here**), the terminal is dimmed and inert, and every way to send the agent
+  work is disabled with that reason. Neither leaves commits GitHub lacks behind.
+- When GitHub's PR head is one the worktree's branch lacks (pushed to, or rebased by the
+  author), a bar offers **Update `<branch>`**, so getting the author's version never takes a
+  detached checkout.
 - When the agent exits by itself, a bar under the terminal's title bar says so ("The agent
   exited (exit 1).") with **Start again**; its last output stays, dimmed and inert. Not for a merged or closed item: its branch is done
   with.
