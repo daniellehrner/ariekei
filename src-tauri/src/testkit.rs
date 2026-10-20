@@ -107,6 +107,10 @@ impl TestApp {
             ],
         );
         git(&clone, &["remote", "set-url", "origin", GITHUB]);
+        // In the clone's config, so Ariekei's own git (worktrees, switch, merge) keeps LF too:
+        // with CRLF from a global autocrlf (Windows runners), files it checked out differ
+        // from what the tests' git expects.
+        git(&clone, &["config", "core.autocrlf", "false"]);
 
         let gh_dir = root.path().join("gh");
         std::fs::create_dir_all(&gh_dir).unwrap();
