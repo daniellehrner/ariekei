@@ -21,6 +21,7 @@
   import { agents } from "./lib/agent.svelte";
   import { api, shortName, type Conversation, type Row } from "./lib/api";
   import { openingTab, type Tab } from "./lib/attention";
+  import { newestLoad } from "./lib/latest";
   import { openOn } from "./lib/layout.svelte";
 
   let {
@@ -49,12 +50,12 @@
   const fresh = (): ItemUi => ({ tab: "overview", review: { scope: "", file: null, comments: [] } });
 
   let ui = $state<ItemUi | null>(null);
+  // The item `ui` is the view of.
+  let uiOf = 0;
   let conv = $state<Conversation | null>(null);
   let convError: string | null = $state(null);
-  // Conversation loads started, and the latest one shown: one that took longer than a later
-  // one must not replace what that showed.
-  let convLoads = 0;
-  let convShown = 0;
+  // One that took longer than a later one must not replace what that showed.
+  const convLoads = newestLoad();
   // How far the user had seen the item's activity when they opened it: Comments marks what is
   // newer as new.
   let since: string | null = $state(null);
@@ -112,11 +113,10 @@
 
   async function loadConversation(current: number) {
     if (isTask) return;
-    const n = ++convLoads;
+    const n = convLoads.start();
     try {
       const c = await api.conversation(current);
-      if (current !== id || n < convShown) return;
-      convShown = n;
+      if (current !== id || !convLoads.succeeded(n)) return;
       conv = c;
       convError = null;
       // What the user sees now is seen: the Inbox no longer says it has new activity (a poll
@@ -125,7 +125,7 @@
         if (s.before !== s.after) onchanged();
       }, () => {});
     } catch (e) {
-      if (current === id && n > convShown) convError = String(e);
+      if (current === id && convLoads.failed(n)) convError = String(e);
     }
   }
 
@@ -150,6 +150,7 @@
     const terminal = !!row.worktree;
     api.uiState<ItemUi>(current).then((saved) => {
       if (current !== id) return;
+      uiOf = current;
       ui = { ...fresh(), ...saved, review: { ...fresh().review, ...saved?.review } };
       // A new task opens on its agent (shown once the row has the worktree: a reload that
       // started while the task was being created can still lack it).
@@ -193,7 +194,8 @@
   $effect(() => {
     if (!ui) return;
     const snapshot = JSON.parse(JSON.stringify(ui));
-    const target = id;
+    // Not `id`: when another item is shown, this may run before `load` cleared the view.
+    const target = uiOf;
     clearTimeout(saveTimer);
     unsaved = () => api.setUiState(target, snapshot);
     saveTimer = setTimeout(saveUi, 300);
@@ -208,7 +210,7 @@
 
   // Putting the agent's worktree right (Switch back, Move here, Update): one at a time.
   let fixing: "switch" | "move" | "update" | null = $state(null);
-  async function fix(what: "switch" | "move" | "update", f: () => Promise<void>) {
+  async function fix(what: "switch" | "move" | "update", f: () => Promise<unknown>) {
     fixing = what;
     error = null;
     try {
@@ -452,7 +454,7 @@
         <span>The PR on GitHub has commits that <code>{row.branch}</code> lacks{#if row.update === "rewritten"}, and its history
           was rewritten (e.g. rebased): updating replaces <code>{row.branch}</code> with GitHub's version{/if}.</span>
         {#snippet action()}
-          <Button size="sm" variant="gh" mark="gh" loading={fixing === "update"} disabled={!!fixing} onclick={() => fix("update", () => api.updateBranch(row.id))}
+          <Button size="sm" variant="gh" mark="gh" loading={fixing === "update"} disabled={!!fixing} onclick={() => fix("update", () => api.updateBranch(row.id, row.update === "rewritten"))}
             data-update-branch>Update {row.branch}</Button>
         {/snippet}
       </Banner>

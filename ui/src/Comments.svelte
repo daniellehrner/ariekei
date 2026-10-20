@@ -6,7 +6,7 @@
   import Icon from "./controls/Icon.svelte";
   import Pill from "./controls/Pill.svelte";
   import { api, type Conversation, type GhComment, type Thread } from "./lib/api";
-  import { byLatest, isNew } from "./lib/conversation";
+  import { byLatest, isNew, threadHasNew } from "./lib/conversation";
   import { hunkTail } from "./lib/hunk";
   import { externalLinks, sanitize } from "./lib/html";
 
@@ -66,7 +66,7 @@
   const fresh = (c: GhComment) => isNew({ author: c.author, at: c.createdAt }, since, viewer);
   const unresolved = $derived(byLatest(conv.threads.filter((t) => !t.resolved)));
   const resolved = $derived(byLatest(conv.threads.filter((t) => t.resolved)));
-  const withNew = $derived(conv.threads.filter((t) => t.comments.some(fresh)).length);
+  const withNew = $derived(conv.threads.filter((t) => threadHasNew(t, since, viewer)).length);
 
   async function act(f: () => Promise<void>) {
     busy = true;
@@ -151,7 +151,7 @@
             <code>{short(t.path)}{t.line ? `:${t.line}` : ""}</code>
             {#if t.outdated}<Pill size="sm">outdated</Pill>{/if}
             <Pill size="sm" tone="ok">resolved</Pill>
-            {#if t.comments.some(fresh)}<Pill size="sm" tone="gh">new</Pill>{/if}
+            {#if threadHasNew(t, since, viewer)}<Pill size="sm" tone="gh">new</Pill>{/if}
             <span class="summary">{t.comments[0] ? `${t.comments[0].author}: ${text(t.comments[0].bodyHtml)}` : ""}</span>
           </button>
           {#if open}

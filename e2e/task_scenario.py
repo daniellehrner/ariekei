@@ -17,8 +17,9 @@ removes the worktree, branch and task; the PR goes back to My PRs), and a second
 button) whose merged PR stays under it ("All closed") until Done removes it, and a task on a
 fork's branch (named after it, the fork's remote added, the branch tracking it, its context naming
 it) whose PR, opened on GitHub, is linked to it on a poll, and a task on the branch the user's own
-checkout is on (it works there; switched to another branch, the agent is paused until it is
-back; Done keeps the checkout and the user's changes).
+checkout is on (it works there; switched to another branch, the agent is paused until Switch
+back; detached on a newer commit, Move here takes the branch along; detached off it with a
+commit of its own, Switch back refuses; Done keeps the checkout and the user's changes).
 
 Run it with `python3 e2e/run.py <test-app> task` (see run.py), which sets the environment.
 """
@@ -435,6 +436,32 @@ try:
     s.click(s.wait(".item [data-switch-back]"))
     s.wait_js("return !document.querySelector('.item [data-moved]') && !document.querySelector('.terminal.paused')", timeout=30)
     equal("Switch back puts the checkout back on its branch", git(clone, "rev-parse", "--abbrev-ref", "HEAD"), "feature-y")
+    # Detached with a commit on top (as a checkout of a newer version): Move here takes the
+    # branch along.
+    git(clone, "checkout", "-q", "--detach")
+    open(os.path.join(clone, "newer.txt"), "w").write("newer\n")
+    commit(clone, "newer")
+    top = git(clone, "rev-parse", "HEAD")
+    s.js("window.dispatchEvent(new Event('focus'))")
+    s.click(s.wait(".item [data-move-branch]", timeout=30))
+    s.wait_js("return !document.querySelector('.item [data-moved]')", timeout=30)
+    equal("Move here puts the branch on the checked out commit",
+          (git(clone, "rev-parse", "--abbrev-ref", "HEAD"), git(clone, "rev-parse", "feature-y")), ("feature-y", top))
+    # Detached off the branch with a commit of its own: Switch back would leave it behind,
+    # so it refuses and says why.
+    git(clone, "checkout", "-q", "--detach", "HEAD~1")
+    open(os.path.join(clone, "stray.txt"), "w").write("stray\n")
+    commit(clone, "stray")
+    s.js("window.dispatchEvent(new Event('focus'))")
+    s.click(s.wait(".item [data-switch-back]", timeout=30))
+    refused = s.text(s.wait(".item [data-error]", timeout=30))
+    print("[own checkout] switch back refused:", refused.strip())
+    contains("Switch back names the commit it would leave behind", refused, "stray")
+    check("and the checkout stays where it is", bool(s.find(".item [data-moved]")) and git(clone, "rev-parse", "HEAD") != top)
+    s.click(s.wait(".item [data-error] [aria-label=Dismiss]"))
+    git(clone, "checkout", "-q", "feature-y")
+    s.js("window.dispatchEvent(new Event('focus'))")
+    s.wait_js("return !document.querySelector('.item [data-moved]')", timeout=30)
     # Done keeps the checkout, its branch and the user's own changes.
     open(os.path.join(clone, "mine.txt"), "w").write("wip\n")
     s.click(s.wait(".item header .actions button", text="Done"))

@@ -214,9 +214,10 @@ is and Ariekei tells you. See [Your own checkout](#your-own-checkout) for what c
 
 When the PR on GitHub has commits the worktree's branch lacks (someone pushed to it), a bar
 says so, with **Update `<branch>`**: it fetches the PR head and fast-forwards the branch. If
-the author rewrote the PR's history (rebased or force-pushed it), Update replaces the branch
-with GitHub's version, but only when that drops no commit GitHub does not have; otherwise it
-lists them and leaves the branch as it is. Uncommitted changes stay, or git refuses. Commits
+the author rewrote the PR's history (rebased or force-pushed it), the bar says so, and Update
+replaces the branch with GitHub's version, but only when that drops no commit GitHub does not
+have; otherwise it lists them and leaves the branch as it is. (When only Update's fetch finds
+the history rewritten, it changes nothing yet: the bar says so, and you press Update again.) Uncommitted changes stay, or git refuses. Commits
 of your own that are not pushed yet bring no bar.
 
 You do not need a worktree to review someone else's PR: its Review tab fetches the PR head

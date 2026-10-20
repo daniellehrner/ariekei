@@ -9,8 +9,10 @@ Review requested, My PRs, Reviewed, Open), browsing open PRs and issues (Ctrl+K)
 to Open, starring and removing, opening another author's PR, Overview (sanitized description),
 Comments (resolve, reply, new comment), reviewing without a worktree ("All changes vs
 main" from refs/pull/N/head), draft comments, Submit to GitHub (line comment inside the
-PR diff, the other one folded into the body), a push showing up in the review, and no
-approving your own PR.
+PR diff, the other one folded into the body), a push showing up in the review, new comments
+marked and their thread first, an item opening on the tab it was left on (also one picked just
+before leaving it), a conversation GitHub fails to give (shown as last given, with a bar), and
+no approving your own PR.
 No agent is started.
 
 Run it with `python3 e2e/run.py <test-app> review` (see run.py), which sets the environment.
@@ -561,6 +563,36 @@ try:
     eventually("the open item has no new activity in the Inbox",
                lambda: bool(s.find(".inbox .row[data-number='43'] svg.new")), lambda v: not v, timeout=20)
     s.screenshot(os.path.join(shots, "r5-new-reply.png"))
+
+    # A tab picked right before opening another item is kept too: its save, still waiting,
+    # is not dropped, nor written to the other item.
+    shown_tab = lambda: s.js("return document.querySelector('.item [aria-selected=true][data-tab]')?.dataset.tab")
+    def open_item(number):
+        select_row(s, number)
+        s.wait(".item header .title", timeout=30, text=f"#{number}")
+        s.wait(".item [aria-selected=true][data-tab]", timeout=30)
+    tab(s, "Overview")
+    open_item(44)
+    tab(s, "Comments")
+    open_item(43)
+    equal("#43 kept the tab picked just before leaving it", shown_tab(), "overview")
+    open_item(44)
+    equal("and #44 its own", shown_tab(), "comments")
+
+    # GitHub fails to give #43's conversation: the one shown stays, and a bar says it is not
+    # current; the next poll that gets it takes the bar away.
+    open_item(43)
+    tab(s, "Comments")
+    s.wait(".comments .thread", timeout=30)
+    failing = os.path.join(gh_dir, "fail-conversation-43")
+    open(failing, "w").close()
+    poll()
+    stale = s.text(s.wait(".item [data-stale]", timeout=30))
+    print("[stale]", stale.strip())
+    check("the conversation stays shown", bool(s.find(".comments .thread")))
+    os.remove(failing)
+    poll()
+    eventually("the bar goes once GitHub answers", lambda: bool(s.find(".item [data-stale]")), lambda v: not v, timeout=30)
 
     # --- own PR (PR #42): GitHub does not let you approve it ---
     select_row(s, 42)

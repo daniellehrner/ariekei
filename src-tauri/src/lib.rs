@@ -558,10 +558,11 @@ async fn move_branch_here(app: tauri::AppHandle, id: i64) -> Res<()> {
     blocking(app, move |s| workitem::move_branch_here(s, id)).await
 }
 
-/// Brings the PR's branch up to GitHub's head of it.
+/// Brings the PR's branch up to GitHub's head of it; replaces it only with `rewrite` (see
+/// `workitem::update_branch`): `false` if the fetch found the history rewritten.
 #[tauri::command]
-async fn update_branch(app: tauri::AppHandle, id: i64) -> Res<()> {
-    blocking(app, move |s| workitem::update_branch(s, id)).await
+async fn update_branch(app: tauri::AppHandle, id: i64, rewrite: bool) -> Res<bool> {
+    blocking(app, move |s| workitem::update_branch(s, id, rewrite)).await
 }
 
 /// Fetches what the review compares if GitHub may have newer; true if that moved it.

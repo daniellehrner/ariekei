@@ -8,7 +8,8 @@ through insteadOf. Covers: an assigned issue in the Inbox, Start working (branch
 issue-<N>-<slug> from main, push set up), Done refused while a commit is unpushed and while
 a file is uncommitted, git push → no PR opened, a PR opened for the branch → the item becomes the PR,
 the PR merged → automatic cleanup (worktree, branch, agent, item); and an adopted worktree
-that is kept when its PR is merged while it is open: the item asks, Keep until Done keeps it
+whose branch follows GitHub's PR head with Update (a push, a rebase; refused when it would drop
+a commit of the user's), and that is kept when its PR is merged while it is open: the item asks, Keep until Done keeps it
 after the user left it, and Done cleans it up. Also: the rate limit used up (the Inbox says so; a
 refresh recovers), a tracked issue deleted on GitHub (polling goes on), CI going from
 running to failing without the PR changing, automatic cleanup kept back while a merged PR's
@@ -267,6 +268,54 @@ try:
     s.wait(".item [data-notice]", timeout=60)
     print("[adopt]", s.js("return document.querySelector('.item [data-notice]').textContent"))
     contains("an existing worktree is adopted", s.js("return document.querySelector('.item [data-notice]').textContent"), "existing worktree")
+
+    # GitHub's PR head moved on since the user's checkout (the "more x" push): Update
+    # fast-forwards pr-42.
+    github_head = lambda: git(upstream, "rev-parse", "feature/x")
+    here = lambda: git(mine, "rev-parse", "HEAD")
+    git(upstream, "update-ref", "refs/pull/42/head", "feature/x")
+    print("[update] bar:", s.text(s.wait(".item [data-update]", timeout=30)).strip())
+    s.click(s.wait(".item [data-update-branch]"))
+    eventually("Update brings the branch to GitHub's head", here, lambda v: v == github_head(), timeout=30)
+    s.wait_js("return !document.querySelector('.item [data-update]')", timeout=30)
+
+    def rebase_pr(what):
+        """The author rebases the PR onto a main that got `what`, and force-pushes."""
+        open(os.path.join(upstream, f"{what}.txt"), "w").write(f"{what}\n")
+        commit(upstream, what, who="carol")
+        git(upstream, "checkout", "-q", "feature/x")
+        git(upstream, "-c", "user.name=me", "-c", "user.email=me@t", "rebase", "-q", "main")
+        git(upstream, "checkout", "-q", "main")
+        git(upstream, "update-ref", "refs/pull/42/head", "feature/x")
+    def update_finds_rewritten():
+        """The PR head is new to the clone: the first Update only fetches it, then the bar says
+        the history was rewritten."""
+        s.wait(".item [data-update='new']", timeout=30)
+        before = here()
+        s.click(s.wait(".item [data-update-branch]"))
+        text = s.text(s.wait(".item [data-update='rewritten']", timeout=30))
+        equal("the first Update leaves the branch", here(), before)
+        return text
+    # Rebased by the author: the bar says the history was rewritten, and Update takes it.
+    rebase_pr("docs")
+    rewritten = update_finds_rewritten()
+    contains("the bar says the history was rewritten", rewritten, "history was rewritten")
+    s.click(s.wait(".item [data-update-branch]"))
+    eventually("Update takes the rebased PR", here, lambda v: v == github_head(), timeout=30)
+    # With a commit of the user's own that GitHub lacks, Update refuses and names it.
+    open(os.path.join(mine, "mine.txt"), "w").write("mine\n")
+    commit(mine, "mine, not pushed")
+    rebase_pr("more-docs")
+    update_finds_rewritten()
+    before = here()
+    s.click(s.wait(".item [data-update-branch]"))
+    refused = s.text(s.wait(".item [data-error]", timeout=30))
+    print("[update] refused:", refused.strip())
+    contains("Update names the commit it would drop", refused, "mine, not pushed")
+    equal("and leaves the branch", here(), before)
+    s.click(s.wait(".item [data-error] [aria-label=Dismiss]"))
+    git(mine, "reset", "-q", "--hard", "HEAD~1")
+
     # Merged while the user has it open: not cleaned up behind their back, the item asks.
     set_state(42, "MERGED")
     s.wait(".item [data-finished='merged']", timeout=30)

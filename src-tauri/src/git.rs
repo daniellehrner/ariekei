@@ -242,9 +242,11 @@ pub fn from_remotes(repo: &Path, branch: &str) -> Vec<String> {
                 why.strip_prefix("merge ")
                     .and_then(|m| m.strip_suffix(": Fast-forward"))
             });
-        let pulled = why.starts_with("pull") && why.to_lowercase().ends_with(": fast-forward");
+        let pulled = why.starts_with("pull")
+            && why.to_lowercase().ends_with(": fast-forward")
+            && names_a_remote(why, &remotes);
         // Fetched into the branch, as Ariekei makes a PR's (`refs/pull/<N>/head:<branch>`).
-        let fetched = why.starts_with("fetch ");
+        let fetched = why.starts_with("fetch ") && names_a_remote(why, &remotes);
         if pulled || fetched || from.is_some_and(is_remote) {
             found.push(hash.to_owned());
         }
@@ -252,6 +254,24 @@ pub fn from_remotes(repo: &Path, branch: &str) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     found.retain(|h| seen.insert(h.clone()));
     found
+}
+
+/// Whether a `pull` or `fetch` reflog message (`fetch -q origin a:b: storing head`) got its
+/// commits from a remote: one of `remotes`, a URL, or none named (a pull from the upstream).
+/// Not from `.` or another local repository, which may hold work no remote has.
+fn names_a_remote(why: &str, remotes: &[String]) -> bool {
+    let mut words = why.split_whitespace();
+    if words.next().is_none_or(|command| command.ends_with(':')) {
+        return true;
+    }
+    let Some(from) = words.find(|w| !w.starts_with('-')) else {
+        return true;
+    };
+    let from = from.strip_suffix(':').unwrap_or(from);
+    let scp = from
+        .split_once(':')
+        .is_some_and(|(host, _)| host.len() > 1 && !host.contains(['/', '\\']));
+    remotes.iter().any(|r| r == from) || from.contains("://") || scp
 }
 
 pub fn commit_exists(repo: &Path, rev: &str) -> bool {
@@ -590,9 +610,42 @@ pub mod tests {
         let p = dir.path();
         git(p, &["init", "-q", "-b", "main"]).unwrap();
         let up_path = up.path().to_str().unwrap();
-        git(p, &["fetch", "-q", up_path, "main:pr-5"]).unwrap();
+        git(p, &["remote", "add", "origin", up_path]).unwrap();
+        git(p, &["fetch", "-q", "origin", "main:pr-5"]).unwrap();
         let head = git_str(up.path(), &["rev-parse", "main"]).unwrap();
-        assert_eq!(from_remotes(p, "pr-5"), vec![head]);
+        assert_eq!(from_remotes(p, "pr-5"), vec![head.clone()]);
+
+        // Not one fetched from the clone itself (or another local repository): its commits
+        // may be on no remote.
+        git(p, &["switch", "-q", "-c", "wip", "pr-5"]).unwrap();
+        std::fs::write(p.join("w.txt"), "wip\n").unwrap();
+        commit(p, "wip");
+        git(p, &["fetch", "-q", ".", "wip:local"]).unwrap();
+        git(p, &["fetch", "-q", up_path, "main:by-path"]).unwrap();
+        assert!(from_remotes(p, "local").is_empty());
+        assert!(from_remotes(p, "by-path").is_empty());
+    }
+
+    #[test]
+    fn a_reflog_message_names_a_remote() {
+        let remotes = ["origin".to_owned()];
+        for (why, remote) in [
+            ("fetch origin refs/pull/5/head:pr-5: storing head", true),
+            ("fetch -q --no-tags origin a:b: fast-forward", true),
+            (
+                "fetch https://github.com/o/r refs/pull/5/head:pr-5: storing head",
+                true,
+            ),
+            ("fetch git@github.com:o/r.git a:b: storing head", true),
+            ("pull: Fast-forward", true),
+            ("pull --ff-only origin main: Fast-forward", true),
+            ("fetch -q . wip:feat: fast-forward", false),
+            ("pull . wip: Fast-forward", false),
+            ("fetch /home/me/other a:b: storing head", false),
+            ("fetch C:\\repos\\other a:b: storing head", false),
+        ] {
+            assert_eq!(names_a_remote(why, &remotes), remote, "{why}");
+        }
     }
 
     #[test]

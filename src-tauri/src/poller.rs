@@ -14,7 +14,7 @@
 //! budget is used up anyway, polling waits for GitHub's reset instead of failing every minute.
 
 use crate::github::{self, PrSummary};
-use crate::store::{PolledPr, Repo};
+use crate::store::{NOTHING_SEEN, PolledPr, Repo};
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::{Duration, Instant};
@@ -370,9 +370,10 @@ pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), Stri
             if old.is_none()
                 && let Some(i) = issues.iter().find(|i| i.number == item.number)
             {
-                state
-                    .store
-                    .set_last_seen(item.id, i.latest_activity.as_deref().unwrap_or(""))?;
+                state.store.set_last_seen(
+                    item.id,
+                    i.latest_activity.as_deref().unwrap_or(NOTHING_SEEN),
+                )?;
             }
             continue;
         }
@@ -383,9 +384,10 @@ pub fn poll(state: &crate::AppState, repo: &Repo, full: bool) -> Result<(), Stri
             Some(previous) => crate::notify::pr_changed(state, &item.id.to_string(), &previous, pr),
             // First sight of this PR: what is there now counts as seen, so only later
             // activity shows up as new.
-            None => state
-                .store
-                .set_last_seen(item.id, pr.latest_activity.as_deref().unwrap_or(""))?,
+            None => state.store.set_last_seen(
+                item.id,
+                pr.latest_activity.as_deref().unwrap_or(NOTHING_SEEN),
+            )?,
         }
     }
     crate::lifecycle::after_poll(state, repo)?;

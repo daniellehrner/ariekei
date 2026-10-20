@@ -246,6 +246,10 @@ pub struct Store {
     conn: Mutex<Connection>,
 }
 
+/// An item's `last_seen` when the user (or a poll) saw it with no activity yet: it sorts before
+/// every time, so all activity after counts as new. `""` is never seen (e.g. added from Browse).
+pub const NOTHING_SEEN: &str = "0";
+
 fn err(e: rusqlite::Error) -> String {
     e.to_string()
 }
@@ -761,6 +765,7 @@ impl Store {
         .map_err(err)
     }
 
+    /// `at`: GitHub's time of the latest activity the user has seen, or `NOTHING_SEEN`.
     pub fn set_last_seen(&self, id: i64, at: &str) -> Result<(), String> {
         self.update(id, "last_seen = ?2", at)
     }

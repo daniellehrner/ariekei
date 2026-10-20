@@ -8,7 +8,7 @@ use crate::AppState;
 use crate::git;
 use crate::github::{self, PrSummary};
 use crate::inbox::{self, Row};
-use crate::store::{PolledPr, Repo, WorkItem};
+use crate::store::{NOTHING_SEEN, PolledPr, Repo, WorkItem};
 use crate::terminal::{self, SessionPlan};
 use crate::worktree::{self, Prepared};
 use serde::Serialize;
@@ -324,12 +324,12 @@ pub fn mark_done(state: &AppState, id: i64) -> Result<crate::lifecycle::Cleanup,
     crate::lifecycle::clean_up(state, id)
 }
 
-/// How far the user had seen an item's GitHub activity (its `latest_activity`), before and
+/// How far the user had seen an item's GitHub activity (its `latest_activity`, or `NOTHING_SEEN`), before and
 /// after `mark_seen`.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Seen {
     pub before: Option<String>,
-    pub after: Option<String>,
+    pub after: String,
 }
 
 /// Opening an item counts as seeing its current GitHub activity, and keeps it in the
@@ -345,14 +345,15 @@ pub fn mark_seen(state: &AppState, id: i64) -> Result<Seen, String> {
         "issue" => issue_summary(&item).ok().and_then(|i| i.latest_activity),
         _ => summary(&item).ok().and_then(|p| p.latest_activity),
     };
-    if let Some(at) = &latest {
-        state.store.set_last_seen(id, at)?;
-    }
     let before = item.last_seen.filter(|s| !s.is_empty());
-    Ok(Seen {
-        after: latest.or(before.clone()),
-        before,
-    })
+    // Seen with nothing on it: whatever comes later is new.
+    let after = latest
+        .or_else(|| before.clone())
+        .unwrap_or_else(|| NOTHING_SEEN.to_owned());
+    if before.as_deref() != Some(after.as_str()) {
+        state.store.set_last_seen(id, &after)?;
+    }
+    Ok(Seen { before, after })
 }
 
 pub fn prepare(state: &AppState, id: i64) -> Result<Prepared, String> {
@@ -755,8 +756,10 @@ pub fn move_branch_here(state: &AppState, id: i64) -> Result<(), String> {
 
 /// Brings item `id`'s branch up to GitHub's head of the PR (`update_of`): fast-forwards it,
 /// or, after the author rewrote the PR's history, resets it there when that drops nothing
-/// GitHub does not have. Uncommitted changes stay (`reset --keep`), or git refuses.
-pub fn update_branch(state: &AppState, id: i64) -> Result<(), String> {
+/// GitHub does not have. Uncommitted changes stay (`reset --keep`), or git refuses. Resets
+/// only with `rewrite` (the user was told the history was rewritten); else a rewrite that
+/// only the fetch revealed returns `false` and changes nothing: the Update bar says so now.
+pub fn update_branch(state: &AppState, id: i64, rewrite: bool) -> Result<bool, String> {
     let (item, repo) = item_repo(state, id)?;
     if item.kind != "pr" {
         return Err("only a PR's branch follows GitHub".into());
@@ -770,10 +773,13 @@ pub fn update_branch(state: &AppState, id: i64) -> Result<(), String> {
     // By the ref, not the commit: the branch's reflog then says it came from GitHub.
     let pulled = worktree::pull_ref(item.number);
     if git::is_ancestor(&dir, &head, &tip) {
-        return Ok(());
+        return Ok(true);
     }
     if git::is_ancestor(&dir, &tip, &head) {
-        return git::git(&dir, &["merge", "--ff-only", "--quiet", &pulled]).map(|_| ());
+        return git::git(&dir, &["merge", "--ff-only", "--quiet", &pulled]).map(|_| true);
+    }
+    if !rewrite {
+        return Ok(false);
     }
     let lost = crate::lifecycle::not_on_github(&repo.path, &dir, &[&tip], Some(&branch), &[&head])?;
     if !lost.is_empty() {
@@ -783,7 +789,7 @@ pub fn update_branch(state: &AppState, id: i64) -> Result<(), String> {
             commits_list(&lost)
         ));
     }
-    git::git(&dir, &["reset", "--keep", "--quiet", &pulled]).map(|_| ())
+    git::git(&dir, &["reset", "--keep", "--quiet", &pulled]).map(|_| true)
 }
 
 /// Refuses work for the agent of item `id` while its worktree is on another branch: it would
@@ -1508,7 +1514,7 @@ mod tests {
             mark_seen(&app.state, id).unwrap(),
             Seen {
                 before: first.clone(),
-                after: first.clone()
+                after: first.clone().unwrap()
             }
         );
 
@@ -1525,10 +1531,47 @@ mod tests {
             mark_seen(&app.state, id).unwrap(),
             Seen {
                 before: first,
-                after: Some("2026-10-13T08:00:00Z".into())
+                after: "2026-10-13T08:00:00Z".into()
             }
         );
         assert!(!new_activity());
+    }
+
+    #[test]
+    fn comments_on_an_item_seen_without_any_are_new() {
+        let app = TestApp::new();
+        let carol = json!([{"author": "carol", "html": "", "at": "2026-10-12T08:00:00Z"}]);
+        let nothing = Seen {
+            before: Some(NOTHING_SEEN.into()),
+            after: NOTHING_SEEN.into(),
+        };
+        let after_carol = Seen {
+            before: Some(NOTHING_SEEN.into()),
+            after: "2026-10-12T08:00:00Z".into(),
+        };
+        // Found by a poll with no comments yet.
+        app.add_pr(json!({"number": 5, "title": "Feat", "head_ref": "main", "author": "bob", "requested": true}));
+        app.poll().unwrap();
+        let id = app.item(5).id;
+        assert_eq!(mark_seen(&app.state, id).unwrap(), nothing);
+        app.set("prs", 5, json!({"comments": carol}));
+        app.poll().unwrap();
+        assert!(app.row(5).unwrap().new_activity);
+        assert_eq!(mark_seen(&app.state, id).unwrap(), after_carol);
+
+        // Added from Browse, never seen: nothing is new on the first look, then the same.
+        app.add_pr(json!({"number": 6, "title": "Other", "head_ref": "main", "author": "bob"}));
+        let id = track(&app.state, Some(app.repo.clone()), "pr", 6).unwrap();
+        assert_eq!(
+            mark_seen(&app.state, id).unwrap(),
+            Seen {
+                before: None,
+                after: NOTHING_SEEN.into()
+            }
+        );
+        app.set("prs", 6, json!({"comments": carol}));
+        app.poll().unwrap();
+        assert_eq!(mark_seen(&app.state, id).unwrap(), after_carol);
     }
 
     #[test]
@@ -2149,7 +2192,7 @@ mod tests {
         app.push_to("feat", &[("c.txt", "bob's\n")], "bob");
         git(up, &["update-ref", "refs/pull/5/head", "feat"]);
         assert_eq!(update(), Some("new"), "not fetched yet");
-        update_branch(&app.state, id).unwrap();
+        update_branch(&app.state, id, false).unwrap();
         assert_eq!(here(), github());
         assert_eq!(update(), None);
 
@@ -2158,18 +2201,104 @@ mod tests {
         commit(&wt, "mine, not pushed", "me");
         assert_eq!(update(), None);
 
-        // The author rebases the PR: updating would drop the user's commit, so it refuses.
+        // The author rebases the PR. Not fetched yet, the bar could not say so: the first
+        // Update only fetches, then the bar says the history was rewritten.
         app.push_to("main", &[("m.txt", "carol's\n")], "carol");
         rebase_upstream(&app, "feat", 5);
-        let err = update_branch(&app.state, id).unwrap_err();
+        assert_eq!(update(), Some("new"));
+        let before = here();
+        assert_eq!(update_branch(&app.state, id, false), Ok(false));
+        assert_eq!(here(), before);
+        assert_eq!(update(), Some("rewritten"));
+        // Updating would drop the user's commit, so it refuses.
+        let err = update_branch(&app.state, id, true).unwrap_err();
         assert!(err.contains("mine, not pushed"), "{err}");
-        assert_eq!(update(), Some("rewritten"), "fetched by the try");
 
         // Without it, the branch takes the rebased PR: its old commits came from GitHub.
         git(&wt, &["reset", "-q", "--hard", "HEAD~1"]);
-        update_branch(&app.state, id).unwrap();
+        update_branch(&app.state, id, true).unwrap();
         assert_eq!(here(), github());
         assert_eq!(update(), None);
+    }
+
+    #[test]
+    fn the_worktree_fixes_move_no_other_branch_and_keep_uncommitted_work() {
+        let app = TestApp::new();
+        let (id, wt) = app.pr_with_worktree(5, "feat");
+        let branch = app.state.store.item(id).unwrap().branch.unwrap();
+        let up = &app.upstream;
+        let row = || {
+            app.poll().unwrap();
+            app.rows().into_iter().find(|r| r.id == id).unwrap()
+        };
+        let rev = |r: &str| git(&wt, &["rev-parse", r]);
+        let github = || git(up, &["rev-parse", "feat"]);
+
+        // On another branch with a commit of its own: Move here is for a detached HEAD only,
+        // and Update would move that branch.
+        git(&wt, &["switch", "-q", "-c", "elsewhere"]);
+        write(&wt.join("e.txt"), "elsewhere\n");
+        commit(&wt, "elsewhere", "me");
+        let tip = rev(&branch);
+        let err = move_branch_here(&app.state, id).unwrap_err();
+        assert!(err.contains("not on a detached HEAD"), "{err}");
+        app.push_to("feat", &[("c.txt", "bob's\n")], "bob");
+        git(up, &["update-ref", "refs/pull/5/head", "feat"]);
+        let err = update_branch(&app.state, id, true).unwrap_err();
+        assert!(err.contains("switch it back"), "{err}");
+        assert_eq!((rev(&branch), rev("elsewhere")), (tip, rev("HEAD")));
+        let moved = row();
+        assert_eq!(
+            (moved.moved_to.as_deref(), moved.update),
+            (Some("elsewhere"), None)
+        );
+        switch_back(&app.state, id).unwrap();
+
+        // The author's push, already in the clone: a fast-forward. Uncommitted changes stay.
+        git(&wt, &["fetch", "-q", "origin", "refs/pull/5/head"]);
+        assert_eq!(row().update, Some("fast-forward"));
+        write(&wt.join("a.txt"), "not committed\n");
+        update_branch(&app.state, id, false).unwrap();
+        assert_eq!(rev("HEAD"), github());
+        update_branch(&app.state, id, false).unwrap();
+        assert_eq!(rev("HEAD"), github(), "up to date: nothing to do");
+
+        // Rebased by the author onto a main that adds m.txt, which is untracked here: git
+        // refuses to overwrite it, and the branch stays.
+        app.push_to("main", &[("m.txt", "carol's\n")], "carol");
+        rebase_upstream(&app, "feat", 5);
+        write(&wt.join("m.txt"), "mine\n");
+        let before = rev("HEAD");
+        let err = update_branch(&app.state, id, true).unwrap_err();
+        assert!(err.contains("m.txt"), "{err}");
+        assert_eq!(rev("HEAD"), before);
+        std::fs::remove_file(wt.join("m.txt")).unwrap();
+        assert_eq!(update_branch(&app.state, id, true), Ok(true));
+        assert_eq!(rev("HEAD"), github());
+        assert_eq!(
+            std::fs::read_to_string(wt.join("a.txt")).unwrap(),
+            "not committed\n"
+        );
+        git(&wt, &["checkout", "-q", "--", "a.txt"]);
+
+        // A detached HEAD that builds on the branch's own unpushed commit: Move here keeps it.
+        write(&wt.join("d.txt"), "mine\n");
+        commit(&wt, "mine, not pushed", "me");
+        git(&wt, &["checkout", "-q", "--detach"]);
+        write(&wt.join("d.txt"), "more\n");
+        commit(&wt, "more", "me");
+        move_branch_here(&app.state, id).unwrap();
+        assert_eq!(
+            crate::git::current_branch(&wt).unwrap(),
+            Some(branch.clone())
+        );
+        assert_eq!(rev(&branch), rev("HEAD"));
+
+        // Merged (kept: its commits are not on GitHub): nothing to update.
+        app.set("prs", 5, json!({"state": "MERGED"}));
+        app.push_to("feat", &[("f.txt", "late\n")], "bob");
+        git(up, &["update-ref", "refs/pull/5/head", "feat"]);
+        assert_eq!(row().update, None);
     }
 
     #[test]

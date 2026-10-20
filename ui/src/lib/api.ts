@@ -215,8 +215,9 @@ export const api = {
   openItem: (id: number) => invoke<void>("open_item", { id }),
   inbox: () => invoke<Row[]>("inbox"),
   refresh: () => invoke<void>("refresh"),
-  /** How far the user had seen the item's activity (its latest by others) before this, and now. */
-  markSeen: (id: number) => invoke<{ before: string | null; after: string | null }>("mark_seen", { id }),
+  /** How far the user had seen the item's activity (its latest by others) before this, and now:
+   *  GitHub's time, or "0" for "seen with none yet"; `before` is null if never seen. */
+  markSeen: (id: number) => invoke<{ before: string | null; after: string }>("mark_seen", { id }),
   reviewSeen: (agentItem: number) => invoke<void>("review_seen", { agentItem }),
   setActiveItem: (id: number | null) => invoke<void>("set_active_item", { id }),
   selectedItem: () => invoke<number | null>("selected_item"),
@@ -241,7 +242,9 @@ export const api = {
   /** Moves the item's branch to its worktree's detached HEAD. */
   moveBranchHere: (id: number) => invoke<void>("move_branch_here", { id }),
   /** Brings the PR's branch up to GitHub's head of it. */
-  updateBranch: (id: number) => invoke<void>("update_branch", { id }),
+  /** Replaces the branch with a rewritten PR head only with `rewrite` (the bar said so); false if
+   *  the fetch only now found the history rewritten. */
+  updateBranch: (id: number, rewrite: boolean) => invoke<boolean>("update_branch", { id, rewrite }),
   reviewFiles: (id: number, from: string, to: string | null, ignoreWs: boolean) =>
     invoke<ReviewFile[]>("review_files", { id, from, to, ignoreWs }),
   reviewFile: (id: number, from: string, to: string | null, path: string, ignoreWs: boolean) =>

@@ -192,6 +192,9 @@ def graphql(fields):
     if issue_aliases:
         return lookups("i", "Issue", [int(n) for n, _ in issue_aliases], issues, issue_summary)
     if "pullRequest(number: $number)" in query:
+        # While $FAKE_GH_DIR/fail-conversation-<N> exists, PR N's conversation fails to load.
+        if os.path.exists(os.path.join(DIR, f"fail-conversation-{fields['number']}")):
+            return {"errors": [{"message": "Something went wrong while executing your query."}]}
         return {"data": {"repository": {"pullRequest": conversation(by_number[int(fields["number"])])}}}
     aliases = re.findall(r"p(\d+): pullRequest\(number: (\d+)\)", query)
     return lookups("p", "PullRequest", [int(n) for n, _ in aliases], by_number, summary)
