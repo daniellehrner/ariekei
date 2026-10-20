@@ -185,10 +185,9 @@ A work item is a pull request, an issue or a task. Selecting it shows its header
 | **Review** | The diff review (see [Reviewing changes](#7-reviewing-changes)). |
 | **Terminal** | The agent, running in the item's worktree. Only with a worktree. |
 
-An item opens on the tab that deals with why it needs you: agent needs you → Terminal, new
-activity → Comments, ready for review → Review, CI failing, cleanup blocked or all closed →
-Overview. Otherwise it opens
-on the tab you last used for it.
+An item opens on the tab you left it on. The first time you open it, it opens on the tab that
+deals with why it needs you: agent needs you → Terminal, new activity → Comments, ready for
+review → Review, CI failing, cleanup blocked or all closed → Overview.
 
 Each item remembers its tab, review scope, selected file and draft comments, so you can switch
 between items freely.

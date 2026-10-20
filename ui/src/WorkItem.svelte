@@ -20,7 +20,7 @@
   import StarToggle from "./controls/StarToggle.svelte";
   import { agents } from "./lib/agent.svelte";
   import { api, shortName, type Conversation, type Row } from "./lib/api";
-  import { landingTab, type Tab } from "./lib/attention";
+  import { openingTab, type Tab } from "./lib/attention";
   import { openOn } from "./lib/layout.svelte";
 
   let {
@@ -144,15 +144,19 @@
     blockers = null;
     confirmDone = false;
     losses = null;
-    // Open on the tab that resolves why the item wants attention, else where the user was.
-    const landing = landingTab(row.attention, { terminal: !!row.worktree });
+    // The previous item's view, if its save is still waiting.
+    saveUi();
+    const attention = row.attention;
+    const terminal = !!row.worktree;
     api.uiState<ItemUi>(current).then((saved) => {
       if (current !== id) return;
       ui = { ...fresh(), ...saved, review: { ...fresh().review, ...saved?.review } };
       // A new task opens on its agent (shown once the row has the worktree: a reload that
       // started while the task was being created can still lack it).
       if (!saved && isTask) ui.tab = "terminal";
-      if (landing) ui.tab = landing;
+      // Where the user left it; opened for the first time, where its attention reason is dealt with.
+      const opening = openingTab(saved?.tab, attention, { terminal });
+      if (opening) ui.tab = opening;
       // Asked for (a notice from the agent, asking it about code); a Terminal only where the
       // agent runs.
       if (openOn.item === current && openOn.tab && (openOn.tab !== "terminal" || row.worktree)) ui.tab = openOn.tab;
@@ -185,13 +189,22 @@
 
   // Persist view state (debounced) as it changes.
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  let unsaved: (() => void) | null = null;
   $effect(() => {
     if (!ui) return;
     const snapshot = JSON.parse(JSON.stringify(ui));
     const target = id;
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => api.setUiState(target, snapshot), 300);
+    unsaved = () => api.setUiState(target, snapshot);
+    saveTimer = setTimeout(saveUi, 300);
   });
+  // Saves the view now if a save is waiting: switching to another item must not drop it.
+  function saveUi() {
+    clearTimeout(saveTimer);
+    unsaved?.();
+    unsaved = null;
+  }
+  onMount(() => saveUi);
 
   async function start() {
     preparing = true;

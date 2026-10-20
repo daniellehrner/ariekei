@@ -55,3 +55,9 @@ export function landingTab(reason: string | null, has: { terminal: boolean }): T
       return null;
   }
 }
+
+/** The tab an item opens on: the one the user left it on, else (never opened before) the one
+ *  that resolves its attention reason. */
+export function openingTab(left: Tab | undefined, reason: string | null, has: { terminal: boolean }): Tab | null {
+  return left ?? landingTab(reason, has);
+}

@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { attentionKind, landingTab } from "./attention.ts";
+import { attentionKind, landingTab, openingTab } from "./attention.ts";
 
 test("attention reasons map to pip kinds", () => {
   assert.equal(attentionKind("agent needs you"), "needs-you");
@@ -21,6 +21,14 @@ test("an item opens on the tab that resolves its attention reason", () => {
   assert.equal(landingTab("CI failing", all), "overview");
   assert.equal(landingTab("agent working", all), null);
   assert.equal(landingTab(null, all), null);
+});
+
+test("an item opens on the tab it was left on, whatever it wants attention for", () => {
+  const all = { terminal: true };
+  assert.equal(openingTab("terminal", "CI failing", all), "terminal");
+  assert.equal(openingTab("overview", "ready for review", all), "overview");
+  assert.equal(openingTab(undefined, "ready for review", all), "review");
+  assert.equal(openingTab(undefined, null, all), null);
 });
 
 test("every attention reason of the Inbox (inbox.rs) has a pip kind", async () => {

@@ -137,9 +137,9 @@ that leaves Ariekei for the agent). Both are raised surfaces (`--surface-raised`
 
 ## Behaviour that comes with the design
 
-- An item opens on the tab that resolves its attention reason: the agent needs you → Terminal,
-  new reviews or comments → Comments, ready for review → Review, CI failing or cleanup blocked
-  → Overview. Otherwise on the tab last used for it.
+- An item opens on the tab last used for it. Opened for the first time, on the tab that
+  resolves its attention reason: the agent needs you → Terminal, new reviews or comments →
+  Comments, ready for review → Review, CI failing or cleanup blocked → Overview.
 - "Ready for review": the agent finished a turn and the user hasn't opened the item's Review tab
   since.
 - Below a 1200 px window the Inbox steps aside once the review's file panel opens, and stays
