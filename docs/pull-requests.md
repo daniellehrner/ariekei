@@ -39,6 +39,9 @@ tasks and cleanup: [lifecycle.md](lifecycle.md). The review view in detail:
   failing part of the Actions job log. The agent waits for your instructions. Claude Code records
   the system prompt at the conversation's first request, so the context is frozen there; **Send PR
   feedback to agent** sends the current threads, reviews and CI state as a message.
+  Each agent, with what it starts, may use up to half the RAM: a command beyond that fails
+  without taking Ariekei or the other agents along (`src-tauri/src/confine.rs`: a systemd scope
+  per agent on Linux, a job object on Windows; macOS stops no process group to begin with).
 - **Review:** all changes vs the PR's base (merge base → head, like GitHub's Files tab),
   including uncommitted ones, or any single commit. Chunks come from git's own hunks
   (CodeMirror's diff only adds character-level detail inside them). When viewing the working

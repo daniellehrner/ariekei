@@ -108,6 +108,7 @@ design. Test-only environment variables:
 | `ARIEKEI_NO_POLL` | Do not poll GitHub |
 | `ARIEKEI_POLL_SECS` | Poll every N seconds instead of 60 |
 | `ARIEKEI_IDLE_SECS` | Close idle, unwatched agents (without background processes) after N seconds instead of 15 minutes |
+| `ARIEKEI_AGENT_MEMORY_MAX` | Cap each agent's memory at this (bytes, or with K, M or G) instead of half the RAM (Linux, Windows) |
 | `ARIEKEI_CLAUDE_ARGS` | Extra arguments for `claude` |
 | `ARIEKEI_CLAUDE` | Use this `claude` binary |
 | `ARIEKEI_PYTHON` | Interpreter for a `.py` given as `ARIEKEI_GH` or `ARIEKEI_CLAUDE` (default `python3`) |

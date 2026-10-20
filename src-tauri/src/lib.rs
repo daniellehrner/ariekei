@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod claude;
+mod confine;
 mod context;
 #[cfg(feature = "e2e")]
 mod e2e;

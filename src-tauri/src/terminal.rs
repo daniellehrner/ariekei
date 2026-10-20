@@ -394,7 +394,9 @@ impl TerminalManager {
         let pair = native_pty_system()
             .openpty(size)
             .map_err(|e| e.to_string())?;
+        let token = uuid::Uuid::new_v4().simple().to_string();
         let (program, prefix) = crate::tools::program(&launch.claude);
+        let (program, prefix) = crate::confine::wrap(program, prefix, &token, label);
         let mut cmd = CommandBuilder::new(program);
         cmd.args(prefix);
         cmd.args(claude_args(&launch, &plan));
@@ -407,9 +409,9 @@ impl TerminalManager {
         for var in PARENT_SESSION_ENV {
             cmd.env_remove(var);
         }
-        let token = uuid::Uuid::new_v4().simple().to_string();
         cmd.env(crate::hooks::TERMINAL_ENV, &token);
         let mut child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+        crate::confine::adopt(child.process_id());
         drop(pair.slave);
         tracing::info!(
             "agent {key} started (pid {:?}, {})",
