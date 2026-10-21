@@ -192,9 +192,9 @@ pub fn created_links(event: &HookEvent, owner: &str, name: &str) -> Vec<(&'stati
     found
 }
 
-/// PRs and issues a task's agent opened on GitHub, to link to the task.
+/// PRs and issues a task's agent opened on GitHub, to add to the Inbox.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskLinks {
+pub struct TaskOpened {
     pub task: i64,
     pub repo: i64,
     /// ("pr" | "issue", number), see `created_links`.
@@ -202,27 +202,27 @@ pub struct TaskLinks {
 }
 
 /// What the task behind terminal `key` just opened on GitHub, if anything.
-fn links_of_task(state: &crate::AppState, key: &str, event: &HookEvent) -> Option<TaskLinks> {
+fn opened_by_task(state: &crate::AppState, key: &str, event: &HookEvent) -> Option<TaskOpened> {
     let task = state.store.item(key.parse().ok()?).ok()?;
     if !task.is_task() {
         return None;
     }
     let repo = state.store.repo(task.repo_id).ok()??;
     let links = created_links(event, &repo.owner, &repo.name);
-    (!links.is_empty()).then_some(TaskLinks {
+    (!links.is_empty()).then_some(TaskOpened {
         task: task.id,
         repo: repo.id,
         links,
     })
 }
 
-/// Links what a task's agent opened on GitHub to the task (fetching each from GitHub), then
-/// refreshes the Inbox.
-pub fn link_to_task(state: &crate::AppState, links: &TaskLinks) {
+/// Adds what a task's agent opened on GitHub to the Inbox (fetching each from GitHub), then
+/// refreshes it.
+pub fn track_opened(state: &crate::AppState, links: &TaskOpened) {
     for (kind, number) in &links.links {
-        if let Err(e) = crate::workitem::link_created(state, links.task, kind, *number) {
+        if let Err(e) = crate::workitem::track_opened(state, links.task, kind, *number) {
             tracing::warn!(
-                "could not link {kind} #{number} to task {}: {e}",
+                "could not add {kind} #{number} that task {} opened: {e}",
                 links.task
             );
         }
@@ -340,7 +340,7 @@ fn handle(mut stream: TcpStream, expected_path: &str) -> std::io::Result<Option<
 }
 
 /// Routes a hook event to its work item and updates the item's status. What a task's agent
-/// opened on GitHub is linked in the background (it fetches each from GitHub).
+/// opened on GitHub is added to the Inbox in the background (it fetches each from GitHub).
 pub fn dispatch(app: &AppHandle, event: HookEvent) {
     // Events can arrive before the app state exists (startup race): drop those.
     let Some(state) = app.try_state::<crate::AppState>() else {
@@ -348,14 +348,14 @@ pub fn dispatch(app: &AppHandle, event: HookEvent) {
     };
     if let Some(links) = record(&state, &event) {
         let app = app.clone();
-        std::thread::spawn(move || link_to_task(&app.state::<crate::AppState>(), &links));
+        std::thread::spawn(move || track_opened(&app.state::<crate::AppState>(), &links));
     }
 }
 
 /// The part of `dispatch` that needs no app: records the session start and the status of
-/// the event's terminal, and returns what a task's agent opened on GitHub, to be linked
-/// (`link_to_task`).
-pub fn record(state: &crate::AppState, event: &HookEvent) -> Option<TaskLinks> {
+/// the event's terminal, and returns what a task's agent opened on GitHub, to be added
+/// (`track_opened`).
+pub fn record(state: &crate::AppState, event: &HookEvent) -> Option<TaskOpened> {
     // Hooks of terminals Ariekei did not start (or already closed) are ignored.
     let key = state
         .terminals
@@ -388,7 +388,7 @@ pub fn record(state: &crate::AppState, event: &HookEvent) -> Option<TaskLinks> {
     {
         tracing::warn!("failed to record session start: {e}");
     }
-    let links = links_of_task(state, &key, event);
+    let links = opened_by_task(state, &key, event);
     if let Some((status, detail)) = status_for(event) {
         state.report(&key, status, detail);
     }
@@ -651,7 +651,7 @@ mod tests {
         }
 
         #[test]
-        fn hooks_of_a_tasks_agent_set_its_status_and_link_what_it_opened() {
+        fn hooks_of_a_tasks_agent_set_its_status_and_add_what_it_opened() {
             let app = TestApp::new();
             let task = create_task(&app.state, Some(app.repo.clone()), "Hooks", "", "").unwrap();
             app.start_agent(task);
@@ -705,18 +705,18 @@ mod tests {
                     }),
                 ),
             )
-            .expect("a PR to link");
+            .expect("a PR to add");
             assert_eq!(
                 links,
-                TaskLinks {
+                TaskOpened {
                     task,
                     repo: app.repo.id,
                     links: vec![("pr", 30)]
                 }
             );
-            link_to_task(&app.state, &links);
+            track_opened(&app.state, &links);
             let pr = app.item(30);
-            assert_eq!((pr.task_id, pr.tracked), (Some(task), true));
+            assert!(pr.tracked && pr.origin.is_some());
             assert!(app.events.take().contains(&Sent::InboxChanged(app.repo.id)));
 
             // Hooks of sessions Ariekei did not start change nothing.
@@ -810,7 +810,7 @@ mod tests {
         }
 
         #[test]
-        fn a_pr_agent_opening_a_pr_links_nothing() {
+        fn a_pr_agent_opening_a_pr_adds_nothing() {
             let app = TestApp::new();
             let (id, _) = app.pr_with_worktree(10, "feature/x");
             app.start_agent(id);

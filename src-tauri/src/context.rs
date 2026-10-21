@@ -162,8 +162,9 @@ pub fn render_task(
          workbench, {on}. The user reviews your changes there. The task has no pull request \
          or issue yet: it may end as one or more pull requests, issues, or nothing. Open pull \
          requests with `gh pr create` and issues with `gh issue create` (only when the user \
-         asks); Ariekei links what they print to this task, and a pull request opened for \
-         the branch by anyone. Wait for the user's instructions before changing anything."
+         asks); Ariekei adds what they print to its Inbox as items of their own, and a pull \
+         request opened for the branch by anyone. Wait for the user's instructions before \
+         changing anything."
     );
     let notes = notes.trim();
     if !notes.is_empty() {
@@ -172,6 +173,114 @@ pub fn render_task(
             "\n## What to look into\n\n{}",
             truncate(notes, MAX_BODY)
         );
+    }
+    md
+}
+
+/// Longest message of a task's conversation in `render_origin`; the whole is at most
+/// `MAX_ORIGIN`, the oldest messages (but the first) left out.
+const MAX_MESSAGE: usize = 3_000;
+const MAX_ORIGIN: usize = 40_000;
+
+/// What the user said and the agent answered in Claude Code transcript `path` (JSON lines),
+/// oldest first: `(true, text)` for the user. Tool calls and their results, thinking,
+/// subagents and Claude Code's own notes (`<task-notification>`, commands) are left out.
+pub fn conversation(path: &std::path::Path) -> Vec<(bool, String)> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return vec![];
+    };
+    let said = |text: &str| {
+        let text = text.trim();
+        (!text.is_empty()
+            && !text.starts_with('<')
+            && !text.starts_with("Another Claude session sent a message"))
+        .then(|| text.to_owned())
+    };
+    let mut out = vec![];
+    for line in text.lines() {
+        let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let user = match entry["type"].as_str() {
+            Some("user") => true,
+            Some("assistant") => false,
+            _ => continue,
+        };
+        if entry["isMeta"] == true || entry["isSidechain"] == true {
+            continue;
+        }
+        let content = &entry["message"]["content"];
+        let texts: Vec<String> = match content.as_str() {
+            Some(text) => said(text).into_iter().collect(),
+            None => content
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+                .iter()
+                .filter(|b| b["type"] == "text")
+                .filter_map(|b| said(b["text"].as_str().unwrap_or_default()))
+                .collect(),
+        };
+        out.extend(texts.into_iter().map(|t| (user, t)));
+    }
+    out
+}
+
+/// How a PR or issue (`kind`: "pull request" or "issue") that the agent of task `name` opened
+/// came about, for the agent that later works on it: the task and its `conversation` up to
+/// then.
+pub fn render_origin(
+    kind: &str,
+    name: &str,
+    title: &str,
+    notes: &str,
+    branch: &str,
+    conversation: &[(bool, String)],
+) -> String {
+    let mut md = String::new();
+    let _ = writeln!(
+        md,
+        "## How this came about\n\nThe agent of task {name} (\"{title}\", on `{branch}`) opened \
+         this {kind} in Ariekei. You start a new conversation: below is what the user asked \
+         that agent and what it answered up to then (its tool calls left out)."
+    );
+    let notes = notes.trim();
+    if !notes.is_empty() {
+        let _ = writeln!(md, "\nThe task's notes:\n\n{}", truncate(notes, MAX_BODY));
+    }
+    let said: Vec<String> = conversation
+        .iter()
+        .map(|(user, text)| {
+            let cut = if text.chars().count() > MAX_MESSAGE {
+                " …"
+            } else {
+                ""
+            };
+            format!(
+                "\n**{}:** {}{cut}\n",
+                if *user { "User" } else { "Agent" },
+                truncate(text, MAX_MESSAGE)
+            )
+        })
+        .collect();
+    // The first message (what the task was about), then the latest that fit.
+    let mut latest = vec![];
+    let mut size = said.first().map_or(0, String::len);
+    for message in said.iter().skip(1).rev() {
+        if size + message.len() > MAX_ORIGIN {
+            break;
+        }
+        size += message.len();
+        latest.push(message);
+    }
+    if let Some(first) = said.first() {
+        md.push_str(first);
+    }
+    if latest.len() + 1 < said.len() {
+        let _ = writeln!(md, "\n(… earlier messages left out …)");
+    }
+    for message in latest.into_iter().rev() {
+        md.push_str(message);
     }
     md
 }
@@ -292,5 +401,61 @@ mod tests {
         let md = render(1, &pr, &[]);
         assert!(!md.contains("## Unresolved") && !md.contains("## Failing"));
         assert!(md.contains("(description truncated)"));
+    }
+
+    #[test]
+    fn the_origin_tells_what_was_said_without_the_tools() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        let lines = [
+            r#"{"type":"user","message":{"content":"Speed up keccak"}}"#,
+            r#"{"type":"user","isMeta":true,"message":{"content":"Caveat: local command"}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"hm"},{"type":"tool_use","name":"Bash"}]}}"#,
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"build ok"}]}}"#,
+            r#"{"type":"assistant","isSidechain":true,"message":{"content":[{"type":"text","text":"subagent"}]}}"#,
+            r#"{"type":"user","message":{"content":"<task-notification>done</task-notification>"}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Cloning the digest costs a fifth."}]}}"#,
+            r#"{"type":"user","message":{"content":[{"type":"text","text":"open a PR"}]}}"#,
+            "not json",
+        ];
+        std::fs::write(&path, lines.join("\n")).unwrap();
+        let said = conversation(&path);
+        assert_eq!(
+            said,
+            [
+                (true, "Speed up keccak".to_owned()),
+                (false, "Cloning the digest costs a fifth.".to_owned()),
+                (true, "open a PR".to_owned())
+            ]
+        );
+        let md = render_origin(
+            "pull request",
+            "T6",
+            "Turbo",
+            "Look at EVM v2.",
+            "task-6",
+            &said,
+        );
+        assert!(md.starts_with("## How this came about"), "{md}");
+        assert!(md.contains("task T6 (\"Turbo\", on `task-6`)") && md.contains("Look at EVM v2."));
+        assert!(md.contains("**User:** Speed up keccak") && md.contains("**Agent:** Cloning"));
+        assert!(!md.contains("left out …"));
+        assert!(conversation(&dir.path().join("gone.jsonl")).is_empty());
+
+        // Too long: the first message and the latest that fit.
+        let long: Vec<(bool, String)> = (0..40)
+            .map(|i| {
+                (
+                    i % 2 == 0,
+                    format!("message {i} {}", "x".repeat(MAX_MESSAGE + 5)),
+                )
+            })
+            .collect();
+        let md = render_origin("issue", "T6", "Turbo", "", "task-6", &long);
+        assert!(
+            md.contains("message 0 ") && md.contains("message 39 ") && !md.contains("message 1 ")
+        );
+        assert!(md.contains("(… earlier messages left out …)") && md.contains("x …"));
+        assert!(md.len() < MAX_ORIGIN + 2_000);
     }
 }

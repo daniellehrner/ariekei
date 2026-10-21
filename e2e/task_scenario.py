@@ -6,17 +6,17 @@
 GitHub is e2e/fake_gh.py (ARIEKEI_GH) and the agent e2e/fake_claude.py (ARIEKEI_CLAUDE); the
 "GitHub" repo is a local git repo reached through insteadOf. Covers: New task (Ctrl+N;
 worktree on task-<n>-<slug> from main, the notes in the agent's context, the agent starts), the agent
-opening a PR and an issue (`gh pr create` / `gh issue create`) which are linked to the task
-and listed under it rather than in their sections, a linked PR pointing back to the task and
-sending its review threads to the task's agent, asking the agent about code from the review
-(right-click a line or an old-side selection; refused while it waits for permission), Save file
-in the review (refused when the agent changed the file meanwhile, Reload; CRLF kept), Ctrl+B
-and ? in the terminal staying with the agent, Discard refused while the agent waits for
-permission, a closed issue staying under its task, Discard (shows the work it loses, then
-removes the worktree, branch and task; the PR goes back to My PRs), and a second task (the +
-button) whose merged PR stays under it ("All closed") until Done removes it, and a task on a
-fork's branch (named after it, the fork's remote added, the branch tracking it, its context naming
-it) whose PR, opened on GitHub, is linked to it on a poll, and a task on the branch the user's own
+opening a PR and an issue (`gh pr create` / `gh issue create`) which become items of their own
+in their sections, Start working on that PR (it adopts the task's checkout; its agent is told
+how the PR came about) and sending its review threads to its agent, asking the task's agent
+about code from the review (right-click a line or an old-side selection; refused while it waits
+for permission), Save file in the review (refused when the agent changed the file meanwhile,
+Reload; CRLF kept), Ctrl+B and ? in the terminal staying with the agent, Discard refused while
+the agent waits for permission, a closed issue cleaned up like any other, Discard (shows the
+work it loses, then removes the worktree, branch and task), and a second task (the + button)
+whose merged PR is cleaned up while the task stays until Done, and a task on a fork's branch
+(named after it, the fork's remote added, the branch tracking it, its context naming it) whose
+PR, opened on GitHub, is added to the Inbox on a poll, and a task on the branch the user's own
 checkout is on (it works there; switched to another branch, the agent gets nothing from
 Ariekei until Switch back, though its terminal still takes input; detached on a newer commit,
 Move here takes the branch along; detached off it with a commit of its own, Switch back
@@ -140,9 +140,9 @@ def sections(s):
 
 
 def listed(s):
-    """The Inbox rows as (number, nested under a task)."""
+    """The numbers of the Inbox rows."""
     open_inbox(s)
-    return s.js("return [...document.querySelectorAll('.inbox .row')].map(r => [Number(r.dataset.number), !!r.closest('li.nested')])")
+    return s.js("return [...document.querySelectorAll('.inbox .row')].map(r => Number(r.dataset.number))")
 
 
 def agent(s, number):
@@ -199,37 +199,47 @@ try:
     print("[task] inbox:", sections(s), listed(s))
     equal("the task is listed under Tasks", sections(s), ["Tasks 1"])
 
-    # --- the agent opens a PR and an issue: both are linked to the task ---
+    # --- the agent opens a PR and an issue: both are items of their own ---
     open(os.path.join(wt, "a.txt"), "a").write("reset peers once\n")
     commit(wt, "Reset the peer table once")
     ask(s, "Open a pull request titled 'Reset the peer table once'")
-    eventually("the PR appears under the task", lambda: listed(s), lambda rows: [100, True] in rows, timeout=30)
+    eventually("the PR is in My PRs", lambda: sections(s), lambda v: "My PRs 1" in v, timeout=30)
     ask(s, "Open an issue titled 'Peer table grows without bound'")
-    eventually("the issue appears under the task", lambda: listed(s), lambda rows: [101, True] in rows, timeout=30)
-    print("[linked] inbox:", sections(s), listed(s))
-    equal("linked items are not in their own sections", sections(s), ["Tasks 1"])
-    s.js("[...document.querySelectorAll('.item [role=tab]')].find(t => t.textContent.trim() === 'Overview').click()")
-    links = eventually("the task's Overview lists them", lambda: s.js("return [...document.querySelectorAll('[data-links] [data-link]')].map(b => b.dataset.link)"),
-                       lambda v: v and sorted(v) == ["100", "101"])
-    print("[linked] overview:", links)
+    eventually("the issue is in the Inbox", lambda: listed(s), lambda rows: 101 in rows, timeout=30)
+    print("[opened] inbox:", sections(s), listed(s))
+    check("the task lists nothing of them", not s.find("[data-links]"))
 
     select(s, 100)
-    s.wait(".item [data-from-task]", timeout=30)
+    s.wait(".item header .title", timeout=30, text="#100")
     header = s.js("return document.querySelector('.item header').innerText.replace(/\\n+/g, ' | ')")
-    print("[pr] header:", header, "| start offered:", s.js("return !!document.querySelector('[data-start]')"),
-          "| PR feedback to the agent:", s.js("return [...document.querySelectorAll('.item .tabs button')].some(b => b.textContent.includes('Send PR feedback'))"))
-    contains("the PR points to its task", header, "from task T1 Peers drop after restart")
-    check("the PR uses the task's agent (no Start working)", not s.js("return !!document.querySelector('[data-start]')"))
-    # A review thread on the PR goes to the task's agent (the PR has no agent of its own).
+    print("[pr] header:", header, "| start offered:", s.js("return !!document.querySelector('[data-start]')"))
+    check("the PR does not point to the task", "from task" not in header, header)
+    # Start working: the PR's branch is the task's, so it works in the task's checkout, and
+    # its new agent is told how the PR came about.
+    s.click(s.wait("[data-start]", timeout=30))
+    eventually("the PR's agent is ready", lambda: agent(s, 100), lambda a: a in ("ready", "finished"), timeout=60)
+    where = s.js("return document.querySelector('.item [data-worktree]').title").split(" — ")[0]
+    check("the PR adopts the task's checkout", os.path.samefile(where, wt), where)
+    pr_context = open(os.path.join(data_dir, "context", "owner-proj-pr100.md"), encoding="utf-8").read()
+    origin = pr_context[pr_context.find("## How this came about"):]
+    print("[pr] its agent was told:", origin[:300].replace("\n", " | "))
+    contains("the PR's agent is told how it came about", origin, "The agent of task T1 (\"Peers drop after restart\"")
+    contains("with the task's conversation", origin, "**User:** Open a pull request titled 'Reset the peer table once'")
+    # A review thread on the PR goes to its own agent.
     set_pr(100, threads=[{"id": "T1", "path": "a.txt", "line": 2, "comment_id": 7, "author": "bob",
                           "body": "Handle a peer that reconnects mid-reset.", "html": "<p>Handle a peer that reconnects mid-reset.</p>"}])
     s.js("[...document.querySelectorAll('.item .tabs button')].find(b => b.textContent.includes('Send PR feedback')).click()")
     s.wait(".item [data-notice]", timeout=30, text="Sent the PR's review threads")
-    told = eventually("the task's agent gets the PR feedback", transcripts, lambda t: "Handle a peer that reconnects mid-reset." in t, timeout=30)
-    print("[feedback] the task's agent was told:", [l for l in told.splitlines() if "PR #100" in l][-1][:160])
+    told = eventually("the PR's agent gets the PR feedback", transcripts, lambda t: "Handle a peer that reconnects mid-reset." in t, timeout=30)
+    print("[feedback] the PR's agent was told:", [l for l in told.splitlines() if "PR #100" in l][-1][:160])
     contains("the feedback names the PR", told, "review feedback and CI state of PR #100")
-    eventually("the agent's turn ends", lambda: agent(s, -1), lambda a: a == "finished", timeout=30)
-    s.click(s.wait(".item [data-from-task]"))
+    eventually("the PR agent's turn ends", lambda: agent(s, 100), lambda a: a == "finished", timeout=30)
+    # Done with the PR: it leaves the Inbox, and the task's checkout stays.
+    s.click(s.wait(".item header .actions button", text="Done"))
+    s.click(s.wait("[data-confirm-done] button", text="Clean up"))
+    eventually("Done takes the PR out of the Inbox", lambda: listed(s), lambda rows: 100 not in rows, timeout=30)
+    check("the task's checkout stays", os.path.isdir(wt))
+    select(s, -1)
     s.wait(".item header .title", timeout=10, text="Peers drop after restart")
 
     # --- Ask agent from the review: right-click a line, or a selection on the old side ---
@@ -327,8 +337,8 @@ try:
     # A notice that the agent finished opens the task on its Terminal, even though it was left
     # on the Review tab (as the backend sends one while another item is shown, notify.rs).
     s.click(s.wait(".item [data-tab='review']"))
-    select_row(s, 100)
-    s.wait(".item header .title", timeout=30, text="#100")
+    select_row(s, 101)
+    s.wait(".item header .title", timeout=30, text="#101")
     s.js("""const task = (await window.__TAURI_INTERNALS__.invoke('inbox')).find((r) => r.number === -1).id;
       await window.__TAURI_INTERNALS__.invoke('plugin:event|emit',
         { event: 'notice', payload: { item: task, kind: 'finished', title: 'T1 Peers drop', body: 'The agent finished.' } });""")
@@ -338,11 +348,10 @@ try:
                lambda v: v == "terminal", timeout=10)
     print("[notice] the agent finished: opened T1 on", s.js("return document.querySelector('.item [aria-selected=true][data-tab]')?.dataset.tab"))
 
-    # A closed issue stays listed under its task.
+    # A closed issue is cleaned up like any other.
     set_issue_state(101, "CLOSED")
-    time.sleep(8)  # two polls
+    eventually("a closed issue leaves the Inbox", lambda: listed(s), lambda rows: 101 not in rows, timeout=30)
     print("[closed] inbox:", listed(s))
-    check("a closed issue stays under its task", [101, True] in listed(s), listed(s))
 
     # --- Discard: shows the work it loses first ---
     open(os.path.join(wt, "notes.txt"), "w").write("draft\n")
@@ -352,11 +361,10 @@ try:
     print("[discard] losses:", losses)
     check("Discard names the uncommitted change", any("notes.txt" in l for l in losses), losses)
     s.click(s.wait("[data-confirm-discard] button", text="Discard"))
-    eventually("the task is gone", lambda: [n for n, _ in listed(s)], lambda rows: -1 not in rows, timeout=30)
+    eventually("the task is gone", lambda: listed(s), lambda rows: -1 not in rows, timeout=30)
     branch_left = subprocess.run(["git", "-C", clone, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"]).returncode == 0
     print("[discard] worktree removed:", not os.path.exists(wt), "| branch deleted:", not branch_left, "| inbox:", sections(s), listed(s))
     check("Discard removes the worktree and the branch", not os.path.exists(wt) and not branch_left)
-    eventually("the PR is back in My PRs", lambda: sections(s), lambda v: "My PRs 1" in v and "Tasks 1" not in v)
 
     # --- a second task (the + button), whose PR is merged, then Done ---
     s.click(s.wait("[data-new-task]"))
@@ -370,22 +378,20 @@ try:
     open(os.path.join(wt2, "start.txt"), "w").write("faster\n")
     commit(wt2, "Start faster")
     ask(s, "Open a pull request titled 'Start faster'")
-    eventually("its PR appears under it", lambda: listed(s), lambda rows: [102, True] in rows, timeout=30)
-    # Merged: the PR is cleaned up (it has no worktree) but stays under its task, the task
-    # keeps its worktree and agent, and says that all it opened is closed.
+    eventually("its PR is in the Inbox", lambda: listed(s), lambda rows: 102 in rows, timeout=30)
+    # Merged: the PR is cleaned up (it has no worktree) like any other; the task keeps its
+    # worktree and agent.
     set_pr(102, state="MERGED")
-    attention = lambda: s.js("return document.querySelector(\".inbox .row[data-number='-1'] .attention\")?.textContent ?? ''")
-    eventually("the task says all its PRs and issues are closed", attention, lambda v: v == "All closed", timeout=30)
-    print("[merged] inbox:", listed(s), "| task:", attention(), "| worktree kept:", os.path.isdir(wt2),
-          "| notice:", s.js("return [...document.querySelectorAll('[data-notice]')].map(n => n.textContent.trim())"))
-    check("a merged PR stays under its task, which keeps its worktree", [102, True] in listed(s) and os.path.isdir(wt2), listed(s))
+    eventually("the merged PR leaves the Inbox", lambda: listed(s), lambda rows: 102 not in rows, timeout=30)
+    print("[merged] inbox:", listed(s), "| worktree kept:", os.path.isdir(wt2))
+    check("the task keeps its worktree", -1 in listed(s) and os.path.isdir(wt2), listed(s))
     s.click(s.wait(".item header .actions button", text="Done"))
     s.click(s.wait("[data-confirm-done] button", text="Clean up"))
-    eventually("Done removes the task", lambda: [n for n, _ in listed(s)], lambda rows: -1 not in rows and 102 not in rows, timeout=30)
+    eventually("Done removes the task", lambda: listed(s), lambda rows: -1 not in rows, timeout=30)
     branch_left = subprocess.run(["git", "-C", clone, "show-ref", "--verify", "--quiet", f"refs/heads/{branch2}"]).returncode == 0
     print("[done] worktree removed:", not os.path.exists(wt2), "| branch deleted:", not branch_left, "| inbox:", sections(s), listed(s))
     check("Done removes the task's worktree and branch", not os.path.exists(wt2) and not branch_left)
-    equal("what is left", sections(s), ["My PRs 1"])
+    equal("nothing is left", listed(s), [])
 
     # --- a task on a fork's branch: no title (named after the branch) ---
     s.click(s.wait("[data-new-task]"))
@@ -404,12 +410,12 @@ try:
     contexts = os.path.join(data_dir, "context")
     told = "".join(open(os.path.join(contexts, f), encoding="utf-8").read() for f in os.listdir(contexts))
     contains("the agent's context names the branch", told, "the existing branch `feature-x` of `friend/proj`")
-    # Its PR, opened on GitHub (not by the agent), is linked to the task on a poll.
+    # Its PR, opened on GitHub (not by the agent), is added to the Inbox on a poll.
     data = json.load(open(data_file))
     data["prs"].append({"number": 103, "title": "Feature X", "author": "friend", "head_ref": "feature-x",
                         "head_owner": "friend", "base_ref": "main", "head_sha": git(fork, "rev-parse", "feature-x")})
     json.dump(data, open(data_file, "w"))
-    eventually("the fork's PR is listed under the task", lambda: listed(s), lambda rows: [103, True] in rows, timeout=30)
+    eventually("the fork's PR is added to the Inbox", lambda: listed(s), lambda rows: 103 in rows, timeout=30)
     print("[fork] inbox:", sections(s), listed(s))
 
     # --- a task on the branch of the user's own checkout: it works there ---
@@ -480,7 +486,7 @@ try:
     s.click(s.wait(".item header .actions button", text="Done"))
     confirm = s.text(s.wait("[data-confirm-done]"))
     s.click(s.wait("[data-confirm-done] button", text="Clean up"))
-    eventually("Done removes the task", lambda: [n for n, _ in listed(s)], lambda rows: -2 not in rows, timeout=30)
+    eventually("Done removes the task", lambda: listed(s), lambda rows: -2 not in rows, timeout=30)
     kept = (git(clone, "rev-parse", "--abbrev-ref", "HEAD"), os.path.exists(os.path.join(clone, "mine.txt")))
     print("[own checkout] done:", confirm.strip(), "| branch, changes kept:", kept)
     contains("Done does not offer to remove the checkout", confirm, "Clean up the agent and this task?")

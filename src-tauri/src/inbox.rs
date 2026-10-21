@@ -55,14 +55,8 @@ pub struct Row {
     pub kept: bool,
     /// Why the finished item was not cleaned up, if it was not.
     pub cleanup_blockers: Option<Vec<String>>,
-    /// For a PR or issue a task's agent opened: the task.
-    pub task_id: Option<i64>,
-    /// Whose agent works on this item: its own (it has a worktree), or its task's.
-    pub agent_item: Option<i64>,
     /// A task's notes (what to look into).
     pub notes: Option<String>,
-    /// A task whose PRs and issues are all closed or merged (it has some).
-    pub outcomes_closed: bool,
     /// The user starred it (it heads the Inbox).
     pub starred: bool,
     /// The user added it and can take it out again (see `workitem::removable`).
@@ -84,9 +78,6 @@ fn attention(row: &Row) -> (u8, Option<&'static str>) {
     if !row.open && row.cleanup_blockers.is_some() {
         return (1, Some("finished, cleanup blocked"));
     }
-    if row.outcomes_closed {
-        return (2, Some("all its PRs and issues are closed"));
-    }
     if matches!(row.ci.as_deref(), Some("FAILURE" | "ERROR")) {
         return (1, Some("CI failing"));
     }
@@ -104,17 +95,7 @@ fn attention(row: &Row) -> (u8, Option<&'static str>) {
 
 /// Fills in `attention` and sorts: most urgent first, then most recently updated.
 pub fn order(mut rows: Vec<Row>) -> Vec<Row> {
-    let closed: Vec<i64> = rows
-        .iter()
-        .filter(|t| t.kind == "task")
-        .filter(|t| {
-            let mut links = rows.iter().filter(|r| r.task_id == Some(t.id)).peekable();
-            links.peek().is_some() && links.all(|r| !r.open)
-        })
-        .map(|t| t.id)
-        .collect();
     for row in &mut rows {
-        row.outcomes_closed = closed.contains(&row.id);
         row.attention = attention(row).1;
     }
     rows.sort_by(|a, b| {
@@ -160,10 +141,7 @@ mod tests {
             finished: None,
             kept: false,
             cleanup_blockers: None,
-            task_id: None,
-            agent_item: None,
             notes: None,
-            outcomes_closed: false,
             starred: false,
             removable: false,
         }
@@ -191,38 +169,6 @@ mod tests {
                 (2, Some("new reviews or comments"))
             ]
         );
-    }
-
-    #[test]
-    fn a_task_whose_prs_and_issues_are_all_closed_says_so() {
-        let task = Row {
-            kind: "task".into(),
-            ..row(-1, "2026-01-01")
-        };
-        let merged = Row {
-            open: false,
-            task_id: Some(-1),
-            ..row(10, "2026-01-01")
-        };
-        let open = Row {
-            task_id: Some(-1),
-            ..row(11, "2026-01-01")
-        };
-        let without_links = Row {
-            kind: "task".into(),
-            ..row(-2, "2026-01-01")
-        };
-        let rows = order(vec![
-            task.clone(),
-            merged.clone(),
-            open,
-            without_links.clone(),
-        ]);
-        assert!(!rows.iter().any(|r| r.outcomes_closed));
-        let rows = order(vec![task, merged, without_links]);
-        let attention = |id| rows.iter().find(|r| r.id == id).unwrap().attention;
-        assert_eq!(attention(-1), Some("all its PRs and issues are closed"));
-        assert_eq!(attention(-2), None);
     }
 
     #[test]

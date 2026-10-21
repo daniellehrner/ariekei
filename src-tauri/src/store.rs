@@ -131,6 +131,13 @@ ALTER TABLE work_items ADD COLUMN conversation TEXT;
 -- Done cleans it up.
 ALTER TABLE work_items ADD COLUMN kept INTEGER NOT NULL DEFAULT 0;
 "#,
+    r#"
+-- A task's PRs and issues are items like any other now: no longer linked to it (`task_id` is
+-- unused, cleared at startup by `workitem::unlink_from_tasks`). Instead the one its agent
+-- opened keeps how it came about (markdown: the task and its conversation up to then), for
+-- the agent that later works on it.
+ALTER TABLE work_items ADD COLUMN origin TEXT;
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -168,8 +175,8 @@ pub struct WorkItem {
     pub branch_created: bool,
     pub hidden: bool,
     pub cleanup_blockers: Option<Vec<String>>,
-    /// For a PR or issue a task's agent opened: the task.
-    pub task_id: Option<i64>,
+    /// For a PR or issue a task's agent opened: how it came about (`context::render_origin`).
+    pub origin: Option<String>,
     pub starred: bool,
     /// Transcripts of the item's earlier conversations (see `switch_session`).
     pub past_transcripts: Vec<PathBuf>,
@@ -256,7 +263,7 @@ fn err(e: rusqlite::Error) -> String {
 
 const ITEM_COLUMNS: &str = "id, repo_id, number, snapshot, open, worktree_path, branch, session_id, \
      session_started, transcript_path, last_seen, ui_state, role, tracked, kind, \
-     issue_number, worktree_created, hidden, cleanup_blockers, task_id, starred, branch_created, \
+     issue_number, worktree_created, hidden, cleanup_blockers, origin, starred, branch_created, \
      past_transcripts, kept";
 
 fn item_from_row(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
@@ -283,7 +290,7 @@ fn item_from_row(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
         cleanup_blockers: r
             .get::<_, Option<String>>(18)?
             .and_then(|s| serde_json::from_str(&s).ok()),
-        task_id: r.get(19)?,
+        origin: r.get(19)?,
         starred: r.get(20)?,
         branch_created: r.get(21)?,
         past_transcripts: r
@@ -668,6 +675,29 @@ impl Store {
         Ok(conn.last_insert_rowid())
     }
 
+    /// Keeps how PR or issue `id` came about, unless it knows already.
+    pub fn set_origin(&self, id: i64, origin: &str) -> Result<(), String> {
+        self.update(id, "origin = COALESCE(origin, ?2)", origin)
+    }
+
+    /// Items still linked to a task (the old way), with their task's id.
+    pub fn linked_to_tasks(&self) -> Result<Vec<(i64, i64)>, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT id, task_id FROM work_items WHERE task_id IS NOT NULL")
+            .map_err(err)?;
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(err)?
+            .collect::<Result<_, _>>()
+            .map_err(err)
+    }
+
+    pub fn unlink_from_task(&self, id: i64) -> Result<(), String> {
+        self.update(id, "task_id = ?2", None::<i64>)
+    }
+
+    /// Links item `id` to a task the old way (`linked_to_tasks`).
+    #[cfg(test)]
     pub fn link_to_task(&self, id: i64, task_id: i64) -> Result<(), String> {
         self.update(id, "task_id = ?2", task_id)
     }
@@ -1015,10 +1045,13 @@ mod tests {
         let pr = store
             .track(repo.id, &polled(7, json!({"title": "pr"})))
             .unwrap();
-        store.link_to_task(pr, t1).unwrap();
-        assert_eq!(store.item(pr).unwrap().task_id, Some(t1));
-        store.delete_item(t1).unwrap();
-        assert_eq!(store.item(pr).unwrap().task_id, None);
+        store.set_origin(pr, "from T1").unwrap();
+        store.set_origin(pr, "from T2").unwrap();
+        assert_eq!(
+            store.item(pr).unwrap().origin.as_deref(),
+            Some("from T1"),
+            "the first origin stays"
+        );
         // The next task does not reuse a live number.
         assert_eq!(
             store
@@ -1060,15 +1093,13 @@ mod tests {
             (
                 item.number,
                 item.title(),
-                item.task_id,
+                item.origin.as_deref(),
                 item.worktree_path.as_deref()
             ),
             (7, "old", None, Some(Path::new("/w")))
         );
         assert!(!item.starred);
-        let task = store.create_task(1, "new", "", None).unwrap();
-        store.link_to_task(item.id, task).unwrap();
-        assert_eq!(store.item(item.id).unwrap().task_id, Some(task));
+        assert_eq!(store.linked_to_tasks().unwrap(), []);
     }
 
     #[test]

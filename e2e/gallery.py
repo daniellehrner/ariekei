@@ -304,7 +304,7 @@ try:
              "t.input(\"Open a pull request titled 'Reset the peer table once'\\r\")")
         s.wait(".inbox .row[data-number='8021']", timeout=60)
         tab(s, "Overview")
-        s.wait("[data-links]", timeout=30)
+        s.wait(".overview .notes", timeout=30)
         shot(s, "task")
     if need("notice-arriving", "notices"):
         # One notice of each kind, as the backend sends them (notify.rs).

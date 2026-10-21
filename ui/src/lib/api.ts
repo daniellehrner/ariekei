@@ -72,14 +72,8 @@ export interface Row {
   /** Its worktree was there before (e.g. the user's own checkout): cleanup keeps it. */
   adopted: boolean;
   attention: string | null;
-  /** For a PR or issue a task's agent opened: the task. */
-  taskId: number | null;
-  /** Whose agent works on this item: its own (it has a worktree), or its task's. */
-  agentItem: number | null;
   /** A task's notes (what to look into). */
   notes: string | null;
-  /** A task whose PRs and issues are all closed or merged (it has some). */
-  outcomesClosed: boolean;
   /** The user starred it: it heads the Inbox. */
   starred: boolean;
   /** The user added it and can take it out again. */
@@ -220,7 +214,7 @@ export const api = {
   /** How far the user had seen the item's activity (its latest by others) before this, and now:
    *  GitHub's time, or "0" for "seen with none yet"; `before` is null if never seen. */
   markSeen: (id: number) => invoke<{ before: string | null; after: string }>("mark_seen", { id }),
-  reviewSeen: (agentItem: number) => invoke<void>("review_seen", { agentItem }),
+  reviewSeen: (id: number) => invoke<void>("review_seen", { id }),
   setActiveItem: (id: number | null) => invoke<void>("set_active_item", { id }),
   selectedItem: () => invoke<number | null>("selected_item"),
   uiSetting: (key: string) => invoke<string | null>("ui_setting", { key }),

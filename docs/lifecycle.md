@@ -40,18 +40,20 @@ PRs and issues, or be thrown away.
   no task and no remote behind. The review compares the branch with the default branch.
 - **The agent opens the PRs and issues**, when you ask it to: `gh pr create` / `gh issue create`
   (or a GitHub tool whose name contains `create_pull_request` / `create_issue`). Ariekei reads
-  the URL they print from the hook event (`PostToolUse`) and links the PR or issue to the task.
-  Linked items are tracked (polled by number: an issue you opened is not assigned to you).
-  A PR opened for the task's pushed branch some other way (in the browser, or by the fork's
-  owner) is linked on the next poll, found by the branch and the owner of the repository it
-  is pushed to.
-- **The task stays the parent:** it keeps the worktree, branch and agent. Its PRs and issues are
-  listed under it in the Inbox (also when closed or merged), not in Mine or Issues, and in the
-  task's Overview. A linked PR has no worktree of its own: Review reads its head as for any PR,
-  and **Send PR feedback to agent** and review comments go to the task's agent. Its header
-  says "from task T<n>".
+  the URL they print from the hook event (`PostToolUse`) and adds the PR or issue to the Inbox
+  as an item of its own, tracked (polled by number: an issue you opened is not assigned to
+  you). A PR opened for the task's pushed branch some other way (in the browser, or by the
+  fork's owner) is added on the next poll, found by the branch and the owner of the repository
+  it is pushed to.
+- **They are not tied to the task:** they are listed in their own sections and finish and clean
+  up like any PR or issue. Each keeps how it came about (`origin`: the task's title, notes and
+  branch, and its conversation up to then from the transcript, `context::render_origin`), and
+  **Start working** gives it an agent of its own whose context ends with that. A PR whose
+  branch the task's worktree has checked out adopts that worktree, so both agents work there;
+  cleanup of either only drops Ariekei's link while the other still uses it. Links of older
+  versions (`task_id`) are turned into origins at startup (`workitem::unlink_from_tasks`).
 - **Ending a task:** **Done** cleans it up like any item (refused while work would be lost),
-  then deletes it; its PRs and issues go back to their own sections. **Discard** first lists
+  then deletes it. **Discard** first lists
   what would be lost (uncommitted changes, commits not on GitHub), then removes the worktree
   (`--force`) and branch, the agent session and the task. Refused only while the agent is in the
   middle of a turn.
@@ -71,7 +73,7 @@ PRs and issues, or be thrown away.
   - uncommitted changes, including untracked files (listed);
   - commits at the worktree's HEAD or on the branch deleted with it (HEAD may be detached or
     elsewhere) that are neither on a remote branch nor in GitHub's copy of a PR head
-    (`refs/pull/<N>/head` of the PR, or of a task's linked PRs, fetched before the check, so
+    (`refs/pull/<N>/head` of the PR, or of the PRs for a task's branch, fetched before the check, so
     squash-merged PRs with deleted branches are recognised), nor came from a remote by the
     reflogs (`git::from_remotes`, newest 500 entries each): the upstream's except "update by
     push", and the branch's own "Created from", fast-forward, reset and pull entries naming a
@@ -106,19 +108,20 @@ PRs and issues, or be thrown away.
   Start working → Done refused (uncommitted file + unpushed commit) → review before pushing →
   `git push` → no PR opened → a PR opened for the branch, item becomes #100 → merged → worktree and branch removed, agent gone, item hidden; an adopted
   worktree kept when its PR is merged.
-- Unit tests for tasks: numbering, polls leaving tasks open, links surviving their task
-  (`ON DELETE SET NULL`), the task worktree and context, a task on a fork's branch (its remote
-  added or reused, the push going back, a missing branch leaving nothing behind, a local branch
-  of that name kept), the ways to name a branch, the PR for a task's branch linked once,
-  which tool calls create a PR or issue
+- Unit tests for tasks: numbering, polls leaving tasks open, the task worktree and context, a
+  task on a fork's branch (its remote added or reused, the push going back, a missing branch
+  leaving nothing behind, a local branch of that name kept), the ways to name a branch, the PR
+  for a task's branch added once, which tool calls create a PR or issue
   (`gh pr create` output, `gh issue create`, an MCP tool, another repo's URL, `gh pr view`),
-  and the "all closed" attention.
+  what a task's agent opens keeping its origin (the conversation without tool calls, cut when
+  long), and old links turned into origins.
 - E2E: `e2e/task_scenario.py`: New task → worktree, notes in the context, agent started →
-  the agent opens PR #100 and issue #101, both nested under the task and not in Mine → the PR
-  points to its task and has no Start working → a closed issue stays under the task →
-  Discard lists the uncommitted file, then the worktree, branch and task are gone and #100 is
-  back in Mine → a task on `friend:feature-x` (a fork): the branch checked out tracking the
-  fork's remote, the context naming it, and its PR, opened on GitHub, linked under the task.
+  the agent opens PR #100 and issue #101, both in their own sections → Start working on #100
+  adopts the task's checkout, its agent's context says how it came about, PR feedback goes to
+  it, Done takes it out → a closed issue is cleaned up → Discard lists the uncommitted file,
+  then the worktree, branch and task are gone → a task on `friend:feature-x` (a fork): the
+  branch checked out tracking the fork's remote, the context naming it, and its PR, opened on
+  GitHub, added to the Inbox.
 - Live, read-only on besu: assigned issues, issue conversation, default branch.
 
 ## Not covered yet

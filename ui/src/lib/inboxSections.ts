@@ -44,9 +44,9 @@ export function readyToMerge(row: Row): boolean {
   return row.open && !row.isDraft && row.reviewDecision === "APPROVED" && (row.ci == null || row.ci === "SUCCESS");
 }
 
-/** The rows of each section, in the Inbox's order (rows under a task are left out). */
+/** The rows of each section, in the Inbox's order. */
 export function bySection(rows: Row[]): Record<SectionKey, Row[]> {
   const out = Object.fromEntries(SECTIONS.map((s) => [s.key, [] as Row[]])) as Record<SectionKey, Row[]>;
-  for (const row of rows) if (row.taskId == null) out[sectionOf(row)].push(row);
+  for (const row of rows) out[sectionOf(row)].push(row);
   return out;
 }

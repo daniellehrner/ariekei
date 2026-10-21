@@ -65,7 +65,6 @@
     onchanged,
     canSendToAgent,
     agentAway = null,
-    agentItem,
     agentStatus,
     onterminal,
     polls = 0,
@@ -76,9 +75,7 @@
     canSendToAgent: boolean;
     /// Why the agent takes no work now (its worktree is on another branch), if it doesn't.
     agentAway?: string | null;
-    /// The item whose agent gets what is sent (this one, or its task).
-    agentItem?: number;
-    /// The status of the agent that gets what is sent (lib/agent.svelte.ts).
+    /// The status of the item's agent (lib/agent.svelte.ts).
     agentStatus?: string;
     /// Shows the agent's terminal (where its answer appears); after asking it about code.
     onterminal?: () => void;
@@ -184,8 +181,8 @@
   // Opening the review sees what the agent did: no longer "ready for review" in the Inbox
   // (also when it finishes while the review is shown).
   $effect(() => {
-    if (agentItem == null || (agentStatus && agentStatus !== "finished")) return;
-    api.reviewSeen(agentItem).then(onchanged, () => {});
+    if (!canSendToAgent || (agentStatus && agentStatus !== "finished")) return;
+    api.reviewSeen(id).then(onchanged, () => {});
   });
 
   // The notices sit above the dock (Notices.svelte reads --dock-h).

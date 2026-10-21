@@ -40,7 +40,3 @@ test("every attention reason of the Inbox (inbox.rs) has a pip kind", async () =
   for (const reason of reasons) assert.notEqual(attentionKind(reason), "none", reason);
 });
 
-test("a task whose PRs and issues are all closed opens on its Overview", () => {
-  assert.equal(attentionKind("all its PRs and issues are closed"), "all-closed");
-  assert.equal(landingTab("all its PRs and issues are closed", { terminal: true, review: true }), "overview");
-});

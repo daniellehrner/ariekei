@@ -51,7 +51,7 @@ told apart in grey-scale and with colour blindness:
 - **Sections**, in this order: Starred, Tasks, Assigned, Approved (the user's PRs ready to
   merge), Review requested, My PRs, Reviewed, Open. An item is listed once, in the first
   section that fits (`lib/inboxSections.ts`, from the backend's `role`); a task's PRs and issues
-  stay under the task. Empty sections are left out; an empty Inbox says how to fill it.
+  are items like any other. Empty sections are left out; an empty Inbox says how to fill it.
 - **Section headers** are light dividers (24 px, `label-caps`, the count in faint mono right
   after the label) and stay at the top while their section scrolls.
 - **Rows** have two lines. The dot slot is empty when there is no agent. Issues say `issue` on

@@ -79,7 +79,7 @@ Each item is listed once, in the first section that fits:
 | Section | What is in it |
 |---|---|
 | **Starred** | Items you starred, whatever else they are |
-| **Tasks** | Your tasks (T1, T2, …), with the PRs and issues opened for them nested under them |
+| **Tasks** | Your tasks (T1, T2, …) |
 | **Assigned** | Pull requests and issues assigned to you |
 | **Approved** | Your open pull requests that are approved |
 | **Review requested** | Pull requests that request your review |
@@ -103,10 +103,7 @@ request you opened stays, too, e.g. after the review request is gone because you
   runs), `draft`, `closed`, the review decision (in Approved: `ready to merge`, unless it is a
   draft or CI is failing or still running), the number of
   unresolved review threads, and the **attention reason** on the right. A task says
-  `task · <branch>`, or `no PR or issue yet`.
-- A task's PRs and issues hang under it on a guide line, with their kind (PR or issue) where
-  the status dot would be. With more than three, those that want nothing fold under
-  **+N more**.
+  `task · <branch>`.
 - On hover or focus: the **star**, and **Remove** (a tray icon) on items you added yourself
   that have no worktree. Starred items are listed under Starred, so rows don't repeat the
   star.
@@ -114,8 +111,7 @@ request you opened stays, too, e.g. after the review request is gone because you
 ### Starring
 
 Click the star on a row (it shows on hover), or the one after the title in the item's header,
-to keep an item at the top of the Inbox under **Starred**. Click it again to unstar it. A task's PRs and issues
-stay under the task, so you star the task.
+to keep an item at the top of the Inbox under **Starred**. Click it again to unstar it.
 
 ### Order
 
@@ -124,8 +120,7 @@ Within a section, items are ordered by their most urgent reason, then by last up
 1. **Agent needs you**: the agent is waiting for your permission.
 2. **Cleanup blocked** (a finished item that cannot be cleaned up without losing work) and
    **CI failing**.
-3. **New activity** (new reviews or comments) and **All closed** (a task whose PRs and issues
-   are all closed).
+3. **New activity** (new reviews or comments).
 4. **Ready for review**: the agent finished a turn and you haven't opened the item's Review tab
    since.
 5. **Agent working**.
@@ -163,7 +158,7 @@ A work item is a pull request, an issue or a task. Selecting it shows its header
 ### The header
 
 - Kind, number and title, and the star.
-- A meta line: kind, `from issue #N` or `from task Tn` (click to open the task), author, CI
+- A meta line: kind, `from issue #N`, author, CI
   state, review decision, unresolved threads, for a task its branch, the worktree's folder name
   (once there is one; the full path is its tooltip, and a click copies it) and, at the right
   end, the agent's status.
@@ -180,7 +175,7 @@ A work item is a pull request, an issue or a task. Selecting it shows its header
 
 | Tab | Content |
 |---|---|
-| **Overview** | State, branches (`author wants to merge head into base`), labels, description, reviewers, checks (click a check to open it), the discussion and a link to GitHub. For a task: what to look into, and its linked PRs and issues. |
+| **Overview** | State, branches (`author wants to merge head into base`), labels, description, reviewers, checks (click a check to open it), the discussion and a link to GitHub. For a task: what to look into. |
 | **Comments** | Review threads, unresolved first and the latest commented first, with their diff snippet; the conversation; reply, resolve and comment. Not shown for tasks. |
 | **Review** | The diff review (see [Reviewing changes](#7-reviewing-changes)). |
 | **Terminal** | The agent, running in the item's worktree. Only with a worktree. |
@@ -369,8 +364,7 @@ Right-click a line, or a selection of lines on either side of the diff, for the 
 - **Copy** copies the code.
 
 After sending, the agent's Terminal opens, where the answer appears; the Review tab keeps your
-place. For a PR that a task works on, the question goes to the task's agent and the task's
-Terminal opens. While the agent waits for permission nothing can be sent, since the text would
+place. While the agent waits for permission nothing can be sent, since the text would
 answer its prompt: the box says so, with **Answer in Terminal**, and you can write the question
 meanwhile. While the agent works, it reads the question when its turn ends. If the agent does not
 take the question (a dialog open in its Terminal, say), the box stays open with it.
@@ -470,7 +464,7 @@ a local branch of that name tracks something else, it is left alone and the work
 A branch that is not on GitHub yet but is in your clone works too (by its name alone, or as
 `owner:branch` for where it will go): the task uses your local branch as it is, with no fetch,
 and a plain `git push` creates it on that repository later (the agent is told it is local and
-pushes only when you ask). Once pushed, a PR opened for it is linked to the task. If the
+pushes only when you ask). Once pushed, a PR opened for it is added to the Inbox. If the
 branch is neither on GitHub nor in your clone, no task is created.
 
 If the branch is already checked out, in another worktree or in your clone itself, the task
@@ -490,7 +484,7 @@ made), it is still yours:
   the agent what to do. Switch back (or press **Switch back to `<branch>`** in that banner)
   and it carries on. A task can instead keep the new branch, e.g. one you asked its agent
   to start for the next part of the work: **Continue on `<new branch>`** makes it the task's
-  branch, and the PR for it is linked to the task. Ariekei notices when its window gets the
+  branch, and a PR opened for it is added to the Inbox. Ariekei notices when its window gets the
   focus again, or on the next poll. With a detached HEAD, **Switch back** takes commits made
   on it along when they build on the branch, and refuses when they would be left behind;
   **Move `<branch>` here** puts the branch on the checked out commit instead (e.g. a newer
@@ -504,27 +498,27 @@ made), it is still yours:
 ### PRs and issues from a task
 
 Ask the agent to open them when the work is ready. When it runs `gh pr create` or
-`gh issue create` (or a GitHub tool that creates a pull request or issue), Ariekei links the
-result to the task. A PR opened for the task's pushed branch some other way (in the browser,
-or by the fork's owner) is linked on the next poll.
+`gh issue create` (or a GitHub tool that creates a pull request or issue), Ariekei adds the
+result to the Inbox. A PR opened for the task's pushed branch some other way (in the browser,
+or by the fork's owner) is added on the next poll.
 
-- Linked PRs and issues are listed under the task in the Inbox (also when closed or merged)
-  and in the task's Overview, not in their own sections. One you mark **Done** while it is
-  still open leaves the task's list too.
-- A linked PR has no worktree of its own. Its Review tab reads the PR head; **Send PR feedback
-  to agent**, review comments and questions about code go to the task's agent. Its header says
-  "from task Tn".
+- They are items like any other, in their own sections, and no longer tied to the task: Done,
+  cleanup and starring work on them as on any PR or issue.
+- Such a PR has no agent until you press **Start working** on it. That gives it an agent of
+  its own, in a new worktree, or in the task's when the PR's branch is checked out there
+  (both agents then work in the same checkout). The new agent is told how the PR or issue came
+  about: the task's title and notes, and what you asked the task's agent and what it answered
+  up to when it opened it (its tool calls left out; the oldest messages of a long conversation
+  are cut).
 
 ### Ending a task
 
 - **Done** cleans the task up like any item (refused if work would be lost) and deletes it.
-  Its PRs and issues go back to their own sections.
 - **Discard** first lists what would be lost (uncommitted changes, commits not on GitHub),
   then, after you confirm, removes the worktree and branch, the agent session and the task.
   Refused only while the agent is in the middle of a turn.
 
-Tasks are never cleaned up automatically. When all of a task's PRs and issues are closed, the
-Inbox shows **All closed** and a notice suggests marking it done.
+Tasks are never cleaned up automatically: mark one done when you are finished with it.
 
 ## 11. Finishing and cleanup
 
@@ -545,7 +539,7 @@ finished item says "Cleanup blocked" in the Inbox:
 
 - uncommitted changes, including untracked files;
 - commits, in the worktree or on the branch that goes with it, that are neither on a remote
-  branch nor in GitHub's copy of the PR head (for a task: of its PRs), and that Ariekei never
+  branch nor in GitHub's copy of the PR head (for a task: of the PRs for its branch), and that Ariekei never
   fetched from GitHub either. So a squash-merged PR whose branch was deleted is safe, and so is
   the old version of a PR you only reviewed whose author rebased it since, even after
   `git fetch --prune`. A commit of yours that a force-push dropped is not;
@@ -576,9 +570,8 @@ Ariekei notifies you when:
 - an agent waits for permission, finishes a turn or stops with an error;
 - a PR's CI starts failing;
 - there are new reviews or comments;
-- something happens in an item's lifecycle: an issue now follows its PR, a PR is linked to a
-  task, an item was cleaned up or kept so no work is lost, or a task's PRs and issues are all
-  closed.
+- something happens in an item's lifecycle: an issue now follows its PR, a PR for a task's
+  branch is added, or an item was cleaned up or kept so no work is lost.
 
 Nothing is shown for the item you are looking at in a focused window, nor for items that are
 not in the Inbox (cleaned up or marked done). While an Ariekei window
@@ -655,7 +648,7 @@ Ariekei keeps three sources of state apart by shape and colour:
 | The agent | circle | copper | status dot, Terminal tab, waiting strip, **Ask agent…**, **Send to agent** |
 | You | square | blue | draft comments and their marks, the star, the selected item and file, focus, **Ready for review** |
 | GitHub | diamond, outlined pill | violet | new activity, CI and review facts, **Submit to GitHub** |
-| News | bar | grey | lifecycle notices, **All closed** |
+| News | bar | grey | lifecycle notices |
 
 Red means broken (CI failing, errors, work that would be lost), amber caution or pending (a
 running CI check is a hollow amber diamond), green done or passing. Everything else is grey.

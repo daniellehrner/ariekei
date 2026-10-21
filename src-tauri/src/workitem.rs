@@ -145,28 +145,12 @@ pub fn inbox(state: &AppState, repo: Option<Repo>) -> Result<Vec<Row>, String> {
     let Some(repo) = repo else {
         return Ok(vec![]);
     };
-    let items = state.store.items(repo.id)?;
-    // Finished items stay listed under their task, which shows what came of it. Not an open
-    // one the user cleaned up (Done): they are done with it.
-    let tasks: Vec<&WorkItem> = items.iter().filter(|i| i.is_task() && listed(i)).collect();
-    let task_of = |item: &WorkItem| {
-        item.task_id
-            .filter(|_| !(item.hidden && item.open))
-            .and_then(|t| tasks.iter().find(|task| task.id == t).copied())
-    };
-    let rows = items
-        .iter()
-        .filter(|item| listed(item) || task_of(item).is_some())
-        .filter_map(|item| {
-            let mut row = row(state, &repo, item.clone())?;
-            if let Some(task) = task_of(item) {
-                row.task_id = Some(task.id);
-                if row.worktree.is_none() && task.worktree_path.is_some() {
-                    row.agent_item = Some(task.id);
-                }
-            }
-            Some(row)
-        })
+    let rows = state
+        .store
+        .items(repo.id)?
+        .into_iter()
+        .filter(listed)
+        .filter_map(|item| row(state, &repo, item))
         .collect();
     Ok(inbox::order(rows))
 }
@@ -208,9 +192,6 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             kept: false,
             cleanup_blockers: None,
             issue_number: None,
-            task_id: None,
-            agent_item: None,
-            outcomes_closed: false,
             starred: item.starred,
             removable: false,
             notes: item.snapshot["notes"].as_str().map(str::to_owned),
@@ -246,9 +227,6 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             kept: false,
             cleanup_blockers: None,
             issue_number: None,
-            task_id: None,
-            agent_item: None,
-            outcomes_closed: false,
             starred: item.starred,
             removable: false,
             notes: None,
@@ -284,17 +262,11 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             kept: false,
             cleanup_blockers: None,
             issue_number: item.issue_number,
-            task_id: None,
-            agent_item: None,
-            outcomes_closed: false,
             starred: item.starred,
             removable: false,
             notes: None,
         }
     };
-    if worktree.is_some() {
-        row.agent_item = Some(item.id);
-    }
     row.ready_for_review = state.terminals.ready_for_review(&item.id.to_string());
     row.moved_to = moved_to(&item);
     row.can_follow = followable(&item, repo).is_ok();
@@ -319,10 +291,7 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
 /// Whether the user can take the item out of the Inbox: only a PR or issue they added, which
 /// no query finds and nothing local hangs on (a worktree is finished with Done instead).
 fn removable(item: &WorkItem) -> bool {
-    !item.is_task()
-        && item.role == "other"
-        && item.worktree_path.is_none()
-        && item.task_id.is_none()
+    !item.is_task() && item.role == "other" && item.worktree_path.is_none()
 }
 
 /// Marks an item done: cleans it up now if nothing would be lost.
@@ -435,7 +404,7 @@ pub fn session_plan(state: &AppState, data_dir: &Path, id: i64) -> Result<Sessio
     } else if item.kind == "issue" {
         write_issue_context(data_dir, &repo, &item)
     } else {
-        write_context(data_dir, &repo, item.number)
+        write_context(data_dir, &repo, &item)
     };
     let context_file = match written {
         Ok(file) => Some(file),
@@ -454,7 +423,8 @@ pub fn session_plan(state: &AppState, data_dir: &Path, id: i64) -> Result<Sessio
     })
 }
 
-fn write_context(data_dir: &Path, repo: &Repo, number: i64) -> Result<PathBuf, String> {
+fn write_context(data_dir: &Path, repo: &Repo, item: &WorkItem) -> Result<PathBuf, String> {
+    let number = item.number;
     let detail = github::pr_detail(&repo.owner, &repo.name, number)?;
     let logs: Vec<(String, String)> = detail
         .failing
@@ -474,8 +444,8 @@ fn write_context(data_dir: &Path, repo: &Repo, number: i64) -> Result<PathBuf, S
     let dir = data_dir.join("context");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let file = dir.join(format!("{}-{}-pr{number}.md", repo.owner, repo.name));
-    std::fs::write(&file, crate::context::render(number, &detail, &logs))
-        .map_err(|e| e.to_string())?;
+    let md = crate::context::render(number, &detail, &logs);
+    std::fs::write(&file, with_origin(md, item)).map_err(|e| e.to_string())?;
     Ok(file)
 }
 
@@ -509,8 +479,16 @@ fn write_issue_context(data_dir: &Path, repo: &Repo, item: &WorkItem) -> Result<
         "{}-{}-issue{}.md",
         repo.owner, repo.name, item.number
     ));
-    std::fs::write(&file, md).map_err(|e| e.to_string())?;
+    std::fs::write(&file, with_origin(md, item)).map_err(|e| e.to_string())?;
     Ok(file)
+}
+
+/// The context `md`, then how the item came about, if a task's agent opened it.
+fn with_origin(md: String, item: &WorkItem) -> String {
+    match item.origin.as_deref() {
+        Some(origin) => format!("{md}\n{origin}"),
+        None => md,
+    }
 }
 
 /// The existing branch a task works on, if it was started on one.
@@ -575,17 +553,18 @@ pub fn create_task(
     }
     // The branch may have a PR already.
     if head.is_some()
-        && let Err(e) = crate::lifecycle::link_branch_pr(state, &repo, &state.store.item(id)?)
+        && let Err(e) = crate::lifecycle::track_branch_pr(state, &repo, &state.store.item(id)?)
     {
         tracing::warn!("task {id}: its branch's PR: {e}");
     }
     Ok(id)
 }
 
-/// Links PR or issue `number` (`kind`), which the agent of task `task_id` opened, to the
-/// task. It is tracked, so the poller keeps it up to date (an issue the user opened is not
-/// assigned to them, so no other query finds it).
-pub fn link_created(state: &AppState, task_id: i64, kind: &str, number: i64) -> Result<(), String> {
+/// Adds PR or issue `number` (`kind`), which the agent of task `task_id` opened (or opened
+/// for its branch), to the Inbox as an item of its own. It is tracked, so the poller keeps it
+/// up to date (an issue the user opened is not assigned to them, so no other query finds it),
+/// and keeps how it came about for the agent that later works on it (`origin_of`).
+pub fn track_opened(state: &AppState, task_id: i64, kind: &str, number: i64) -> Result<(), String> {
     let (task, repo) = item_repo(state, task_id)?;
     if !task.is_task() {
         return Ok(());
@@ -596,7 +575,48 @@ pub fn link_created(state: &AppState, task_id: i64, kind: &str, number: i64) -> 
         polled_pr(&repo, number)?
     };
     let id = state.store.track(repo.id, &polled)?;
-    state.store.link_to_task(id, task_id)
+    state.store.set_origin(id, &origin_of(state, &task, kind))
+}
+
+/// How a PR or issue (`kind`) the agent of `task` opened came about: the task and its
+/// conversation so far.
+fn origin_of(state: &AppState, task: &WorkItem, kind: &str) -> String {
+    let transcript = task.transcript_path.clone().or_else(|| {
+        task.session_id
+            .as_deref()
+            .and_then(|s| state.terminals.find_transcript(s))
+    });
+    crate::context::render_origin(
+        if kind == "issue" {
+            "issue"
+        } else {
+            "pull request"
+        },
+        &task.short_name(),
+        task.title(),
+        task.snapshot["notes"].as_str().unwrap_or_default(),
+        task.branch.as_deref().unwrap_or_default(),
+        &transcript
+            .map(|t| crate::context::conversation(&t))
+            .unwrap_or_default(),
+    )
+}
+
+/// PRs and issues used to be linked to the task whose agent opened them; now they are items of
+/// their own, which keep how they came about instead.
+pub fn unlink_from_tasks(state: &AppState) -> Result<(), String> {
+    for (id, task) in state.store.linked_to_tasks()? {
+        let item = state.store.item(id)?;
+        if let Ok(task) = state.store.item(task)
+            && task.is_task()
+        {
+            state
+                .store
+                .set_origin(id, &origin_of(state, &task, &item.kind))?;
+        }
+        state.store.unlink_from_task(id)?;
+    }
+    Ok(())
 }
 
 fn polled_issue(repo: &Repo, number: i64) -> Result<PolledPr, String> {
@@ -849,19 +869,6 @@ pub fn ensure_on_branch(state: &AppState, id: i64) -> Result<(), String> {
             item.branch.unwrap_or_default()
         )),
     }
-}
-
-/// Whose agent works on item `id`: its own, or (a PR or issue without a worktree that a
-/// task opened) the task's.
-pub fn agent_of(state: &AppState, id: i64) -> Result<i64, String> {
-    let item = state.store.item(id)?;
-    if item.worktree_path.is_none()
-        && let Some(task) = item.task_id
-        && state.store.item(task)?.worktree_path.is_some()
-    {
-        return Ok(task);
-    }
-    Ok(id)
 }
 
 /// The PR's unresolved review threads as a message for the agent (newer than its context).
@@ -1823,7 +1830,7 @@ mod tests {
     }
 
     #[test]
-    fn a_task_lists_what_its_agent_opened_and_lends_it_its_agent() {
+    fn what_a_tasks_agent_opens_is_an_item_of_its_own_that_knows_how_it_came_about() {
         let app = TestApp::new();
         let task = create_task(
             &app.state,
@@ -1845,51 +1852,73 @@ mod tests {
             context.is_err(),
             "the context is written when the agent starts"
         );
+        let transcript = app.path("t.jsonl");
+        write(
+            &transcript,
+            concat!(
+                r#"{"type":"user","message":{"content":"Why do peers drop?"}}"#,
+                "\n",
+                r#"{"type":"assistant","message":{"content":[{"type":"text","text":"The table resets twice."}]}}"#,
+                "\n"
+            ),
+        );
+        app.state.store.set_session(task, "s1").unwrap();
+        app.state
+            .store
+            .mark_session_started(task, Some(&transcript))
+            .unwrap();
 
         app.add_pr(json!({"number": 20, "title": "Fix", "head_ref": "main"}));
         app.add_issue(json!({"number": 21, "title": "Found", "author": "me"}));
-        link_created(&app.state, task, "pr", 20).unwrap();
-        link_created(&app.state, task, "issue", 21).unwrap();
+        track_opened(&app.state, task, "pr", 20).unwrap();
+        track_opened(&app.state, task, "issue", 21).unwrap();
         let rows = app.rows();
         let row = |n: i64| rows.iter().find(|r| r.number == n).unwrap();
         assert_eq!(
             (row(-1).kind.as_str(), row(-1).title.as_str()),
             ("task", "Investigate")
         );
-        assert_eq!((row(20).task_id, row(21).task_id), (Some(task), Some(task)));
-        assert_eq!(
-            row(20).agent_item,
-            Some(task),
-            "the PR has no worktree: the task's agent"
-        );
-        assert_eq!(agent_of(&app.state, app.item(20).id).unwrap(), task);
-        assert!(!row(-1).outcomes_closed);
-
-        // Both closed (the PR merged and cleaned up): still listed under the task.
-        app.set("prs", 20, json!({"state": "MERGED"}));
-        app.set("issues", 21, json!({"state": "CLOSED"}));
-        app.poll().unwrap();
-        assert!(app.item(20).hidden, "the merged PR was cleaned up");
-        let rows = app.rows();
-        let row = |n: i64| rows.iter().find(|r| r.number == n);
-        assert!(row(20).is_some_and(|r| !r.open) && row(21).is_some_and(|r| !r.open));
-        assert!(row(-1).unwrap().outcomes_closed);
-        assert_eq!(
-            row(-1).unwrap().attention,
-            Some("all its PRs and issues are closed")
-        );
-
-        // An open one the user is done with leaves the task too.
-        app.add_pr(json!({"number": 22, "title": "Draft", "head_ref": "main"}));
-        link_created(&app.state, task, "pr", 22).unwrap();
-        assert!(app.row(22).is_some_and(|r| r.task_id == Some(task)));
-        mark_done(&app.state, app.item(22).id).unwrap();
-        app.poll().unwrap();
+        assert!(row(21).removable, "an issue like any other the user added");
+        let origin = app.item(20).origin.unwrap();
         assert!(
-            app.row(22).is_none(),
-            "Done takes it out of the task's list"
+            origin.contains("task T1 (\"Investigate\", on `task-1-investigate`)")
+                && origin.contains("**User:** Why do peers drop?")
+                && origin.contains("**Agent:** The table resets twice."),
+            "{origin}"
         );
-        assert!(app.row(20).is_some(), "the merged one stays");
+        // Its own agent starts with it.
+        let file = write_issue_context(&app.state.data_dir, &app.repo, &app.item(21)).unwrap();
+        let md = std::fs::read_to_string(file).unwrap();
+        assert!(
+            md.starts_with("# Work item: issue #21") && md.contains("**User:** Why do peers drop?"),
+            "{md}"
+        );
+
+        // Merged and cleaned up: gone like any other.
+        app.set("prs", 20, json!({"state": "MERGED"}));
+        app.poll().unwrap();
+        assert!(app.item(20).hidden && app.row(20).is_none());
+        assert!(app.row(-1).is_some(), "the task stays");
+    }
+
+    #[test]
+    fn prs_and_issues_linked_to_a_task_before_are_items_of_their_own() {
+        let app = TestApp::new();
+        let task = create_task(&app.state, Some(app.repo.clone()), "Old", "", "").unwrap();
+        app.add_pr(json!({"number": 20, "title": "Fix", "head_ref": "main"}));
+        track_opened(&app.state, task, "pr", 20).unwrap();
+        app.add_pr(json!({"number": 22, "title": "Linked", "head_ref": "main"}));
+        app.poll().unwrap();
+        let (fix, linked) = (app.item(20).id, app.item(22).id);
+        app.state.store.link_to_task(fix, task).unwrap();
+        app.state.store.link_to_task(linked, task).unwrap();
+
+        let had = app.item(20).origin;
+        unlink_from_tasks(&app.state).unwrap();
+        assert_eq!(app.state.store.linked_to_tasks().unwrap(), []);
+        let origin = |n| app.item(n).origin.unwrap();
+        assert!(origin(22).contains("task T1 (\"Old\""), "{}", origin(22));
+        assert_eq!(Some(origin(20)), had, "an origin it had stays");
     }
 
     #[test]

@@ -82,20 +82,6 @@
       .sort((a, b) => URGENCY[a.kind] - URGENCY[b.kind]),
   );
 
-  // A task's PRs and issues. More than three fold, except those that want something (and the
-  // selected one), under "+N more" until the user unfolds them.
-  const FOLD_LINKS_OVER = 3;
-  let unfoldedTasks: number[] = $state([]);
-  function linksOf(task: Row) {
-    const all = rows.filter((r) => r.taskId === task.id);
-    if (all.length <= FOLD_LINKS_OVER || unfoldedTasks.includes(task.id)) return { shown: all, hidden: 0, all: all.length };
-    const shown = all.filter((r) => attentionKind(r.attention) !== "none" || r.id === selected);
-    return { shown, hidden: all.length - shown.length, all: all.length };
-  }
-  function toggleLinks(task: Row) {
-    unfoldedTasks = unfoldedTasks.includes(task.id) ? unfoldedTasks.filter((id) => id !== task.id) : [...unfoldedTasks, task.id];
-  }
-
   // --- browsing the repo's open PRs and issues (Browse.svelte), starring, removing ---
 
   function browse() {
@@ -175,22 +161,14 @@
   }
 </script>
 
-{#snippet item(row: Row, section: string, nested: boolean)}
+{#snippet item(row: Row, section: string)}
   {@const kind = attentionKind(row.attention)}
   {@const decision = row.reviewDecision ? DECISION[row.reviewDecision] : null}
   {@const ready = section === "approved" && readyToMerge(row)}
-  {@const links = row.kind === "task" ? rows.filter((r) => r.taskId === row.id).length : 0}
-  <li class:closed={!row.open} class:nested>
+  <li class:closed={!row.open}>
     <button class="row" class:active={row.id === selected} aria-current={row.id === selected} onclick={() => onselect(row.id)}
       title={row.title} data-number={row.number} data-task={row.kind === "task" ? -row.number : undefined}>
-      <span class="dot">
-        {#if nested}
-          <!-- A task's PR or issue has no agent of its own: the slot shows what it is. -->
-          <span class="kind"><Icon name={row.kind === "pr" ? "pull-request" : "issue"} size={12} label={row.kind === "pr" ? "Pull request" : "Issue"} /></span>
-        {:else}
-          <StatusDot status={row.agent} />
-        {/if}
-      </span>
+      <span class="dot"><StatusDot status={row.agent} /></span>
       <span class="lines">
         <span class="line1">
           <span class="num">{shortName(row)}</span>
@@ -201,9 +179,9 @@
         </span>
         <span class="line2">
           {#if row.kind === "task"}
-            {#if links}<span class="faint shrink" title={row.branch ?? undefined}>task{row.branch ? ` · ${row.branch}` : ""}</span>{:else}<span class="faint">no PR or issue yet</span>{/if}
+            <span class="faint shrink" title={row.branch ?? undefined}>task{row.branch ? ` · ${row.branch}` : ""}</span>
           {:else}
-            {#if row.kind === "issue" && !nested}<span class="faint issue"><Icon name="issue" size={12} />issue</span>{/if}
+            {#if row.kind === "issue"}<span class="faint issue"><Icon name="issue" size={12} />issue</span>{/if}
             {#if ready}<span class="faint">ready to merge</span>{/if}
             {#if section !== "mine" && section !== "approved" && section !== "tasks"}<span>{row.author}</span>{/if}
             {#if row.issueNumber}<span>from #{row.issueNumber}</span>{/if}
@@ -224,15 +202,13 @@
         </span>
       </span>
     </button>
-    {#if !nested}
-      <!-- Shown on hover and focus only: Starred already says which items are starred. -->
-      <span class="acts">
-        {#if row.removable}
-          <IconButton icon="inbox-remove" label="Remove {shortName(row)} from the Inbox" size={22} onclick={() => remove(row)} data-remove={row.number} />
-        {/if}
-        <StarToggle starred={row.starred} name={shortName(row)} onclick={() => star(row)} data-star={row.number} />
-      </span>
-    {/if}
+    <!-- Shown on hover and focus only: Starred already says which items are starred. -->
+    <span class="acts">
+      {#if row.removable}
+        <IconButton icon="inbox-remove" label="Remove {shortName(row)} from the Inbox" size={22} onclick={() => remove(row)} data-remove={row.number} />
+      {/if}
+      <StarToggle starred={row.starred} name={shortName(row)} onclick={() => star(row)} data-star={row.number} />
+    </span>
   </li>
 {/snippet}
 
@@ -327,26 +303,7 @@
             {#if open}
               <ul>
                 {#each list as row (row.id)}
-                  {@render item(row, section.key, false)}
-                  {#if row.kind === "task"}
-                    {@const links = linksOf(row)}
-                    {#if links.all}
-                      <li class="links">
-                        <ul>
-                          {#each links.shown as link (link.id)}
-                            {@render item(link, section.key, true)}
-                          {/each}
-                          {#if links.hidden || links.all > FOLD_LINKS_OVER && unfoldedTasks.includes(row.id)}
-                            <li>
-                              <button class="more" onclick={() => toggleLinks(row)} data-more-links={row.number}>
-                                {links.hidden ? `+${links.hidden} more` : "Show fewer"}
-                              </button>
-                            </li>
-                          {/if}
-                        </ul>
-                      </li>
-                    {/if}
-                  {/if}
+                  {@render item(row, section.key)}
                 {/each}
               </ul>
             {/if}
@@ -433,20 +390,6 @@
   li:hover > .acts, li:focus-within > .acts { display: flex; }
   li:has(> .row.active) > .acts { background: var(--surface-selected); }
 
-  /* A task's PRs and issues hang under it on a guide line from the task's dot. */
-  .links { margin-left: 20px; }
-  .links::before {
-    content: ""; position: absolute; left: 0; top: 0; bottom: 6px; width: 1px; background: var(--border-strong);
-  }
-  .links .row { margin-left: var(--sp-2); width: calc(100% - 10px); }
-  .kind { display: flex; width: 14px; height: 14px; align-items: center; justify-content: center; color: var(--text-faint); }
-  .more {
-    margin: 0 var(--sp-3) 0 var(--sp-2); height: var(--h-row); padding: 0 var(--sp-4); width: calc(100% - 10px); box-sizing: border-box;
-    border: 0; border-radius: var(--r-md); background: transparent; text-align: left;
-    font-size: var(--fs-12); line-height: var(--lh-12); color: var(--text-muted);
-  }
-  .more:hover { background: var(--surface-hover); color: var(--text); }
-  .more:focus-visible { outline-offset: -2px; }
 
   .empty { margin: var(--sp-5) var(--sp-6); font-size: var(--fs-12); line-height: var(--lh-12); color: var(--text-muted); }
 
@@ -500,7 +443,6 @@
   .attention.blocked, .attention.ci-failing { color: var(--bad); }
   .attention.activity { color: var(--gh-strong); }
   .attention.review { color: var(--you-strong); }
-  .attention.all-closed { color: var(--info); }
   .attention.working { color: var(--text-muted); }
   .action-error { margin: 0 var(--sp-4) var(--sp-4); font-size: var(--fs-12); color: var(--bad); }
 

@@ -247,10 +247,10 @@ fn mark_seen(state: State<'_, AppState>, id: i64) -> Res<workitem::Seen> {
     workitem::mark_seen(&state, id)
 }
 
-/// The user opened the review of the item whose agent is `agent_item`: no longer "ready for review".
+/// The user opened the review of item `id`: its agent is no longer "ready for review".
 #[tauri::command]
-fn review_seen(state: State<'_, AppState>, agent_item: i64) {
-    state.terminals.review_seen(&agent_item.to_string());
+fn review_seen(state: State<'_, AppState>, id: i64) {
+    state.terminals.review_seen(&id.to_string());
 }
 
 /// The item shown in this window; remembered (per repo) so the next launch opens it again.
@@ -368,10 +368,9 @@ const AGENT_TAKES: Duration = Duration::from_secs(10);
 #[tauri::command]
 async fn agent_send(app: tauri::AppHandle, id: i64, text: String) -> Res<()> {
     blocking(app, move |s| {
-        let agent = workitem::agent_of(s, id)?;
-        workitem::ensure_on_branch(s, agent)?;
+        workitem::ensure_on_branch(s, id)?;
         s.terminals
-            .send_to_agent(&agent.to_string(), &text, AGENT_TAKES)
+            .send_to_agent(&id.to_string(), &text, AGENT_TAKES)
     })
     .await
 }
@@ -380,11 +379,10 @@ async fn agent_send(app: tauri::AppHandle, id: i64, text: String) -> Res<()> {
 #[tauri::command]
 async fn send_pr_feedback(app: tauri::AppHandle, id: i64) -> Res<()> {
     blocking(app, move |s| {
-        let agent = workitem::agent_of(s, id)?;
-        workitem::ensure_on_branch(s, agent)?;
+        workitem::ensure_on_branch(s, id)?;
         let message = workitem::comments_message(s, id)?;
         s.terminals
-            .send_to_agent(&agent.to_string(), &message, AGENT_TAKES)
+            .send_to_agent(&id.to_string(), &message, AGENT_TAKES)
     })
     .await
 }
@@ -711,6 +709,9 @@ pub fn run() {
             ));
             if let Err(e) = workitem::reconcile(&app.state::<AppState>()) {
                 tracing::warn!("reconcile failed: {e}");
+            }
+            if let Err(e) = workitem::unlink_from_tasks(&app.state::<AppState>()) {
+                tracing::warn!("unlinking the tasks' PRs and issues failed: {e}");
             }
             windows::restore(app.handle());
             #[cfg(feature = "e2e")]

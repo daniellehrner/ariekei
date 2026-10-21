@@ -202,7 +202,7 @@
     <Inbox {repo} {rows} {loaded} {selected} error={pollError} {collapsed} ontoggle={toggleInbox} onselect={select} onrefresh={refresh} {refreshing} onadded={reload}
       onswitch={show} onconnect={() => (connecting = true)} onremoved={removed} bind:creating={creatingTask} />
     {#if current}
-      <WorkItem row={current} {rows} repoId={repo.id} viewer={repo.viewer} onchanged={reload} onselect={select} />
+      <WorkItem row={current} repoId={repo.id} viewer={repo.viewer} onchanged={reload} />
     {:else}
       <!-- What wants the user, most urgent first: the first five, to open from here. -->
       {@const wanting = rows
@@ -269,5 +269,4 @@
   .reason.blocked, .reason.ci-failing { color: var(--bad); }
   .reason.activity { color: var(--gh-strong); }
   .reason.review { color: var(--you-strong); }
-  .reason.all-closed { color: var(--info); }
 </style>

@@ -12,15 +12,14 @@
     error       red circle               the agent stopped with an error        ← NEW (was a red square)
     activity    violet diamond           GitHub: new reviews or comments
     review      blue square              your turn: the agent finished, review its changes
-    all-closed  neutral bar (--info)     lifecycle news, nobody is asked        ← CHANGED (was an outlined blue square)
     working     hollow copper circle
     none        no pip
 -->
 <script lang="ts" module>
   export type Attention =
-    | "needs-you" | "blocked" | "ci-failing" | "error" | "activity" | "review" | "all-closed" | "info" | "working" | "none";
+    | "needs-you" | "blocked" | "ci-failing" | "error" | "activity" | "review" | "info" | "working" | "none";
   export const URGENCY: Record<Attention, number> = {
-    "needs-you": 0, blocked: 1, "ci-failing": 1, error: 1, activity: 2, review: 3, "all-closed": 3, info: 4, working: 4, none: 9,
+    "needs-you": 0, blocked: 1, "ci-failing": 1, error: 1, activity: 2, review: 3, info: 4, working: 4, none: 9,
   };
 </script>
 
@@ -42,7 +41,7 @@
       <circle class="fill" cx="7" cy="7" r="4.4" />
     {:else if kind === "blocked" || kind === "review"}
       <rect class="fill" x="2.75" y="2.75" width="8.5" height="8.5" rx="1.75" />
-    {:else if kind === "all-closed" || kind === "info"}
+    {:else if kind === "info"}
       <rect class="bar" x="2.5" y="5.75" width="9" height="2.5" rx="1.25" />
     {:else}
       <path class="fill" d="M7 1.5L12.5 7 7 12.5 1.5 7z" />

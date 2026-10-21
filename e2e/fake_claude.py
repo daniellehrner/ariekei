@@ -22,7 +22,8 @@ A minimal terminal agent that reports through the hooks of `--settings` like Cla
 - anything else finishes the turn at once.
 Hook requests carry the hook's `headers`, with the `allowedEnvVars` filled in, as Claude Code's do.
 Turns are kept in a transcript ($FAKE_CLAUDE_DIR, default <tmp>/ariekei-fake-claude), which
-`--resume <session>` prints again. Works in a Unix PTY and in a Windows ConPTY.
+`--resume <session>` prints again, and as Claude Code keeps them (JSON lines: the prompts as
+user messages, the rest as the assistant's text), which the hooks name as `transcript_path`. Works in a Unix PTY and in a Windows ConPTY.
 """
 
 import os
@@ -139,9 +140,12 @@ def interactive(argv):
     def transcript():
         return os.path.join(store, f"{conv['session']}.txt")
 
+    def jsonl():
+        return os.path.join(store, f"{conv['session']}.jsonl")
+
     def hook(name, **fields):
         body = json.dumps({"hook_event_name": name, "session_id": conv["session"], "cwd": os.getcwd(),
-                           "transcript_path": transcript(), **fields}).encode()
+                           "transcript_path": jsonl(), **fields}).encode()
         try:
             req = urllib.request.Request(url, body, {"Content-Type": "application/json", **headers})
             urllib.request.urlopen(req, timeout=5).read()
@@ -152,6 +156,11 @@ def interactive(argv):
         out(text + "\n")
         with open(transcript(), "a", encoding="utf-8") as f:
             f.write(text + "\n")
+        prompt = text.startswith("> ")
+        entry = {"type": "user", "message": {"content": text[2:]}} if prompt else \
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}
+        with open(jsonl(), "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
 
     keys = Keys()
     try:

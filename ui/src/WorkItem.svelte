@@ -26,20 +26,15 @@
 
   let {
     row,
-    rows,
     repoId,
     viewer,
     onchanged,
-    onselect,
   }: {
     row: Row;
-    /** The Inbox rows: a task's PRs and issues, a PR's or issue's task. */
-    rows: Row[];
     repoId: number;
     /** The user's GitHub login. */
     viewer: string;
     onchanged: () => void;
-    onselect: (id: number) => void;
   } = $props();
 
   // Per-item view state, stored with the work item so switching back restores it.
@@ -95,20 +90,13 @@
   const status = $derived(row.worktree ? (agent?.status ?? row.agent) : null);
   const hasReview = $derived(row.kind === "pr" || !!row.worktree);
   const isTask = $derived(row.kind === "task");
-  // A task has no GitHub conversation; its PRs and issues are its own items.
-  const links = $derived(isTask ? rows.filter((r) => r.taskId === row.id) : []);
-  const task = $derived(row.taskId == null ? null : (rows.find((r) => r.id === row.taskId) ?? null));
-  // A PR or issue the task's agent works on (it has no worktree of its own).
-  const viaTask = $derived(row.agentItem != null && row.agentItem !== row.id);
   const tab = $derived(ui && ui.tab === "terminal" && !row.worktree ? "overview" : ui?.tab);
   // The agent's worktree was switched to another branch (it is often the user's own
   // checkout): Ariekei sends the agent nothing until it is back, or its work would land
   // there. Its terminal still takes what the user types; a task can follow the branch.
-  const agentRow = $derived(row.agentItem == null ? null : row.agentItem === row.id ? row : (rows.find((r) => r.id === row.agentItem) ?? null));
   const moved = $derived.by(() => {
-    const r = agentRow;
-    if (r?.movedTo == null || !r.worktree || !r.branch) return null;
-    return { id: r.id, folder: folderName(r.worktree), now: r.movedTo, branch: r.branch, follow: r.canFollow };
+    if (row.movedTo == null || !row.worktree || !row.branch) return null;
+    return { id: row.id, folder: folderName(row.worktree), now: row.movedTo, branch: row.branch, follow: row.canFollow };
   });
   const agentAway = $derived(moved && `${moved.folder} is on ${moved.now || "a detached HEAD"}, not on ${moved.branch}`);
 
@@ -240,12 +228,9 @@
     }
   }
 
-  // The terminal of the agent that gets what is sent: this item's, or its task's.
+  // The terminal of the agent that gets what is sent.
   function showAgent() {
-    if (viaTask && row.agentItem != null) {
-      Object.assign(openOn, { item: row.agentItem, tab: "terminal" });
-      onselect(row.agentItem);
-    } else if (ui) ui.tab = "terminal";
+    if (ui) ui.tab = "terminal";
   }
 
   async function sendPrFeedback() {
@@ -351,14 +336,11 @@
     <div class="title-row">
       <span class="kind"><Icon name={KIND_ICON[row.kind]} label={KIND_LABEL[row.kind]} /></span>
       <h1 class="title"><span class="num">{shortName(row)}</span>{row.title}</h1>
-      <!-- A task's PRs and issues are listed under it: the task is what gets starred. -->
-      {#if row.taskId == null}
-        <StarToggle starred={row.starred} name={shortName(row)} size={26} onclick={() => api.setStarred(row.id, !row.starred).then(onchanged)} data-item-star />
-      {/if}
+      <StarToggle starred={row.starred} name={shortName(row)} size={26} onclick={() => api.setStarred(row.id, !row.starred).then(onchanged)} data-item-star />
       <div class="actions">
         {#if preparing}
           <span class="preparing" role="status"><Spinner />Preparing the worktree…</span>
-        {:else if !row.worktree && !viaTask}
+        {:else if !row.worktree}
           <Button variant="primary" icon="play" onclick={start}
             title={isTask
               ? "Create the task's worktree again and open Claude Code in it"
@@ -391,11 +373,6 @@
     <div class="meta" data-meta>
       <span>{KIND_LABEL[row.kind]}</span>
       {#if row.issueNumber}<span>from issue #{row.issueNumber}</span>{/if}
-      {#if task}
-        <button class="from-task" onclick={() => task && onselect(task.id)} title="Open the task" data-from-task>
-          from task {shortName(task)} {task.title}
-        </button>
-      {/if}
       {#if !isTask}<span>by {row.author}</span>{/if}
       {#if ciLabel}
         <span class={ci === "pass" ? "ok" : ci === "fail" ? "bad" : "warn"}><CiMark state={ci} label="" />{ciLabel}</span>
@@ -442,7 +419,7 @@
           {@const m = moved!}
           {#if m.follow}
             <Button size="sm" loading={fixing === "follow"} disabled={!!fixing} onclick={() => fix("follow", () => api.followBranch(m.id))}
-              title="Make {m.now} the task's branch: its PR is linked to the task" data-follow-branch>Continue on {m.now}</Button>
+              title="Make {m.now} the task's branch" data-follow-branch>Continue on {m.now}</Button>
           {/if}
           {#if m.now === ""}
             <Button size="sm" loading={fixing === "move"} disabled={!!fixing} onclick={() => fix("move", () => api.moveBranchHere(m.id))}
@@ -526,7 +503,7 @@
         {/if}
       {/each}
       <span class="spacer"></span>
-      {#if row.agentItem != null && row.kind === "pr"}
+      {#if row.worktree && row.kind === "pr"}
         <Button variant="quiet" mark="agent" onclick={sendPrFeedback} disabled={!!agentAway}
           title={agentAway ?? "Send the PR's current review threads, review summaries and failing checks to the agent"}>Send PR feedback to agent</Button>
       {/if}
@@ -542,7 +519,7 @@
           {/key}
         {/if}
         {#if isTask && (tab === "overview" || tab === "comments")}
-          <TaskOverview task={row} {links} {onselect} />
+          <TaskOverview task={row} />
         {:else if tab === "overview" || tab === "comments"}
           {#if conv}
             {#if convError}
@@ -555,8 +532,8 @@
             <p class="hint">{convError ? `Could not load the ${row.kind === "pr" ? "pull request" : "issue"} from GitHub: ${convError}` : "Loading…"}</p>
           {/if}
         {:else if tab === "review"}
-          <ReviewView {id} bind:view={ui.review} onchanged={changed} canSendToAgent={row.agentItem != null} {agentAway} agentItem={row.agentItem ?? undefined}
-            agentStatus={row.agentItem == null ? undefined : (agents[String(row.agentItem)]?.status ?? (row.agentItem === row.id ? row.agent ?? undefined : undefined))}
+          <ReviewView {id} bind:view={ui.review} onchanged={changed} canSendToAgent={!!row.worktree} {agentAway}
+            agentStatus={row.worktree ? (agent?.status ?? row.agent ?? undefined) : undefined}
             onterminal={showAgent} {polls} />
         {/if}
       {/key}
@@ -595,11 +572,6 @@
   .bad { color: var(--bad); }
   .warn { color: var(--warn); }
   .gh { color: var(--gh-strong); }
-  .from-task {
-    flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding: 0; border: 0; background: none;
-    color: var(--text-muted); font: inherit; text-decoration: underline; text-decoration-color: var(--border); cursor: pointer;
-  }
-  .from-task:hover { color: var(--text); }
   .muted { color: var(--text-muted); }
 
   .waiting {
