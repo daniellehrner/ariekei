@@ -198,6 +198,7 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             worktree: None,
             branch: item.branch.clone(),
             moved_to: None,
+            can_follow: false,
             update: None,
             adopted: false,
             attention: None,
@@ -235,6 +236,7 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             worktree: None,
             branch: item.branch.clone(),
             moved_to: None,
+            can_follow: false,
             update: None,
             adopted: false,
             attention: None,
@@ -272,6 +274,7 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             worktree: None,
             branch: item.branch.clone(),
             moved_to: None,
+            can_follow: false,
             update: None,
             adopted: false,
             attention: None,
@@ -292,6 +295,7 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
     }
     row.ready_for_review = state.terminals.ready_for_review(&item.id.to_string());
     row.moved_to = moved_to(&item);
+    row.can_follow = followable(&item, repo).is_ok();
     if worktree.is_some() && row.moved_to.is_none() {
         row.update = update_of(&item);
     }
@@ -396,9 +400,9 @@ pub fn prepare(state: &AppState, id: i64) -> Result<Prepared, String> {
 }
 
 /// Resume the item's conversation if it has one; otherwise start a new one with the PR's
-/// current context appended to the system prompt.
+/// current context appended to the system prompt. Also while its worktree is on another
+/// branch (`moved_to`): a start sends the agent no work, and the user may want to talk to it.
 pub fn session_plan(state: &AppState, data_dir: &Path, id: i64) -> Result<SessionPlan, String> {
-    ensure_on_branch(state, id)?;
     let (mut item, repo) = item_repo(state, id)?;
     // Hooks may never have said that it was prompted (hooks turned off, or another Ariekei's
     // settings file): a transcript on disk says so. Claude Code refuses to start a new
@@ -731,6 +735,40 @@ pub fn switch_back(state: &AppState, id: i64) -> Result<(), String> {
     git::git(&dir, &["switch", "--quiet", &branch]).map(|_| ())
 }
 
+/// The branch task `item`'s worktree was switched to, if the task can take it as its own: not
+/// a detached HEAD, nor the default branch (e.g. the user's checkout, switched back to it).
+fn followable(item: &WorkItem, repo: &Repo) -> Result<String, String> {
+    if !item.is_task() {
+        return Err("only a task follows another branch".into());
+    }
+    match moved_to(item) {
+        None => Err("its worktree is on its branch".into()),
+        Some(now) if now.is_empty() => {
+            Err("its worktree is on a detached HEAD, not on a branch".into())
+        }
+        Some(now) if default_branch(repo).is_ok_and(|d| d == now) => Err(format!(
+            "{now} is the default branch: a task works on a branch of its own"
+        )),
+        Some(now) => Ok(now),
+    }
+}
+
+/// Makes the branch task `id`'s worktree was switched to (`moved_to`) the task's branch,
+/// e.g. one its agent started for the next part of the work: the agent gets work again, and
+/// the branch's PR is linked to the task. Not a PR's: its branch is GitHub's head. Cleanup
+/// keeps both branches (Ariekei created neither of them now).
+pub fn follow_branch(state: &AppState, id: i64) -> Result<(), String> {
+    let (item, repo) = item_repo(state, id)?;
+    let now = followable(&item, &repo)?;
+    state.store.set_worktree(
+        id,
+        item.worktree_path.as_deref(),
+        Some(&now),
+        item.worktree_created,
+        false,
+    )
+}
+
 /// Moves item `id`'s branch to its worktree's detached HEAD and puts the worktree on it: for
 /// a checkout of a newer version (e.g. the author's rebased PR). Refuses while the branch has
 /// commits HEAD lacks that GitHub does not have.
@@ -792,8 +830,8 @@ pub fn update_branch(state: &AppState, id: i64, rewrite: bool) -> Result<bool, S
     git::git(&dir, &["reset", "--keep", "--quiet", &pulled]).map(|_| true)
 }
 
-/// Refuses work for the agent of item `id` while its worktree is on another branch: it would
-/// land there.
+/// Refuses to send work to the agent of item `id` while its worktree is on another branch:
+/// it would land there. What the user types in its terminal still reaches it.
 pub fn ensure_on_branch(state: &AppState, id: i64) -> Result<(), String> {
     let item = state.store.item(id)?;
     match moved_to(&item) {
@@ -2049,8 +2087,12 @@ mod tests {
             None,
             "a finished item's branch is done with"
         );
-        let err = session_plan(&app.state, &app.state.data_dir, id).unwrap_err();
+        let err = ensure_on_branch(&app.state, id).unwrap_err();
         assert!(err.contains("is on main now, not on feat/evm"), "{err}");
+        assert!(
+            session_plan(&app.state, &app.state.data_dir, id).is_ok(),
+            "the agent still starts: the user may want to talk to it"
+        );
 
         // Done keeps the checkout, the branch and the user's own changes.
         git(&app.clone, &["checkout", "-q", "feat/evm"]);
@@ -2299,6 +2341,45 @@ mod tests {
         app.push_to("feat", &[("f.txt", "late\n")], "bob");
         git(up, &["update-ref", "refs/pull/5/head", "feat"]);
         assert_eq!(row().update, None);
+    }
+
+    #[test]
+    fn a_task_follows_the_branch_its_agent_started() {
+        let app = TestApp::new();
+        let id = create_task(&app.state, Some(app.repo.clone()), "Next", "", "").unwrap();
+        let item = app.state.store.item(id).unwrap();
+        let wt = item.worktree_path.clone().unwrap();
+        let err = follow_branch(&app.state, id).unwrap_err();
+        assert!(err.contains("on its branch"), "{err}");
+
+        git(&wt, &["checkout", "-q", "--detach"]);
+        let err = follow_branch(&app.state, id).unwrap_err();
+        assert!(err.contains("detached HEAD"), "{err}");
+
+        let row = || app.row(item.number).unwrap();
+        // The default branch is never a task's.
+        git(&wt, &["checkout", "-q", "--ignore-other-worktrees", "main"]);
+        let err = follow_branch(&app.state, id).unwrap_err();
+        assert!(err.contains("default branch"), "{err}");
+        assert!(!row().can_follow);
+
+        git(&wt, &["switch", "-q", "-c", "next-part"]);
+        assert!(row().can_follow);
+        follow_branch(&app.state, id).unwrap();
+        let item = app.state.store.item(id).unwrap();
+        assert_eq!(
+            (item.branch.as_deref(), item.branch_created),
+            (Some("next-part"), false),
+            "cleanup keeps the branch Ariekei did not create"
+        );
+        assert_eq!(moved_to(&item), None);
+        assert!(ensure_on_branch(&app.state, id).is_ok());
+
+        // A PR's branch is GitHub's head: it does not follow.
+        let (pr, pr_wt) = app.pr_with_worktree(5, "feat");
+        git(&pr_wt, &["switch", "-q", "-c", "elsewhere"]);
+        let err = follow_branch(&app.state, pr).unwrap_err();
+        assert!(err.contains("only a task"), "{err}");
     }
 
     #[test]

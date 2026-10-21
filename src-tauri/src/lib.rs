@@ -553,6 +553,12 @@ async fn switch_back(app: tauri::AppHandle, id: i64) -> Res<()> {
     blocking(app, move |s| workitem::switch_back(s, id)).await
 }
 
+/// Makes the branch a task's worktree was switched to the task's branch.
+#[tauri::command]
+async fn follow_branch(app: tauri::AppHandle, id: i64) -> Res<()> {
+    blocking(app, move |s| workitem::follow_branch(s, id)).await
+}
+
 /// Moves the item's branch to its worktree's detached HEAD.
 #[tauri::command]
 async fn move_branch_here(app: tauri::AppHandle, id: i64) -> Res<()> {
@@ -754,6 +760,7 @@ pub fn run() {
             review_state,
             review_fetch,
             switch_back,
+            follow_branch,
             move_branch_here,
             update_branch,
             review_files,

@@ -102,12 +102,13 @@
   const viaTask = $derived(row.agentItem != null && row.agentItem !== row.id);
   const tab = $derived(ui && ui.tab === "terminal" && !row.worktree ? "overview" : ui?.tab);
   // The agent's worktree was switched to another branch (it is often the user's own
-  // checkout): the agent gets nothing until it is back, or its work would land there.
+  // checkout): Ariekei sends the agent nothing until it is back, or its work would land
+  // there. Its terminal still takes what the user types; a task can follow the branch.
   const agentRow = $derived(row.agentItem == null ? null : row.agentItem === row.id ? row : (rows.find((r) => r.id === row.agentItem) ?? null));
   const moved = $derived.by(() => {
     const r = agentRow;
     if (r?.movedTo == null || !r.worktree || !r.branch) return null;
-    return { id: r.id, folder: folderName(r.worktree), now: r.movedTo, branch: r.branch };
+    return { id: r.id, folder: folderName(r.worktree), now: r.movedTo, branch: r.branch, follow: r.canFollow };
   });
   const agentAway = $derived(moved && `${moved.folder} is on ${moved.now || "a detached HEAD"}, not on ${moved.branch}`);
 
@@ -209,8 +210,8 @@
   onMount(() => saveUi);
 
   // Putting the agent's worktree right (Switch back, Move here, Update): one at a time.
-  let fixing: "switch" | "move" | "update" | null = $state(null);
-  async function fix(what: "switch" | "move" | "update", f: () => Promise<unknown>) {
+  let fixing: "switch" | "move" | "follow" | "update" | null = $state(null);
+  async function fix(what: "switch" | "move" | "follow" | "update", f: () => Promise<unknown>) {
     fixing = what;
     error = null;
     try {
@@ -435,9 +436,14 @@
     <div class="banner">
       <Banner tone="bad" icon="branch" data-moved>
         <span><code>{moved.folder}</code> is on {#if moved.now}<code>{moved.now}</code>{:else}a detached HEAD{/if} now, not on
-          <code>{moved.branch}</code>. The agent gets nothing until you switch it back.</span>
+          <code>{moved.branch}</code>. Ariekei sends the agent nothing until you switch it back; what you type in its terminal
+          still reaches it.</span>
         {#snippet action()}
           {@const m = moved!}
+          {#if m.follow}
+            <Button size="sm" loading={fixing === "follow"} disabled={!!fixing} onclick={() => fix("follow", () => api.followBranch(m.id))}
+              title="Make {m.now} the task's branch: its PR is linked to the task" data-follow-branch>Continue on {m.now}</Button>
+          {/if}
           {#if m.now === ""}
             <Button size="sm" loading={fixing === "move"} disabled={!!fixing} onclick={() => fix("move", () => api.moveBranchHere(m.id))}
               title="Put {m.branch} on the checked out commit, e.g. a newer version of the PR" data-move-branch>Move {m.branch} here</Button>
@@ -529,10 +535,9 @@
       {#key id}
         {#if row.worktree}
           <!-- Stays mounted under the other tabs so the terminal keeps running in view. -->
-          <!-- Opened again once the worktree is back on its branch: only then does the agent start.
-               Also opened again to start an agent that exited. -->
-          {#key `${moved == null}:${restarts}`}
-            <TerminalPanel {id} visible={tab === "terminal"} {status} path={row.worktree} paused={moved != null}
+          <!-- Opened again to start an agent that exited. -->
+          {#key restarts}
+            <TerminalPanel {id} visible={tab === "terminal"} {status} path={row.worktree}
               onrestart={() => restarts++} />
           {/key}
         {/if}

@@ -17,9 +17,11 @@ removes the worktree, branch and task; the PR goes back to My PRs), and a second
 button) whose merged PR stays under it ("All closed") until Done removes it, and a task on a
 fork's branch (named after it, the fork's remote added, the branch tracking it, its context naming
 it) whose PR, opened on GitHub, is linked to it on a poll, and a task on the branch the user's own
-checkout is on (it works there; switched to another branch, the agent is paused until Switch
-back; detached on a newer commit, Move here takes the branch along; detached off it with a
-commit of its own, Switch back refuses; Done keeps the checkout and the user's changes).
+checkout is on (it works there; switched to another branch, the agent gets nothing from
+Ariekei until Switch back, though its terminal still takes input; detached on a newer commit,
+Move here takes the branch along; detached off it with a commit of its own, Switch back
+refuses; on a new branch, Continue on makes it the task's; Done keeps the checkout and the
+user's changes).
 
 Run it with `python3 e2e/run.py <test-app> task` (see run.py), which sets the environment.
 """
@@ -425,16 +427,19 @@ try:
     check("the task works in the user's checkout",
           os.path.samefile(where, clone) and not os.path.exists(os.path.join(work, "proj_task2")), where)
     eventually("its agent is ready", lambda: agent(s, -2), lambda a: a in ("ready", "finished"), timeout=60)
-    # Switched to another branch (as in an IDE): the agent is paused until it is back.
+    # Switched to another branch (as in an IDE): Ariekei sends the agent nothing until it is
+    # back, but its terminal still takes what the user types.
     git(clone, "checkout", "-q", "main")
     s.js("window.dispatchEvent(new Event('focus'))")
     moved = s.text(s.wait(".item [data-moved]", timeout=30))
-    print("[own checkout] switched to main:", moved.strip(), "| terminal paused:", bool(s.find(".terminal.paused")))
+    inert = s.js("return !!document.querySelector('.terminal[inert]')")
+    print("[own checkout] switched to main:", moved.strip(), "| terminal inert:", inert)
     contains("the item says where the checkout went", moved, "proj is on main now, not on feature-y")
-    check("the agent's terminal is paused", bool(s.find(".terminal.paused")))
+    check("the agent's terminal still takes input", not inert)
     check("not detached: nothing to move", not s.find(".item [data-move-branch]"))
+    check("nor the default branch to continue on", not s.find(".item [data-follow-branch]"))
     s.click(s.wait(".item [data-switch-back]"))
-    s.wait_js("return !document.querySelector('.item [data-moved]') && !document.querySelector('.terminal.paused')", timeout=30)
+    s.wait_js("return !document.querySelector('.item [data-moved]')", timeout=30)
     equal("Switch back puts the checkout back on its branch", git(clone, "rev-parse", "--abbrev-ref", "HEAD"), "feature-y")
     # Detached with a commit on top (as a checkout of a newer version): Move here takes the
     # branch along.
@@ -462,6 +467,14 @@ try:
     git(clone, "checkout", "-q", "feature-y")
     s.js("window.dispatchEvent(new Event('focus'))")
     s.wait_js("return !document.querySelector('.item [data-moved]')", timeout=30)
+    # A new branch for the next part of the work (as the agent starts one): the task follows it.
+    git(clone, "checkout", "-q", "-b", "feature-z")
+    s.js("window.dispatchEvent(new Event('focus'))")
+    s.click(s.wait(".item [data-follow-branch]", timeout=30))
+    s.wait_js("return !document.querySelector('.item [data-moved]')", timeout=30)
+    followed = s.text(s.wait(".item header .branch code"))
+    print("[own checkout] followed:", followed)
+    equal("Continue on makes the new branch the task's", followed.strip(), "feature-z")
     # Done keeps the checkout, its branch and the user's own changes.
     open(os.path.join(clone, "mine.txt"), "w").write("wip\n")
     s.click(s.wait(".item header .actions button", text="Done"))
@@ -471,6 +484,6 @@ try:
     kept = (git(clone, "rev-parse", "--abbrev-ref", "HEAD"), os.path.exists(os.path.join(clone, "mine.txt")))
     print("[own checkout] done:", confirm.strip(), "| branch, changes kept:", kept)
     contains("Done does not offer to remove the checkout", confirm, "Clean up the agent and this task?")
-    equal("the checkout keeps its branch and changes", kept, ("feature-y", True))
+    equal("the checkout keeps its branch and changes", kept, ("feature-z", True))
 finally:
     s.quit()

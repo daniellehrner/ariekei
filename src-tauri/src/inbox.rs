@@ -36,8 +36,11 @@ pub struct Row {
     /// The item's local branch, once it has a worktree.
     pub branch: Option<String>,
     /// The branch its worktree is on instead (`""`: a detached HEAD), when someone switched
-    /// it; the agent gets nothing until it is back (`workitem::moved_to`).
+    /// it; Ariekei sends the agent nothing until it is back (`workitem::moved_to`).
     pub moved_to: Option<String>,
+    /// A task whose worktree is on another branch that it can take as its own
+    /// (`workitem::follow_branch`).
+    pub can_follow: bool,
     /// GitHub's PR head is one its worktree's branch lacks (`workitem::update_of`): "new" (not
     /// fetched yet), "fast-forward", or "rewritten" (the author rewrote its history).
     pub update: Option<&'static str>,
@@ -150,6 +153,7 @@ mod tests {
             worktree: None,
             branch: None,
             moved_to: None,
+            can_follow: false,
             update: None,
             adopted: false,
             attention: None,

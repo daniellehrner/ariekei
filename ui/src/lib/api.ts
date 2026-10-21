@@ -62,8 +62,10 @@ export interface Row {
   /** The item's local branch, once it has a worktree. */
   branch: string | null;
   /** The branch its worktree is on instead ("": a detached HEAD), when someone switched it;
-   *  the agent gets nothing until it is back. */
+   *  Ariekei sends the agent nothing until it is back. */
   movedTo: string | null;
+  /** A task whose worktree is on another branch that it can take as its own. */
+  canFollow: boolean;
   /** GitHub's PR head is one its worktree's branch lacks: not fetched yet, ahead of it, or
    *  rewritten (the author rebased the PR). */
   update: "new" | "fast-forward" | "rewritten" | null;
@@ -239,6 +241,8 @@ export const api = {
   reviewFetch: (id: number, force = false) => invoke<boolean>("review_fetch", { id, force }),
   /** Puts the agent's worktree back on its branch after someone switched it. */
   switchBack: (id: number) => invoke<void>("switch_back", { id }),
+  /** Makes the branch a task's worktree was switched to the task's branch. */
+  followBranch: (id: number) => invoke<void>("follow_branch", { id }),
   /** Moves the item's branch to its worktree's detached HEAD. */
   moveBranchHere: (id: number) => invoke<void>("move_branch_here", { id }),
   /** Brings the PR's branch up to GitHub's head of it. */
