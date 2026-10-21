@@ -146,10 +146,12 @@ pub fn inbox(state: &AppState, repo: Option<Repo>) -> Result<Vec<Row>, String> {
         return Ok(vec![]);
     };
     let items = state.store.items(repo.id)?;
-    // Finished items stay listed under their task, which shows what came of it.
+    // Finished items stay listed under their task, which shows what came of it. Not an open
+    // one the user cleaned up (Done): they are done with it.
     let tasks: Vec<&WorkItem> = items.iter().filter(|i| i.is_task() && listed(i)).collect();
     let task_of = |item: &WorkItem| {
         item.task_id
+            .filter(|_| !(item.hidden && item.open))
             .and_then(|t| tasks.iter().find(|task| task.id == t).copied())
     };
     let rows = items
@@ -1876,6 +1878,18 @@ mod tests {
             row(-1).unwrap().attention,
             Some("all its PRs and issues are closed")
         );
+
+        // An open one the user is done with leaves the task too.
+        app.add_pr(json!({"number": 22, "title": "Draft", "head_ref": "main"}));
+        link_created(&app.state, task, "pr", 22).unwrap();
+        assert!(app.row(22).is_some_and(|r| r.task_id == Some(task)));
+        mark_done(&app.state, app.item(22).id).unwrap();
+        app.poll().unwrap();
+        assert!(
+            app.row(22).is_none(),
+            "Done takes it out of the task's list"
+        );
+        assert!(app.row(20).is_some(), "the merged one stays");
     }
 
     #[test]

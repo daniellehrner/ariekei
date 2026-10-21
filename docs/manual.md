@@ -509,7 +509,8 @@ result to the task. A PR opened for the task's pushed branch some other way (in 
 or by the fork's owner) is linked on the next poll.
 
 - Linked PRs and issues are listed under the task in the Inbox (also when closed or merged)
-  and in the task's Overview, not in their own sections.
+  and in the task's Overview, not in their own sections. One you mark **Done** while it is
+  still open leaves the task's list too.
 - A linked PR has no worktree of its own. Its Review tab reads the PR head; **Send PR feedback
   to agent**, review comments and questions about code go to the task's agent. Its header says
   "from task Tn".
