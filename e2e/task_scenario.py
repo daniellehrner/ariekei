@@ -244,8 +244,11 @@ try:
 
     # --- Ask agent from the review: right-click a line, or a selection on the old side ---
     s.click(s.wait(".item [data-tab='review']"))
-    side_by_side(s)
-    s.wait_js(f"return !!{editor('new')}?.state.doc.toString().includes('reset peers once')", timeout=30)
+    # Side by side again while waiting: on a CI run the view went back to unified once,
+    # right after the task was selected again.
+    eventually("the task's change shows side by side",
+               lambda: side_by_side(s) or s.js(f"return !!{editor('new')}?.state.doc.toString().includes('reset peers once')"),
+               lambda v: v, timeout=30)
     ask_about(s, "new", 2, "Why only once here?")
     s.wait(".item [data-tab='terminal'][aria-selected='true']", timeout=30)
     told = eventually("the agent gets the code and the prompt", transcripts, lambda t: "Why only once here?" in t, timeout=30)
