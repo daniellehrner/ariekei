@@ -93,7 +93,7 @@
   const tab = $derived(ui && ui.tab === "terminal" && !row.worktree ? "overview" : ui?.tab);
   // The agent's worktree was switched to another branch (it is often the user's own
   // checkout): Ariekei sends the agent nothing until it is back, or its work would land
-  // there. Its terminal still takes what the user types; a task can follow the branch.
+  // there. Its terminal still takes what the user types; the item can follow the branch.
   const moved = $derived.by(() => {
     if (row.movedTo == null || !row.worktree || !row.branch) return null;
     return { id: row.id, folder: folderName(row.worktree), now: row.movedTo, branch: row.branch, follow: row.canFollow };
@@ -413,13 +413,14 @@
     <div class="banner">
       <Banner tone="bad" icon="branch" data-moved>
         <span><code>{moved.folder}</code> is on {#if moved.now}<code>{moved.now}</code>{:else}a detached HEAD{/if} now, not on
-          <code>{moved.branch}</code>. Ariekei sends the agent nothing until you switch it back; what you type in its terminal
-          still reaches it.</span>
+          <code>{moved.branch}</code>. Ariekei sends the agent nothing until you switch it back{#if moved.follow} or continue on
+          <code>{moved.now}</code>{/if}; what you type in its terminal still reaches it.</span>
         {#snippet action()}
           {@const m = moved!}
           {#if m.follow}
             <Button size="sm" loading={fixing === "follow"} disabled={!!fixing} onclick={() => fix("follow", () => api.followBranch(m.id))}
-              title="Make {m.now} the task's branch" data-follow-branch>Continue on {m.now}</Button>
+              title={row.kind === "pr" ? `Work on ${m.now} from now on; the PR on GitHub changes when you push it there` : `Make ${m.now} the ${row.kind}'s branch`}
+              data-follow-branch>Continue on {m.now}</Button>
           {/if}
           {#if m.now === ""}
             <Button size="sm" loading={fixing === "move"} disabled={!!fixing} onclick={() => fix("move", () => api.moveBranchHere(m.id))}

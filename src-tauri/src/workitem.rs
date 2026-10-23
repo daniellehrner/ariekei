@@ -671,7 +671,8 @@ pub fn moved_to(item: &WorkItem) -> Option<String> {
 /// Whether GitHub's head of PR `item` is one its worktree's branch lacks: "new" when the clone
 /// has not fetched it, "fast-forward" when the branch can move up to it, "rewritten" when the
 /// author rewrote the PR's history since (e.g. rebased it). Not when the branch is ahead with
-/// commits of its own: those are for pushing.
+/// commits of its own: those are for pushing. Nor while GitHub has the head it had when the
+/// item followed another branch (`follow_branch`): that one is the PR's next version.
 pub fn update_of(item: &WorkItem) -> Option<&'static str> {
     if item.kind != "pr" || !item.open {
         return None;
@@ -679,6 +680,9 @@ pub fn update_of(item: &WorkItem) -> Option<&'static str> {
     let dir = item.worktree_path.as_deref().filter(|p| p.exists())?;
     let branch = item.branch.as_deref().filter(|b| !b.is_empty())?;
     let head = summary(item).ok()?.head_sha;
+    if item.followed_head.as_deref() == Some(head.as_str()) {
+        return None;
+    }
     let tip = git::git_str(
         dir,
         &[
@@ -757,38 +761,41 @@ pub fn switch_back(state: &AppState, id: i64) -> Result<(), String> {
     git::git(&dir, &["switch", "--quiet", &branch]).map(|_| ())
 }
 
-/// The branch task `item`'s worktree was switched to, if the task can take it as its own: not
-/// a detached HEAD, nor the default branch (e.g. the user's checkout, switched back to it).
+/// The branch `item`'s worktree was switched to, if the item can take it as its own: not a
+/// detached HEAD, nor the default branch (e.g. the user's checkout, switched back to it).
 fn followable(item: &WorkItem, repo: &Repo) -> Result<String, String> {
-    if !item.is_task() {
-        return Err("only a task follows another branch".into());
-    }
     match moved_to(item) {
         None => Err("its worktree is on its branch".into()),
         Some(now) if now.is_empty() => {
             Err("its worktree is on a detached HEAD, not on a branch".into())
         }
         Some(now) if default_branch(repo).is_ok_and(|d| d == now) => Err(format!(
-            "{now} is the default branch: a task works on a branch of its own"
+            "{now} is the default branch: the agent works on a branch of its own"
         )),
         Some(now) => Ok(now),
     }
 }
 
-/// Makes the branch task `id`'s worktree was switched to (`moved_to`) the task's branch,
-/// e.g. one its agent started for the next part of the work: the agent gets work again, and
-/// the branch's PR is linked to the task. Not a PR's: its branch is GitHub's head. Cleanup
-/// keeps both branches (Ariekei created neither of them now).
+/// Makes the branch item `id`'s worktree was switched to (`moved_to`) the item's branch, e.g.
+/// one a task's agent started for the next part of the work (the branch's PR is linked to the
+/// task), or a rewrite of a PR that the user pushes to it later: the agent gets work again.
+/// The PR on GitHub stays as it is, and the Update bar waits until GitHub has another head
+/// (`update_of`). Cleanup keeps both branches (Ariekei created neither of them now).
 pub fn follow_branch(state: &AppState, id: i64) -> Result<(), String> {
     let (item, repo) = item_repo(state, id)?;
     let now = followable(&item, &repo)?;
+    let head = match item.kind.as_str() {
+        "pr" => Some(summary(&item)?.head_sha),
+        _ => None,
+    };
     state.store.set_worktree(
         id,
         item.worktree_path.as_deref(),
         Some(&now),
         item.worktree_created,
         false,
-    )
+    )?;
+    state.store.set_followed_head(id, head.as_deref())
 }
 
 /// Moves item `id`'s branch to its worktree's detached HEAD and puts the worktree on it: for
@@ -2417,12 +2424,54 @@ mod tests {
         );
         assert_eq!(moved_to(&item), None);
         assert!(ensure_on_branch(&app.state, id).is_ok());
+    }
 
-        // A PR's branch is GitHub's head: it does not follow.
-        let (pr, pr_wt) = app.pr_with_worktree(5, "feat");
-        git(&pr_wt, &["switch", "-q", "-c", "elsewhere"]);
-        let err = follow_branch(&app.state, pr).unwrap_err();
-        assert!(err.contains("only a task"), "{err}");
+    #[test]
+    fn a_pr_follows_a_rewrite_of_its_branch() {
+        let app = TestApp::new();
+        let (id, wt) = app.pr_with_worktree(5, "feat");
+        let up = &app.upstream;
+        let row = || {
+            app.poll().unwrap();
+            app.rows().into_iter().find(|r| r.id == id).unwrap()
+        };
+        git(up, &["update-ref", "refs/pull/5/head", "feat"]);
+
+        // The agent rewrites the PR on a new branch: GitHub's head is not on it.
+        git(&wt, &["switch", "-q", "-c", "rewrite", "HEAD~1"]);
+        write(&wt.join("b.txt"), "rewritten\n");
+        commit(&wt, "rewritten", "me");
+        let moved = row();
+        assert_eq!(
+            (moved.moved_to.as_deref(), moved.can_follow),
+            (Some("rewrite"), true)
+        );
+        assert!(ensure_on_branch(&app.state, id).is_err());
+
+        follow_branch(&app.state, id).unwrap();
+        let item = app.state.store.item(id).unwrap();
+        assert_eq!(
+            (item.branch.as_deref(), item.branch_created),
+            (Some("rewrite"), false),
+            "cleanup keeps both branches"
+        );
+        assert!(ensure_on_branch(&app.state, id).is_ok());
+        let followed = row();
+        assert_eq!(
+            (followed.moved_to, followed.update),
+            (None, None),
+            "GitHub still has the version the rewrite replaces"
+        );
+
+        // The user pushes it to the PR: nothing to update.
+        git(&wt, &["push", "-q", "-f", "origin", "rewrite:feat"]);
+        git(up, &["update-ref", "refs/pull/5/head", "feat"]);
+        assert_eq!(row().update, None);
+
+        // Someone else pushes on top: the bar is back.
+        app.push_to("feat", &[("c.txt", "bob's\n")], "bob");
+        git(up, &["update-ref", "refs/pull/5/head", "feat"]);
+        assert_eq!(row().update, Some("new"));
     }
 
     #[test]

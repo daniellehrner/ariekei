@@ -482,9 +482,11 @@ made), it is still yours:
   feature-y"), and Ariekei sends the agent nothing (Send to agent, PR feedback): its work
   would land on the other branch. Its terminal still takes what you type, so you can tell
   the agent what to do. Switch back (or press **Switch back to `<branch>`** in that banner)
-  and it carries on. A task can instead keep the new branch, e.g. one you asked its agent
-  to start for the next part of the work: **Continue on `<new branch>`** makes it the task's
-  branch, and a PR opened for it is added to the Inbox. Ariekei notices when its window gets the
+  and it carries on. Or keep the new branch: **Continue on `<new branch>`** makes it the
+  item's branch, e.g. one you asked a task's agent to start for the next part of the work (a
+  PR opened for it is added to the Inbox), or a rewrite of a PR that you push to it later.
+  The PR on GitHub stays as it is until you push there; the Update bar does not offer
+  GitHub's older version meanwhile. Ariekei notices when its window gets the
   focus again, or on the next poll. With a detached HEAD, **Switch back** takes commits made
   on it along when they build on the branch, and refuses when they would be left behind;
   **Move `<branch>` here** puts the branch on the checked out commit instead (e.g. a newer
@@ -693,8 +695,8 @@ activity, a grey bar for lifecycle news.
 - **Send to agent is greyed out** (in the Ask agent box or under the drafts): the agent is
   waiting for your permission. Answer it in the Terminal first (**Answer in Terminal**). Or
   its checkout is on another branch (see [Your own checkout](#your-own-checkout)): switch it
-  back, e.g. with **Switch back to `<branch>`** in the red banner, or, for a task, keep the
-  new branch with **Continue on `<new branch>`**.
+  back, e.g. with **Switch back to `<branch>`** in the red banner, or keep the new branch
+  with **Continue on `<new branch>`**.
 
 Not supported yet:
 

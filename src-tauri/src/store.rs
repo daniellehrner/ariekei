@@ -138,6 +138,11 @@ ALTER TABLE work_items ADD COLUMN kept INTEGER NOT NULL DEFAULT 0;
 -- the agent that later works on it.
 ALTER TABLE work_items ADD COLUMN origin TEXT;
 "#,
+    r#"
+-- GitHub's head of the PR when the user made another branch the item's (it is pushed to the
+-- PR later, e.g. a rewrite): the Update bar waits until GitHub has a different one.
+ALTER TABLE work_items ADD COLUMN followed_head TEXT;
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -182,6 +187,9 @@ pub struct WorkItem {
     pub past_transcripts: Vec<PathBuf>,
     /// Finished, and the user chose to keep it until Done: no automatic cleanup.
     pub kept: bool,
+    /// GitHub's head of the PR when its worktree's branch became the item's
+    /// (`workitem::follow_branch`).
+    pub followed_head: Option<String>,
 }
 
 impl WorkItem {
@@ -264,7 +272,7 @@ fn err(e: rusqlite::Error) -> String {
 const ITEM_COLUMNS: &str = "id, repo_id, number, snapshot, open, worktree_path, branch, session_id, \
      session_started, transcript_path, last_seen, ui_state, role, tracked, kind, \
      issue_number, worktree_created, hidden, cleanup_blockers, origin, starred, branch_created, \
-     past_transcripts, kept";
+     past_transcripts, kept, followed_head";
 
 fn item_from_row(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
     let json = |s: Option<String>| s.and_then(|s| serde_json::from_str(&s).ok());
@@ -298,6 +306,7 @@ fn item_from_row(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default(),
         kept: r.get(23)?,
+        followed_head: r.get(24)?,
     })
 }
 
@@ -612,6 +621,7 @@ impl Store {
     }
 
     /// `created`: Ariekei made the worktree (cleanup may delete it) rather than adopting it.
+    /// Clears `followed_head`: it was for the branch before.
     pub fn set_worktree(
         &self,
         id: i64,
@@ -622,8 +632,19 @@ impl Store {
     ) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE work_items SET worktree_path = ?2, branch = ?3, worktree_created = ?4, branch_created = ?5 WHERE id = ?1",
+            "UPDATE work_items SET worktree_path = ?2, branch = ?3, worktree_created = ?4, branch_created = ?5,
+             followed_head = NULL WHERE id = ?1",
             params![id, path.map(path_str), branch, created, branch_created],
+        )
+        .map(|_| ())
+        .map_err(err)
+    }
+
+    pub fn set_followed_head(&self, id: i64, head: Option<&str>) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE work_items SET followed_head = ?2 WHERE id = ?1",
+            params![id, head],
         )
         .map(|_| ())
         .map_err(err)

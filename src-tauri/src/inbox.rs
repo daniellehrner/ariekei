@@ -38,7 +38,7 @@ pub struct Row {
     /// The branch its worktree is on instead (`""`: a detached HEAD), when someone switched
     /// it; Ariekei sends the agent nothing until it is back (`workitem::moved_to`).
     pub moved_to: Option<String>,
-    /// A task whose worktree is on another branch that it can take as its own
+    /// Its worktree is on another branch that it can take as its own
     /// (`workitem::follow_branch`).
     pub can_follow: bool,
     /// GitHub's PR head is one its worktree's branch lacks (`workitem::update_of`): "new" (not

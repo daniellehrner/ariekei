@@ -79,8 +79,8 @@ told apart in grey-scale and with colour blindness:
   "Answer in Terminal". Below a 1200 px window the command wraps instead of being cut.
 - When the agent's worktree is on another branch than the item's (it may be the user's own
   checkout), a red banner says so, with **Switch back to `<branch>`** (and, on a detached HEAD,
-  **Move `<branch>` here**; for a task on another branch, **Continue on `<branch>`**, which
-  makes it the task's branch), and every way to send the agent work is disabled with that
+  **Move `<branch>` here**; on another branch, **Continue on `<branch>`**, which makes it the
+  item's branch; for a PR the Update bar then waits until GitHub has another head), and every way to send the agent work is disabled with that
   reason. The terminal still takes input: what the user types is their own call. Neither
   Switch back nor Move here leaves commits GitHub lacks behind.
 - When GitHub's PR head is one the worktree's branch lacks (pushed to, or rebased by the

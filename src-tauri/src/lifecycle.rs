@@ -646,6 +646,7 @@ mod tests {
             starred: false,
             past_transcripts: vec![],
             kept: false,
+            followed_head: None,
         }
     }
 
