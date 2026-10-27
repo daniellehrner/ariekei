@@ -3,6 +3,7 @@
 
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
+  import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { onMount, untrack } from "svelte";
   import Comments from "./Comments.svelte";
   import Overview from "./Overview.svelte";
@@ -76,7 +77,7 @@
   let copied = $state(false);
   async function copyPath(path: string) {
     try {
-      await navigator.clipboard.writeText(path);
+      await writeText(path);
       copied = true;
       setTimeout(() => (copied = false), 1500);
     } catch (e) {

@@ -25,6 +25,7 @@
 </script>
 
 <script lang="ts">
+  import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { MergeView, getChunks, unifiedMergeView } from "@codemirror/merge";
   import { syntaxHighlighting } from "@codemirror/language";
   import { EditorSelection, EditorState, Text, type Extension } from "@codemirror/state";
@@ -606,7 +607,7 @@
 
   async function copyCode(code: CodeRef) {
     try {
-      await navigator.clipboard.writeText(code.code);
+      await writeText(code.code);
     } catch (e) {
       error = `Could not copy: ${e}`;
     }
