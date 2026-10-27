@@ -47,9 +47,14 @@ export const ariekeiTheme = EditorView.theme({
   ".cm-mergeView .cm-editor + .cm-editor": { borderLeft: "1px solid var(--border)" },
   // The change n / p moved to: a bar on the gutter (currentChange.ts).
   ".cm-lineNumbers .ak-current-change": { boxShadow: "inset 2px 0 0 var(--you)" },
-  // Your draft comments' lines (draftMarks.ts).
+  // The draft comments' lines (draftMarks.ts): yours a square, the agent's a circle.
   ".ak-drafts .cm-gutterElement": { display: "flex", alignItems: "center", justifyContent: "center", width: "12px", padding: "0 0 0 4px" },
   ".ak-draft-mark": { display: "block", width: "8px", height: "8px", borderRadius: "1.5px", backgroundColor: "var(--diff-draft-mark)" },
+  ".ak-draft-mark.agent": { borderRadius: "50%", backgroundColor: "var(--agent)" },
+  // The drafts themselves, below their last line (draftCards.ts).
+  // Kept in view when the code scrolls sideways, as wide as the pane shows (draftCards.ts).
+  ".ak-draft-card": { position: "sticky", left: "var(--ak-gutters-w, 0)", boxSizing: "border-box", maxWidth: "var(--ak-visible-w, 100%)",
+    padding: "6px 12px 8px", fontFamily: "var(--font-ui)", whiteSpace: "normal" },
 });
 
 export const ariekeiHighlight = HighlightStyle.define([

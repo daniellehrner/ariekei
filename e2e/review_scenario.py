@@ -11,9 +11,10 @@ Comments (resolve, reply, new comment), reviewing without a worktree ("All chang
 main" from refs/pull/N/head), draft comments, Submit to GitHub (line comment inside the
 PR diff, the other one folded into the body), a push showing up in the review, new comments
 marked and their thread first, an item opening on the tab it was left on (also one picked just
-before leaving it), a conversation GitHub fails to give (shown as last given, with a bar), and
-no approving your own PR.
-No agent is started.
+before leaving it), a conversation GitHub fails to give (shown as last given, with a bar), no
+approving your own PR, and the agent (e2e/fake_claude.py) drafting review comments with
+Ariekei's tools: shown in the diff below their lines with yours, edited, redrafted on request,
+and submitted with the review.
 
 Run it with `python3 e2e/run.py <test-app> review` (see run.py), which sets the environment.
 """
@@ -160,6 +161,26 @@ def select_lines(s, first, last):
         first,
         last,
     )
+
+
+# The terminal on screen, as text.
+VISIBLE_SCREEN = """const t = Object.values(window.__ariekeiTerminals || {}).find(t => t.element?.isConnected && t.element.offsetParent);
+if (!t) return '';
+const b = t.buffer.active, lines = [];
+for (let i = 0; i < b.length; i++) lines.push(b.getLine(i).translateToString(true));
+return lines.join('\\n');"""
+
+
+def to_agent(s, text):
+    """Types a prompt into the terminal on screen and sends it, as the keyboard would."""
+    s.js("const t = Object.values(window.__ariekeiTerminals).find(t => t.element?.isConnected && t.element.offsetParent);"
+         "t.input(arguments[0]); t.input('\\r');", text)
+
+
+def set_value(s, css, text):
+    """Replaces what a text field holds, as typing would."""
+    s.js("const el = document.querySelector(arguments[0]); el.focus(); el.value = arguments[1];"
+         "el.dispatchEvent(new Event('input', { bubbles: true }))", css, text)
 
 
 def press_on(s, css, key):
@@ -609,5 +630,53 @@ try:
     print("[own] files:", s.js("return [...document.querySelectorAll('.side .files [data-file]')].map(b => b.dataset.file)"),
           "| own PR offers approve:", s.js("return !!document.querySelector(\"[data-event='APPROVE']:not(:disabled)\")"))
     check("no approving your own PR", not s.js("return !!document.querySelector(\"[data-event='APPROVE']:not(:disabled)\")"))
+
+    # --- the agent drafts review comments on Alice's PR (#43) ---
+    # With Ariekei's tools (MCP): its draft shows in the diff right below its line, beside
+    # yours; you edit it, ask it to redraft it, and it goes to GitHub with the review.
+    select_row(s, 43)
+    s.wait(".item header .title", timeout=30, text="#43")
+    s.click(s.wait("[data-start]"))
+    s.wait(".terminal:not(.hidden) .xterm", timeout=60)
+    screen = lambda: s.js(VISIBLE_SCREEN) or ""
+    eventually("the agent is ready", screen, lambda v: "❯" in v, timeout=60)
+    to_agent(s, "Draft a review comment on a.txt line 10: Maybe call it line10_renamed?")
+    eventually("the agent drafts it with Ariekei's tool", screen, lambda v: "Drafted #" in v, timeout=60)
+    print("[drafts] the agent said:", next(line for line in screen().splitlines() if "Drafted #" in line).strip())
+    tab(s, "Review")
+    s.click(s.wait(".files [data-file='a.txt']"))
+    agents = ".diff [data-draft][data-author='agent']"
+    s.wait(agents, timeout=30)
+    below = s.js(NEW_SIDE + """
+        const card = view.dom.querySelector('.ak-draft-card'), at = view.domAtPos(view.state.doc.line(10).to).node;
+        const line = (at.nodeType === 1 ? at : at.parentElement).closest('.cm-line');
+        return [Math.round(card.getBoundingClientRect().top - line.getBoundingClientRect().bottom), card.innerText.replace(/\\s+/g, ' ').trim()];""")
+    print("[drafts] the agent's card: px below line 10, text:", below)
+    check("the agent's draft shows right below its line", abs(below[0]) <= 2 and "Maybe call it line10_renamed?" in below[1], below)
+    check("its line is marked as the agent's", s.find(".diff .ak-draft-mark.agent"))
+    add_comment(s, 9, 9, "Is line 9 still needed?")
+    eventually("yours shows too", lambda: s.js("return [...document.querySelectorAll('.diff [data-draft]')].map(c => c.dataset.author)"),
+               lambda v: sorted(v) == ["agent", "user"], timeout=10)
+    # Edited by you: marked so.
+    dom_click(s, f"{agents} [data-draft-edit]")
+    set_value(s, f"{agents} [data-draft-text]", "Maybe call it line10_better?")
+    dom_click(s, f"{agents} [data-draft-save]")
+    eventually("an edit of the agent's draft is marked", lambda: s.js(f"return document.querySelector(\"{agents}\")?.innerText ?? ''"),
+               lambda v: "edited by you" in v and "line10_better?" in v, timeout=10)
+    # Asked about it, the agent changes it in place.
+    dom_click(s, f"{agents} [data-draft-ask]")
+    set_value(s, f"{agents} [data-draft-prompt]", "Make it a question about the name, say 'Is line10 the right name here?'")
+    dom_click(s, f"{agents} [data-draft-send]")
+    eventually("the agent redrafts it", lambda: s.js(f"return document.querySelector(\"{agents} [data-draft-body]\")?.textContent ?? ''"),
+               lambda v: v == "Is line10 the right name here?", timeout=60)
+    s.screenshot(os.path.join(shots, "r6-agent-drafts.png"))
+    dom_click(s, "[data-open-submit]")
+    s.wait_js("return !!document.querySelector('[data-preview]')", timeout=10)
+    print("[drafts] submit preview:", s.js("return document.querySelector('[data-preview]').textContent.trim()"))
+    dom_click(s, "[data-send-review]")
+    eventually("both go to GitHub as line comments",
+               lambda: sorted((c["path"], c["line"], c["body"]) for c in [w for w in writes() if w.get("post", "").endswith("/pulls/43/reviews")][-1]["body"]["comments"]),
+               lambda v: v == [("a.txt", 9, "Is line 9 still needed?"), ("a.txt", 10, "Is line10 the right name here?")], timeout=20)
+    eventually("submitted drafts are gone", lambda: s.js("return document.querySelectorAll('[data-draft]').length"), lambda v: v == 0, timeout=10)
 finally:
     s.quit()

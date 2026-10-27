@@ -10,7 +10,7 @@ told apart in grey-scale and with colour blindness:
 
 | Source | Shape | Hue | Where |
 |---|---|---|---|
-| Agent (Claude Code) | circle | `--agent` (copper) | Status dot before an item, Terminal tab, waiting strip, terminal cursor, Ask agent, Send to agent |
+| Agent (Claude Code) | circle | `--agent` (copper) | Status dot before an item, Terminal tab, waiting strip, terminal cursor, Ask agent, Send to agent, its draft comments and their gutter marks |
 | You (the reviewer) | square | `--you` (blue, also the focus colour) | Draft comments and their gutter marks, the star, the selected item and file, focus, "Ready for review" |
 | GitHub | diamond, outlined pill | `--gh` (violet) | New activity, Comments badge, CI and review facts, submitting to GitHub |
 
@@ -109,9 +109,14 @@ told apart in grey-scale and with colour blindness:
 - **The file panel** (`--w-panel`) holds only the files: Review order | Tree, groups with 24 px
   headers, and your `Mark` on files with drafts.
 - **The dock** under the diff is the one home of your review: the hint, the line composer (with
-  a selection), the drafts and their two send actions. Draft lines keep a square
-  (`--diff-draft-mark`) in the gutter. Submit to GitHub opens a popover above its button. Send
-  to agent is held back while the agent waits for permission.
+  a selection), the list of drafts and their send actions (Send to agent only on your own work).
+  Submit to GitHub opens a popover above its button. Send to agent is held back while the agent
+  waits for permission.
+- **Draft cards** sit in the diff right below their last line, where GitHub will show them: a
+  bordered card with a 3 px left edge in its author's hue, the author's `Mark` and name, Edit,
+  Ask agent and delete. Their lines keep the author's mark in the gutter (`--diff-draft-mark`
+  square for yours, a copper circle for the agent's). A card stays within the visible pane when
+  the code scrolls sideways.
 - Below an 880 px diff column the diff is unified, unless chosen otherwise with `u`; an added or
   deleted file always shows as one pane.
 - Only the changed lines' gutter markers are coloured, not the whole change column.

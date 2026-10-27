@@ -43,6 +43,8 @@ const PARENT_SESSION_ENV: [&str; 10] = [
 pub struct Launch {
     pub claude: PathBuf,
     pub hooks_settings: PathBuf,
+    /// Ariekei's MCP server for the agents (`mcp`), if it runs.
+    pub mcp_config: Option<PathBuf>,
     /// Extra CLI arguments, for tests only (`ARIEKEI_CLAUDE_ARGS`).
     pub extra_args: Vec<String>,
     /// Close detached, idle terminals after this long.
@@ -136,12 +138,16 @@ pub struct TerminalManager {
 /// id we choose (so hook events can be routed to the item).
 fn claude_args(launch: &Launch, plan: &SessionPlan) -> Vec<String> {
     let mut args = vec![
-        // Inherit the user's config, but none of their MCP servers.
+        // Inherit the user's config, but none of their MCP servers: only Ariekei's.
         "--strict-mcp-config".to_owned(),
         // `--resume` does not restore `--settings`, so pass the hooks every time.
         "--settings".to_owned(),
         launch.hooks_settings.to_string_lossy().into_owned(),
     ];
+    if let Some(config) = &launch.mcp_config {
+        args.push("--mcp-config".to_owned());
+        args.push(config.to_string_lossy().into_owned());
+    }
     args.push(
         if plan.resume {
             "--resume"
@@ -660,6 +666,7 @@ mod tests {
         Launch {
             claude: "claude".into(),
             hooks_settings: "/data/hooks.json".into(),
+            mcp_config: Some("/data/mcp.json".into()),
             extra_args: vec![],
             idle_after: Duration::from_secs(900),
             quiet_after: Duration::from_secs(30),
@@ -682,6 +689,8 @@ mod tests {
                 "--strict-mcp-config",
                 "--settings",
                 "/data/hooks.json",
+                "--mcp-config",
+                "/data/mcp.json",
                 "--session-id",
                 "id-1",
                 "--append-system-prompt-file",
@@ -690,7 +699,7 @@ mod tests {
         );
         plan.resume = true;
         plan.context_file = None;
-        assert_eq!(&claude_args(&launch(), &plan)[3..], ["--resume", "id-1"]);
+        assert_eq!(&claude_args(&launch(), &plan)[5..], ["--resume", "id-1"]);
     }
 
     #[test]

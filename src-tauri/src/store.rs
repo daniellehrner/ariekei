@@ -143,6 +143,27 @@ ALTER TABLE work_items ADD COLUMN origin TEXT;
 -- PR later, e.g. a rewrite): the Update bar waits until GitHub has a different one.
 ALTER TABLE work_items ADD COLUMN followed_head TEXT;
 "#,
+    r#"
+-- Draft line comments of a review, the user's and those the item's agent made (see `mcp`),
+-- until the review is submitted to GitHub.
+CREATE TABLE review_drafts (
+    id INTEGER PRIMARY KEY,
+    item_id INTEGER NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    from_line INTEGER NOT NULL,
+    to_line INTEGER NOT NULL,
+    -- The lines commented on, as they were then.
+    code TEXT NOT NULL,
+    text TEXT NOT NULL,
+    -- The commit whose version of the file the lines are of; NULL for uncommitted changes.
+    rev TEXT,
+    -- "user" or "agent".
+    author TEXT NOT NULL,
+    -- The user changed the agent's draft.
+    edited INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX review_drafts_item ON review_drafts(item_id);
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -223,6 +244,32 @@ impl WorkItem {
             format!("{}{}", self.kind, self.number)
         }
     }
+}
+
+/// Where a review draft is: lines of a file in one version of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftAnchor {
+    pub path: String,
+    pub from_line: u32,
+    pub to_line: u32,
+    /// The lines, as they are in that version.
+    pub code: String,
+    /// The commit of that version; `None` for uncommitted changes.
+    pub rev: Option<String>,
+}
+
+/// A draft line comment of a review, the user's or the agent's ("user", "agent").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewDraft {
+    pub id: i64,
+    #[serde(flatten)]
+    pub anchor: DraftAnchor,
+    pub text: String,
+    pub author: String,
+    /// The user changed the agent's draft.
+    pub edited: bool,
 }
 
 /// One PR as found by a poll.
@@ -845,6 +892,115 @@ impl Store {
     ) -> Result<(), String> {
         self.update(id, "conversation = ?2", conversation.to_string())
     }
+
+    /// The review drafts of item `id`, oldest first.
+    pub fn drafts(&self, id: i64) -> Result<Vec<ReviewDraft>, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, path, from_line, to_line, code, rev, text, author, edited
+                 FROM review_drafts WHERE item_id = ?1 ORDER BY id",
+            )
+            .map_err(err)?;
+        stmt.query_map([id], |r| {
+            Ok(ReviewDraft {
+                id: r.get(0)?,
+                anchor: DraftAnchor {
+                    path: r.get(1)?,
+                    from_line: r.get(2)?,
+                    to_line: r.get(3)?,
+                    code: r.get(4)?,
+                    rev: r.get(5)?,
+                },
+                text: r.get(6)?,
+                author: r.get(7)?,
+                edited: r.get(8)?,
+            })
+        })
+        .map_err(err)?
+        .collect::<Result<_, _>>()
+        .map_err(err)
+    }
+
+    pub fn add_draft(
+        &self,
+        id: i64,
+        at: &DraftAnchor,
+        text: &str,
+        author: &str,
+    ) -> Result<i64, String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO review_drafts (item_id, path, from_line, to_line, code, rev, text, author)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                id,
+                at.path,
+                at.from_line,
+                at.to_line,
+                at.code,
+                at.rev,
+                text,
+                author
+            ],
+        )
+        .map_err(err)?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Changes the text of item `id`'s draft `draft`; the user's change of the agent's draft
+    /// marks it edited. False: the item has no such draft.
+    pub fn edit_draft(
+        &self,
+        id: i64,
+        draft: i64,
+        text: &str,
+        by_user: bool,
+    ) -> Result<bool, String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE review_drafts SET text = ?3, edited = edited OR (?4 AND author = 'agent')
+             WHERE item_id = ?1 AND id = ?2",
+            params![id, draft, text, by_user],
+        )
+        .map(|n| n > 0)
+        .map_err(err)
+    }
+
+    /// Moves item `id`'s draft `draft` to other lines. False: the item has no such draft.
+    pub fn move_draft(&self, id: i64, draft: i64, at: &DraftAnchor) -> Result<bool, String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE review_drafts SET path = ?3, from_line = ?4, to_line = ?5, code = ?6, rev = ?7
+             WHERE item_id = ?1 AND id = ?2",
+            params![
+                id,
+                draft,
+                at.path,
+                at.from_line,
+                at.to_line,
+                at.code,
+                at.rev
+            ],
+        )
+        .map(|n| n > 0)
+        .map_err(err)
+    }
+
+    /// Deletes those of `drafts` that are item `id`'s, and says how many there were.
+    pub fn delete_drafts(&self, id: i64, drafts: &[i64]) -> Result<usize, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut n = 0;
+        for draft in drafts {
+            n += conn
+                .execute(
+                    "DELETE FROM review_drafts WHERE item_id = ?1 AND id = ?2",
+                    params![id, draft],
+                )
+                .map_err(err)?;
+        }
+        Ok(n)
+    }
 }
 
 #[cfg(test)]
@@ -1234,5 +1390,61 @@ mod tests {
             (Some(Path::new("/w")), Some("issue-5-crash"), Some("s-1"))
         );
         assert_eq!(store.tracked_numbers(repo.id, "pr").unwrap(), [100]);
+    }
+
+    #[test]
+    fn drafts_are_the_items_own_and_go_with_it() {
+        let (store, repo) = store_with_repo();
+        let id = store.track(repo.id, &polled(7, json!({}))).unwrap();
+        let other = store.track(repo.id, &polled(8, json!({}))).unwrap();
+        let at = |line| DraftAnchor {
+            path: "a.rs".into(),
+            from_line: line,
+            to_line: line + 1,
+            code: "x\ny".into(),
+            rev: Some("abc".into()),
+        };
+        let mine = store.add_draft(id, &at(3), "Why?", "user").unwrap();
+        let agents = store.add_draft(id, &at(9), "Off by one", "agent").unwrap();
+
+        // Another item's drafts are out of reach.
+        assert!(!store.edit_draft(other, agents, "x", true).unwrap());
+        assert_eq!(store.delete_drafts(other, &[mine, agents]).unwrap(), 0);
+
+        // The user's change marks the agent's draft, not their own; the agent's marks nothing.
+        assert!(store.edit_draft(id, mine, "Why this?", true).unwrap());
+        assert!(
+            store
+                .edit_draft(id, agents, "Off by one here", false)
+                .unwrap()
+        );
+        assert!(!store.drafts(id).unwrap()[1].edited);
+        assert!(
+            store
+                .edit_draft(id, agents, "Off by one, I think", true)
+                .unwrap()
+        );
+        assert!(store.move_draft(id, agents, &at(12)).unwrap());
+        let drafts = store.drafts(id).unwrap();
+        assert_eq!(
+            drafts
+                .iter()
+                .map(|d| (
+                    d.id,
+                    d.anchor.from_line,
+                    d.text.as_str(),
+                    d.author.as_str(),
+                    d.edited
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (mine, 3, "Why this?", "user", false),
+                (agents, 12, "Off by one, I think", "agent", true)
+            ]
+        );
+
+        assert_eq!(store.delete_drafts(id, &[mine]).unwrap(), 1);
+        store.delete_item(id).unwrap();
+        assert!(store.drafts(id).unwrap().is_empty());
     }
 }

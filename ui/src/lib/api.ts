@@ -6,7 +6,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { AgentStatus } from "./agent.svelte";
 import type { Hunk } from "./gitDiff";
-import type { LineComment } from "./reviewComments";
+import type { LineComment, ReviewDraft } from "./reviewComments";
 import type { ReviewFile } from "./review";
 
 export interface Repo {
@@ -259,6 +259,12 @@ export const api = {
   // newer by now).
   commentRanges: (id: number, paths: string[], commit: string) =>
     invoke<[string, [number, number][]][]>("comment_ranges", { id, paths, commit }),
+  /** The review's drafts, the user's and the agent's; `drafts-changed` says when they change. */
+  reviewDrafts: (id: number) => invoke<ReviewDraft[]>("review_drafts", { id }),
+  addDraft: (id: number, at: Omit<ReviewDraft, "id" | "text" | "author" | "edited">, text: string) =>
+    invoke<number>("add_draft", { id, at, text }),
+  editDraft: (id: number, draft: number, text: string) => invoke<void>("edit_draft", { id, draft, text }),
+  deleteDrafts: (id: number, drafts: number[]) => invoke<void>("delete_drafts", { id, drafts }),
   submitReview: (id: number, event: string, body: string, comments: LineComment[], commit: string) =>
     invoke<string>("submit_review", { id, event, body, comments, commit }),
   replyComment: (id: number, commentId: number, body: string) => invoke<void>("reply_comment", { id, commentId, body }),

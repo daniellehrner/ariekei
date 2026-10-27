@@ -186,8 +186,8 @@ An item opens on the tab you left it on. The first time you open it, it opens on
 deals with why it needs you: agent needs you → Terminal, new activity → Comments, ready for
 review → Review, CI failing, cleanup blocked or all closed → Overview.
 
-Each item remembers its tab, review scope, selected file and draft comments, so you can switch
-between items freely.
+Each item remembers its tab, review scope, selected file and draft comments (yours and the
+agent's), so you can switch between items freely.
 
 An item shows at once what Ariekei loaded before: Overview and Comments show the PR or issue as
 GitHub last gave it, and replace that by themselves once GitHub answers (and after every poll).
@@ -250,8 +250,11 @@ A new conversation starts with the item as context:
   failing checks with the failing part of the Actions job log.
 - **Issue:** the issue's text and comments.
 - **Task:** its title and notes, and the branch it works on.
+- **Someone else's PR:** also that you are reviewing it, and that it drafts review comments into
+  Ariekei (see [Drafts from the agent](#drafts-from-the-agent)).
 
-The agent then waits for your instructions. The context is fixed at the conversation's first
+The agent runs with Ariekei's own tools (an MCP server named `ariekei`, allowed without asking)
+and none of your MCP servers. The agent then waits for your instructions. The context is fixed at the conversation's first
 request; use **Send PR feedback to agent** to give it the PR's current state later.
 
 You can also send the agent review comments and questions about code from the Review tab (see
@@ -336,7 +339,8 @@ The file panel lists the scope's files in two orders:
 - **Tree**: alphabetical.
 
 Each file has a status letter (added, modified, deleted, …), a `whitespace` label if only
-whitespace changed, and a small blue square if you have draft comments on it.
+whitespace changed, and a small blue square if you have draft comments on it (a copper circle
+when they are all the agent's).
 
 ### The diff
 
@@ -385,13 +389,16 @@ Everything of your review is in the dock under the diff.
 1. Select code on the right (new) side of the diff. The dock offers **Comment on these lines**
    (**c**, or **Comment on lines** in the code menu, takes you there).
 2. Type your comment and press **Add comment** (Enter). **Esc** drops the selection, also while
-   you type. The lines keep a small blue square in the gutter.
-3. Drafts collect in **Draft comments**, per item. Remove one with its trash button.
+   you type. The comment shows in the diff as a card right below its last line, where GitHub
+   will show it, and its lines keep a small blue square in the gutter.
+3. Each card has **Edit** (Ctrl+Enter saves, Esc cancels), **Ask agent** and a trash button.
+   Drafts also collect in **Draft comments** in the dock, per item; click one to go to its card.
 4. Send them:
-   - **Send to agent** (items with an agent) delivers all drafts to the agent as one message.
-     While the agent waits for permission it is held back, since the text would answer its
-     prompt. The drafts go once Claude Code has taken the message; if it does not (a dialog
-     open in its Terminal, say), they stay and Ariekei says so.
+   - **Send to agent** (your own PR, an issue or a task, with an agent) delivers all drafts to
+     the agent as one message, as feedback on its work. While the agent waits for permission it
+     is held back, since the text would answer its prompt. The drafts go once Claude Code has
+     taken the message; if it does not (a dialog open in its Terminal, say), they stay and
+     Ariekei says so.
    - **Submit to GitHub…** opens a panel above it with an optional **Summary** and the event
      **Comment**, **Approve** or **Request changes** (only **Comment** on your own PR). The
      form tells you which drafts become line comments (lines in the PR's diff at its head
@@ -401,6 +408,24 @@ Everything of your review is in the dock under the diff.
 
 With no drafts, **Review on GitHub…** submits a review with just a summary and event, e.g. an
 approval.
+
+### Drafts from the agent
+
+When you review someone else's PR, ask its agent in the Terminal to review it (for example
+`/code-review`, or in your own words). It puts each review comment it drafts into Ariekei rather
+than only into its answer, and its cards appear in the diff as it goes, beside yours: a copper
+**Agent** card, its lines marked with a copper circle in the gutter. Its answer in the Terminal
+says when a draft is not on lines GitHub takes as a line comment, so it can move it.
+
+- **Edit** a draft to change it in your words; it is then marked **edited by you**.
+- **Ask agent** on a card sends the agent that draft and your prompt (Ctrl+Enter), e.g. "make it
+  shorter" or "is this really a bug?". The agent answers in the Terminal and changes the draft
+  in place.
+- Delete the ones you do not want. **Submit to GitHub…** sends all the drafts left, the agent's
+  and yours alike, as your review.
+
+A draft on an older version of the file (the author pushed since) says which commit it was
+made on, and goes into the review text rather than onto a line.
 
 ## 8. Comments and GitHub reviews
 

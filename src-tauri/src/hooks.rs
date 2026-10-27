@@ -58,7 +58,7 @@ pub struct HookEvent {
 /// back in a header, so events find their terminal whichever conversation it is in
 /// (`/clear` and `/resume` change the session id).
 pub const TERMINAL_ENV: &str = "ARIEKEI_TERMINAL";
-const TERMINAL_HEADER: &str = "X-Ariekei-Terminal";
+pub(crate) const TERMINAL_HEADER: &str = "X-Ariekei-Terminal";
 
 /// Events registered in the hooks settings file. Not SessionStart: it ignores `http`
 /// hooks (only `command` hooks run), so `ready` comes from the terminal's first output.
@@ -231,7 +231,7 @@ pub fn track_opened(state: &crate::AppState, links: &TaskOpened) {
 }
 
 /// Hooks settings for `claude --settings`: one http hook per event, posting to `url` with
-/// the agent's terminal in a header.
+/// the agent's terminal in a header. Ariekei's own tools (`mcp`) need no permission.
 fn settings_json(url: &str) -> serde_json::Value {
     let hook = serde_json::json!([{ "hooks": [{
         "type": "http",
@@ -244,7 +244,10 @@ fn settings_json(url: &str) -> serde_json::Value {
         .iter()
         .map(|e| (e.to_string(), hook.clone()))
         .collect();
-    serde_json::json!({ "hooks": hooks })
+    serde_json::json!({
+        "hooks": hooks,
+        "permissions": { "allow": [format!("mcp__{}", crate::mcp::SERVER)] },
+    })
 }
 
 pub struct HookServer {
@@ -289,9 +292,17 @@ impl HookServer {
     }
 }
 
-/// Reads one HTTP request, answers it right away, and returns the parsed event.
-/// Requests for any other path (wrong token) are rejected with 404.
-fn handle(mut stream: TcpStream, expected_path: &str) -> std::io::Result<Option<HookEvent>> {
+/// One HTTP request to a localhost endpoint of Ariekei (hooks, `mcp`).
+pub(crate) struct Request {
+    pub method: String,
+    pub path: String,
+    /// The agent's terminal (`TERMINAL_HEADER`), when given.
+    pub terminal: Option<String>,
+    pub body: Vec<u8>,
+}
+
+/// Reads one HTTP request from `stream`.
+pub(crate) fn read_request(stream: &TcpStream) -> std::io::Result<Request> {
     // Generous for a loaded machine; Claude Code sends each event in one small request.
     stream.set_read_timeout(Some(Duration::from_secs(15)))?;
     let mut reader = BufReader::new(stream.try_clone()?);
@@ -317,26 +328,57 @@ fn handle(mut stream: TcpStream, expected_path: &str) -> std::io::Result<Option<
             }
         }
     }
-    // Hook payloads are small; refuse anything absurd rather than buffering it.
+    // Requests are small; refuse anything absurd rather than buffering it.
     let mut body = vec![0; content_length.min(1 << 20)];
     reader.read_exact(&mut body)?;
+    Ok(Request {
+        method: method.to_owned(),
+        path: path.to_owned(),
+        terminal,
+        body,
+    })
+}
 
-    let accepted = method == "POST" && path == expected_path;
-    let response: &[u8] = if accepted {
-        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"
-    } else {
-        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-    };
-    stream.write_all(response)?;
+/// Answers a request with `status` (e.g. "200 OK") and a JSON `body`, if any, and closes the
+/// connection.
+pub(crate) fn respond(
+    mut stream: &TcpStream,
+    status: &str,
+    body: Option<&[u8]>,
+) -> std::io::Result<()> {
+    let mut response = format!("HTTP/1.1 {status}\r\n");
+    if body.is_some() {
+        response.push_str("Content-Type: application/json\r\n");
+    }
+    response.push_str(&format!(
+        "Content-Length: {}\r\nConnection: close\r\n\r\n",
+        body.map_or(0, <[u8]>::len)
+    ));
+    let mut bytes = response.into_bytes();
+    bytes.extend_from_slice(body.unwrap_or_default());
+    stream.write_all(&bytes)?;
     // Close our side cleanly so the client reads the whole answer (Windows otherwise may
     // reset a connection closed right after the write).
     let _ = stream.shutdown(std::net::Shutdown::Write);
+    Ok(())
+}
+
+/// Reads one HTTP request, answers it right away, and returns the parsed event.
+/// Requests for any other path (wrong token) are rejected with 404.
+fn handle(stream: TcpStream, expected_path: &str) -> std::io::Result<Option<HookEvent>> {
+    let request = read_request(&stream)?;
+    let accepted = request.method == "POST" && request.path == expected_path;
     if !accepted {
+        respond(&stream, "404 Not Found", None)?;
         return Ok(None);
     }
-    Ok(serde_json::from_slice(&body)
+    respond(&stream, "200 OK", Some(b"{}"))?;
+    Ok(serde_json::from_slice(&request.body)
         .ok()
-        .map(|event| HookEvent { terminal, ..event }))
+        .map(|event| HookEvent {
+            terminal: request.terminal,
+            ..event
+        }))
 }
 
 /// Routes a hook event to its work item and updates the item's status. What a task's agent

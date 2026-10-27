@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Draft review comments and where they can go: GitHub (as line comments when possible)
-// or the agent.
+// or the agent. The user drafts them in the Review tab; the item's agent with Ariekei's tools
+// (src-tauri/src/drafts.rs).
 
 export interface DraftComment {
   path: string;
@@ -12,6 +13,22 @@ export interface DraftComment {
   text: string;
   // The commit whose version of the file the lines refer to; null for uncommitted changes.
   rev: string | null;
+}
+
+// A draft as stored, the user's or the agent's; `edited`: the user changed the agent's.
+export interface ReviewDraft extends DraftComment {
+  id: number;
+  author: "user" | "agent";
+  edited: boolean;
+}
+
+export const draftLines = (c: DraftComment) => (c.fromLine === c.toLine ? `${c.fromLine}` : `${c.fromLine}–${c.toLine}`);
+
+/** The message for the agent about one draft: which, what it says, and the user's prompt. */
+export function draftMessage(d: ReviewDraft, prompt: string): string {
+  const by = d.author === "agent" ? (d.edited ? "drafted by you, edited by me" : "drafted by you") : "drafted by me";
+  const quote = d.text.trim().split("\n").map((l) => `> ${l}`).join("\n");
+  return `About review comment #${d.id} on ${d.path}:${draftLines(d)} (${by}):\n\n${quote}\n\n${prompt.trim()}\n\nIf it should change, change it with update_review_comment.`;
 }
 
 export interface LineComment {

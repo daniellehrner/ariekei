@@ -423,6 +423,13 @@ pub fn session_plan(state: &AppState, data_dir: &Path, id: i64) -> Result<Sessio
     })
 }
 
+/// The user wrote the PR (else they review someone else's).
+fn by_viewer(item: &WorkItem, repo: &Repo) -> bool {
+    item.snapshot["author"]
+        .as_str()
+        .is_some_and(|a| a.eq_ignore_ascii_case(&repo.viewer))
+}
+
 fn write_context(data_dir: &Path, repo: &Repo, item: &WorkItem) -> Result<PathBuf, String> {
     let number = item.number;
     let detail = github::pr_detail(&repo.owner, &repo.name, number)?;
@@ -444,7 +451,10 @@ fn write_context(data_dir: &Path, repo: &Repo, item: &WorkItem) -> Result<PathBu
     let dir = data_dir.join("context");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let file = dir.join(format!("{}-{}-pr{number}.md", repo.owner, repo.name));
-    let md = crate::context::render(number, &detail, &logs);
+    let mut md = crate::context::render(number, &detail, &logs);
+    if !by_viewer(item, repo) {
+        md.push_str(crate::context::REVIEWING);
+    }
     std::fs::write(&file, with_origin(md, item)).map_err(|e| e.to_string())?;
     Ok(file)
 }
@@ -1230,9 +1240,7 @@ pub fn review_state(state: &AppState, id: i64, refresh: bool) -> Result<ReviewSt
             .store
             .repo(r.item.repo_id)?
             .ok_or("repository not found")?;
-        r.item.snapshot["author"]
-            .as_str()
-            .is_some_and(|a| a.eq_ignore_ascii_case(&repo.viewer))
+        by_viewer(&r.item, &repo)
     };
     Ok(ReviewState {
         mode: if r.worktree { "worktree" } else { "ref" },

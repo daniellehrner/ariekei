@@ -30,9 +30,11 @@ How the review view works, and the research it is based on.
   permission nothing can be sent, since the text would answer its prompt; while it works,
   Claude Code reads it after the turn. The prompt is sent as you wrote it: ask a question or
   ask for a change.
-- **Comments** are drafted in the dock under the diff (their lines keep a mark in the gutter)
-  and go to GitHub as a review (line comments where GitHub accepts them) or to the agent (not
-  while it waits for permission).
+- **Comments** are drafted in the dock under the diff and show as cards right below their lines
+  (their lines keep a mark in the gutter). On someone else's PR the agent drafts its own beside
+  yours, with Ariekei's tools; each can be edited, or sent back to the agent with a prompt to
+  redraft it. They go to GitHub as a review (line comments where GitHub accepts them) or, on your
+  own work, to the agent (not while it waits for permission).
 
 ## Why
 

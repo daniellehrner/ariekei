@@ -135,6 +135,8 @@ impl TestApp {
         let launch = Launch {
             claude: e2e("fake_claude.py"),
             hooks_settings: hooks,
+            // The tests call the tools themselves (`drafts::call`).
+            mcp_config: None,
             extra_args: vec![],
             idle_after: Duration::from_secs(3600),
             quiet_after: Duration::from_secs(3600),

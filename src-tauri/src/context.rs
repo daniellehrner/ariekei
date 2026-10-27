@@ -18,6 +18,12 @@ fn truncate(s: &str, max: usize) -> &str {
     }
 }
 
+/// Added to the context of a PR someone else wrote (see `drafts`).
+pub const REVIEWING: &str = "\n## Reviewing\n\nThe user is reviewing this pull request, which \
+someone else wrote. When you draft review comments for them, add each one with Ariekei's \
+add_review_comment tool instead of only listing it in your reply: they edit and submit the \
+drafts from Ariekei's Review tab.\n";
+
 /// Markdown for the agent. `logs` holds `(check name, log tail)` for failing checks.
 pub fn render(number: i64, pr: &PrDetail, logs: &[(String, String)]) -> String {
     let mut md = String::new();

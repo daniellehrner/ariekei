@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { askMessage, classify, feedbackMessage, MAX_ASK_LINES, reviewBody, type CodeRef, type DraftComment } from "./reviewComments.ts";
+import { askMessage, classify, draftMessage, feedbackMessage, MAX_ASK_LINES, reviewBody, type CodeRef, type DraftComment, type ReviewDraft } from "./reviewComments.ts";
 
 const draft = (over: Partial<DraftComment>): DraftComment => ({
   path: "A.java", fromLine: 10, toLine: 10, code: "x", text: "fix", rev: "head", ...over,
@@ -72,4 +72,13 @@ test("long code is cut, and a fence outlasts backticks in the code", () => {
   assert.ok(!long.includes(`l${MAX_ASK_LINES + 1}`), long);
   const md = askMessage(ref({ path: "README", code: "use ```rust blocks``` and `x`" }), "?");
   assert.ok(md.includes("\n\n````\nuse ```rust blocks``` and `x`\n````\n\n?"), md);
+});
+
+test("the agent is told which draft, what it says, who wrote it, and the prompt", () => {
+  const d: ReviewDraft = { id: 12, path: "src/a.rs", fromLine: 3, toLine: 5, code: "x", text: "Why?\nIt looks off.", rev: null, author: "agent", edited: true };
+  assert.equal(
+    draftMessage(d, " Make it friendlier "),
+    "About review comment #12 on src/a.rs:3–5 (drafted by you, edited by me):\n\n> Why?\n> It looks off.\n\nMake it friendlier\n\nIf it should change, change it with update_review_comment.",
+  );
+  assert.ok(draftMessage({ ...d, author: "user", edited: false, toLine: 3 }, "?").startsWith("About review comment #12 on src/a.rs:3 (drafted by me):"));
 });

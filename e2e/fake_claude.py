@@ -16,6 +16,9 @@ A minimal terminal agent that reports through the hooks of `--settings` like Cla
 - "Run a N second job in the background" starts a process that sleeps N seconds, as a
   background Bash call does (a child of the agent), and finishes the turn;
 - "Exit with code N" crashes: exits with N at once, without SessionEnd;
+- with Ariekei's MCP server (`--mcp-config`), "Draft a review comment on P line N: T" drafts
+  one with its `add_review_comment` tool, and the Review tab's message about review comment #N
+  with "say 'T'" in its prompt changes the draft to T (`update_review_comment`);
 - a line containing "ask" asks permission for a Bash command and waits;
 - `/clear` ends the conversation (SessionEnd, reason "clear") and goes on in a new one, with a
   new session id;
@@ -131,6 +134,12 @@ def interactive(argv):
     allowed = config.get("allowedEnvVars", [])
     headers = {k: re.sub(r"\$\{?(\w+)\}?", lambda m: os.environ.get(m.group(1), "") if m.group(1) in allowed else "", v)
                for k, v in config.get("headers", {}).items()}
+    # Ariekei's MCP server (--mcp-config), its headers' ${VAR} filled in as Claude Code does.
+    mcp = None
+    if "--mcp-config" in argv:
+        server = json.load(open(argv[argv.index("--mcp-config") + 1]))["mcpServers"]["ariekei"]
+        mcp = {"url": server["url"], "headers": {k: re.sub(r"\$\{(\w+)\}", lambda m: os.environ.get(m.group(1), ""), v)
+                                                 for k, v in server.get("headers", {}).items()}}
     resume = "--resume" in argv
     store = os.environ.get("FAKE_CLAUDE_DIR") or os.path.join(tempfile.gettempdir(), "ariekei-fake-claude")
     os.makedirs(store, exist_ok=True)
@@ -189,7 +198,7 @@ def interactive(argv):
                     conv["session"] = str(uuid.uuid4())
                     out("\x1b[2J\x1b[H(no content)\n")
                 elif text:
-                    turn(text, say, hook, keys)
+                    turn(text, say, hook, keys, mcp)
             elif c >= " ":
                 line += c
     finally:
@@ -220,10 +229,43 @@ def allowed(command, hook, keys):
     return c == "\r"
 
 
-def turn(text, say, hook, keys):
+def tool(mcp, hook, name, args):
+    """Calls a tool of Ariekei's MCP server as Claude Code does (initialize first) and returns
+    its answer."""
+    def post(message):
+        req = urllib.request.Request(mcp["url"], json.dumps(message).encode(),
+                                     {"Content-Type": "application/json", "Accept": "application/json, text/event-stream", **mcp["headers"]})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = r.read()
+        return json.loads(data) if data else None
+
+    post({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+          "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "fake claude", "version": "0"}}})
+    post({"jsonrpc": "2.0", "method": "notifications/initialized"})
+    hook("PreToolUse", tool_name=f"mcp__ariekei__{name}", tool_input=args)
+    result = post({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": name, "arguments": args}})["result"]
+    answer = result["content"][0]["text"]
+    hook("PostToolUseFailure" if result.get("isError") else "PostToolUse", tool_name=f"mcp__ariekei__{name}", tool_input=args,
+         tool_response=answer)
+    return answer
+
+
+def turn(text, say, hook, keys, mcp=None):
     say(f"> {text}")
     hook("UserPromptSubmit", prompt=text)
     busy(0.8)  # a turn takes a moment, as the real one does
+    drafting = re.search(r"draft a review comment on (\S+) line (\d+): (.+)", text, re.I)
+    # The Review tab's message about one draft (lib/reviewComments.ts draftMessage).
+    redraft = re.search(r"About review comment #(\d+) .*?say '([^']+)'", text)
+    if mcp and drafting:
+        path, line, body = drafting.groups()
+        say("⏺ " + tool(mcp, hook, "add_review_comment", {"path": path, "line": int(line), "body": body}))
+        hook("Stop")
+        return
+    if mcp and redraft:
+        say("⏺ " + tool(mcp, hook, "update_review_comment", {"id": int(redraft.group(1)), "body": redraft.group(2)}))
+        hook("Stop")
+        return
     task = re.search(r"word (\S+) to (\S+?),? then commit with the message '([^']+)'", text)
     create = re.search(r"open (a pull request|an issue) titled '([^']+)'", text, re.I)
     if create:

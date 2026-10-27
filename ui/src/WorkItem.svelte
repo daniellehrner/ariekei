@@ -43,7 +43,7 @@
     tab: Tab;
     review: ReviewViewState;
   }
-  const fresh = (): ItemUi => ({ tab: "overview", review: { scope: "", file: null, comments: [] } });
+  const fresh = (): ItemUi => ({ tab: "overview", review: { scope: "", file: null } });
 
   let ui = $state<ItemUi | null>(null);
   // The item `ui` is the view of.

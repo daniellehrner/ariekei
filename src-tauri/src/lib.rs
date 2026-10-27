@@ -4,6 +4,7 @@
 mod claude;
 mod confine;
 mod context;
+mod drafts;
 #[cfg(feature = "e2e")]
 mod e2e;
 mod events;
@@ -13,6 +14,7 @@ mod hooks;
 mod inbox;
 mod instance;
 mod lifecycle;
+mod mcp;
 mod notify;
 mod poller;
 mod procs;
@@ -471,6 +473,32 @@ async fn comment_ranges(
     .await
 }
 
+/// The review's drafts, the user's and its agent's (`drafts`).
+#[tauri::command]
+fn review_drafts(state: State<'_, AppState>, id: i64) -> Res<Vec<store::ReviewDraft>> {
+    drafts::list(&state, id)
+}
+
+#[tauri::command]
+fn add_draft(
+    state: State<'_, AppState>,
+    id: i64,
+    at: store::DraftAnchor,
+    text: String,
+) -> Res<i64> {
+    drafts::add(&state, id, &at, &text)
+}
+
+#[tauri::command]
+fn edit_draft(state: State<'_, AppState>, id: i64, draft: i64, text: String) -> Res<()> {
+    drafts::edit(&state, id, draft, &text)
+}
+
+#[tauri::command]
+fn delete_drafts(state: State<'_, AppState>, id: i64, drafts: Vec<i64>) -> Res<()> {
+    drafts::delete(&state, id, &drafts)
+}
+
 #[tauri::command]
 async fn submit_review(
     app: tauri::AppHandle,
@@ -676,6 +704,21 @@ pub fn run() {
             let handle = app.handle().clone();
             let hook_server =
                 hooks::HookServer::start(&data_dir, move |e| hooks::dispatch(&handle, e))?;
+            // Not fatal: the agents work without Ariekei's tools.
+            let handle = app.handle().clone();
+            let mcp_server = mcp::McpServer::start(
+                &data_dir,
+                drafts::tools(),
+                drafts::INSTRUCTIONS,
+                move |terminal, tool, args| {
+                    let state = handle
+                        .try_state::<AppState>()
+                        .ok_or("Ariekei is still starting")?;
+                    drafts::call(&state, terminal, tool, args)
+                },
+            )
+            .inspect_err(|e| tracing::warn!("the agents' tools are unavailable: {e}"))
+            .ok();
             let env_secs = |name: &str, default: u64| {
                 std::env::var(name)
                     .ok()
@@ -685,6 +728,7 @@ pub fn run() {
             let launch = claude::find().map(|claude| Launch {
                 claude,
                 hooks_settings: hook_server.settings_path.clone(),
+                mcp_config: mcp_server.map(|s| s.config_path),
                 extra_args: std::env::var("ARIEKEI_CLAUDE_ARGS")
                     .map(|a| a.split_whitespace().map(str::to_owned).collect())
                     .unwrap_or_default(),
@@ -776,6 +820,10 @@ pub fn run() {
             pr_conversation,
             cached_conversation,
             comment_ranges,
+            review_drafts,
+            add_draft,
+            edit_draft,
+            delete_drafts,
             submit_review,
             reply_comment,
             post_comment,

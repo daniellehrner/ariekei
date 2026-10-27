@@ -9,7 +9,8 @@
     // "all" (vs the base branch) or a commit sha; empty picks the default.
     scope: string;
     file: string | null;
-    comments: DraftComment[];
+    // Draft comments from before the item stored them (`api.reviewDrafts`): moved there on load.
+    comments?: DraftComment[];
     // Layout: the commit list expanded, the whole side panel (scopes + files) hidden.
     commitsOpen?: boolean;
     sideHidden?: boolean;
@@ -30,6 +31,7 @@
   import { syntaxHighlighting } from "@codemirror/language";
   import { EditorSelection, EditorState, Text, type Extension } from "@codemirror/state";
   import { EditorView } from "@codemirror/view";
+  import { listen } from "@tauri-apps/api/event";
   import { basicSetup } from "codemirror";
   import { onDestroy, tick, untrack } from "svelte";
   import { fade } from "svelte/transition";
@@ -46,6 +48,7 @@
   import { api, type ReviewState } from "./lib/api";
   import { ariekeiHighlight, ariekeiTheme } from "./lib/codemirrorTheme";
   import { currentChange } from "./lib/currentChange";
+  import { draftCards, setDraftCards, type CardActions } from "./lib/draftCards";
   import { draftLines, draftMarks, setDraftLines } from "./lib/draftMarks";
   import { gitOverride, lineSeparatorOf } from "./lib/gitDiff";
   import { hscroll } from "./lib/hscroll";
@@ -58,7 +61,19 @@
   import { layout } from "./lib/layout.svelte";
   import type { Area } from "./lib/popover";
   import { flatten, neighbourFile, nextChange, rangeOf, scopeOf, sections, whatMoved, type ReviewFile } from "./lib/review";
-  import { askMessage, classify, feedbackMessage, refLines, reviewBody, type CodeRef, type LineComment, type Ranges } from "./lib/reviewComments";
+  import {
+    askMessage,
+    classify,
+    draftLines as linesOf,
+    draftMessage,
+    feedbackMessage,
+    refLines,
+    reviewBody,
+    type CodeRef,
+    type LineComment,
+    type Ranges,
+    type ReviewDraft,
+  } from "./lib/reviewComments";
 
   let {
     id,
@@ -161,9 +176,59 @@
   let submitting = $state(false);
   let event = $state<"COMMENT" | "APPROVE" | "REQUEST_CHANGES">("COMMENT");
   let summary = $state("");
-  // What goes where, and the commit it goes to: the PR head the drafts were made on.
-  let preview: { line: LineComment[]; body: DraftComment[]; commit: string } | null = $state(null);
+  // What goes where, and the commit it goes to: the PR head the drafts were made on; `drafts`
+  // are the ones submitted (deleted once they are on GitHub).
+  let preview: { line: LineComment[]; body: DraftComment[]; commit: string; drafts: number[] } | null = $state(null);
   let busy = $state(false);
+
+  // The draft comments, the user's and the agent's (it drafts them with Ariekei's tools),
+  // shown in the diff as cards below their lines (lib/draftCards.ts).
+  let drafts = $state.raw<ReviewDraft[]>([]);
+  // A draft to scroll to once its file shows (from the dock's list).
+  let goingTo: number | null = null;
+  async function loadDrafts() {
+    try {
+      drafts = await api.reviewDrafts(id);
+    } catch (e) {
+      error = String(e);
+    }
+  }
+  $effect(() => {
+    void id;
+    untrack(async () => {
+      // Drafts the view state kept before the item stored them.
+      const kept = view.comments ?? [];
+      view.comments = undefined;
+      for (const c of kept) await api.addDraft(id, { path: c.path, fromLine: c.fromLine, toLine: c.toLine, code: c.code, rev: c.rev }, c.text).catch(() => {});
+      loadDrafts();
+    });
+    const unlisten = listen<number>("drafts-changed", (e) => e.payload === id && loadDrafts());
+    return () => void unlisten.then((f) => f());
+  });
+
+  // What the cards do; they read the agent's state as it changes.
+  const agentNow = $state<CardActions["agent"]>({ present: false, away: null, status: undefined });
+  $effect(() => {
+    agentNow.present = canSendToAgent;
+    agentNow.away = agentAway;
+    agentNow.status = agentStatus;
+  });
+  const cardActions: CardActions = {
+    edit: async (d, text) => {
+      await api.editDraft(id, d.id, text);
+      await loadDrafts();
+    },
+    remove: async (d) => {
+      await api.deleteDrafts(id, [d.id]);
+      await loadDrafts();
+    },
+    // The agent changes the draft with its tools, if it should.
+    ask: async (d, prompt) => {
+      await api.agentSend(id, draftMessage(d, prompt));
+      say(`Sent your prompt about ${nameOf(d.path)}:${linesOf(d)} to the agent; it changes the draft in place.`);
+    },
+    agent: agentNow,
+  };
 
   // (An order saved before the review guide was removed reads as review order.)
   const order = $derived(view.order === "tree" ? "tree" : "review");
@@ -337,7 +402,7 @@
     // Each side split into git's lines, keeping its line endings (lib/gitDiff.ts).
     const [oldSep, newSep] = [EditorState.lineSeparator.of(lineSeparatorOf(d.old)), EditorState.lineSeparator.of(lineSeparatorOf(d.new))];
     const canEdit = to === null && !d.lossy;
-    const newDoc = [...draftMarks, ...common, newSep, EditorView.editable.of(canEdit), EditorState.readOnly.of(!canEdit), onUpdate, currentChange];
+    const newDoc = [...draftMarks, ...draftCards, ...common, newSep, EditorView.editable.of(canEdit), EditorState.readOnly.of(!canEdit), onUpdate, currentChange];
     const diffConfig = { override: gitOverride(d.old, d.new, d.hunks) };
     const collapseUnchanged = { margin: 3, minSize: 6 };
     if (onePane) {
@@ -359,22 +424,38 @@
         diffConfig,
       });
     }
-    markDrafts();
+    placeDrafts();
+    const wanted = drafts.find((d) => d.id === goingTo);
+    goingTo = null;
+    if (wanted) scrollToDraft(wanted);
     land();
   }
 
-  // The new side's lines the drafts on this file cover.
-  function markDrafts() {
+  // The drafts on this file: their lines marked in the gutter, their cards below them.
+  function placeDrafts() {
     const v = newSide();
     if (!v) return;
-    const mine = view.comments.filter((c) => c.path === view.file);
-    v.dispatch({ effects: setDraftLines.of(draftLines(mine)) });
+    const here = drafts.filter((c) => c.path === view.file);
+    v.dispatch({ effects: [setDraftLines.of(draftLines(here)), setDraftCards.of({ drafts: here, shownRev, actions: cardActions })] });
   }
   $effect(() => {
-    void view.comments.length;
+    void drafts;
     void view.file;
-    markDrafts();
+    void shownRev;
+    untrack(placeDrafts);
   });
+
+  // From the dock's list: its file, and its card in the middle.
+  function goToDraft(d: ReviewDraft) {
+    if (view.file === d.path) return scrollToDraft(d);
+    goingTo = d.id;
+    view.file = d.path;
+  }
+  function scrollToDraft(d: ReviewDraft) {
+    const v = newSide();
+    if (!v || d.toLine > v.state.doc.lines) return;
+    v.dispatch({ effects: EditorView.scrollIntoView(v.state.doc.line(d.toLine).to, { y: "center" }) });
+  }
 
   // The changes of the new side, as document ranges in order.
   function changesOf(v: EditorView): { from: number; to: number }[] {
@@ -494,16 +575,22 @@
     selection = null;
   }
 
-  // Adding closes the composer and drops the selection: the draft's mark in the gutter shows
+  // Adding closes the composer and drops the selection: the draft's card below the lines shows
   // where it is.
-  function addComment(e?: SubmitEvent) {
+  async function addComment(e?: SubmitEvent) {
     e?.preventDefault();
     if (!selection || !view.file || !draft.trim()) return;
     // Edits not saved yet are not part of any version on disk.
     const rev = editedPath === view.file ? null : shownRev;
-    view.comments = [...view.comments, { path: view.file, ...selection, text: draft, rev }];
+    try {
+      await api.addDraft(id, { path: view.file, ...selection, rev }, draft);
+    } catch (e) {
+      error = `Could not add the comment: ${e}`;
+      return;
+    }
     draft = "";
     clearSelection();
+    await loadDrafts();
   }
 
   function say(message: string, url: string | null = null) {
@@ -631,13 +718,14 @@
   // can take a few seconds, and drafts added meanwhile stay.
   let sendingToAgent = $state(false);
   async function sendToAgent() {
-    if (!view.comments.length || agentWaits || agentAway || sendingToAgent) return;
-    const sent = view.comments;
+    if (!drafts.length || agentWaits || agentAway || sendingToAgent) return;
+    const sent = drafts;
     sendingToAgent = true;
     try {
       await api.agentSend(id, feedbackMessage(sent));
       say(`Sent ${sent.length} comment${sent.length > 1 ? "s" : ""} to the agent.`);
-      view.comments = view.comments.filter((c) => !sent.includes(c));
+      await api.deleteDrafts(id, sent.map((d) => d.id));
+      await loadDrafts();
     } catch (e) {
       error = `Could not send to the agent: ${e}`;
     } finally {
@@ -652,10 +740,11 @@
     preview = null;
     if (review.own) event = "COMMENT";
     try {
-      const paths = [...new Set(view.comments.map((c) => c.path))];
+      const all = drafts;
+      const paths = [...new Set(all.map((c) => c.path))];
       const commit = review.prHead;
       const ranges: Ranges = Object.fromEntries(await api.commentRanges(id, paths, commit));
-      preview = { ...classify(view.comments, commit, ranges), commit };
+      preview = { ...classify(all, commit, ranges), commit, drafts: all.map((d) => d.id) };
     } catch (e) {
       error = String(e);
     }
@@ -671,7 +760,9 @@
       const url = await api.submitReview(id, event, body, preview.line, preview.commit);
       const what = { COMMENT: "Review submitted", APPROVE: "Approved", REQUEST_CHANGES: "Changes requested" }[event];
       say(`${what} on GitHub with ${preview.line.length} line comment${preview.line.length === 1 ? "" : "s"}.`, url || null);
-      view.comments = [];
+      // Drafts added meanwhile (the agent may still be at it) stay.
+      await api.deleteDrafts(id, preview.drafts).catch((e) => (error = `Submitted, but the drafts stay: ${e}`));
+      await loadDrafts();
       summary = "";
       submitting = false;
       onchanged();
@@ -727,8 +818,10 @@
   const shortDir = (dir: string) => (dir.split("/").length > 3 ? `…/${dir.split("/").slice(-3).join("/")}` : dir);
 
   const short = (sha: string) => sha.slice(0, 8);
-  const linesOf = (c: DraftComment) => (c.fromLine === c.toLine ? `${c.fromLine}` : `${c.fromLine}–${c.toLine}`);
-  const withDrafts = $derived(new Set(view.comments.map((c) => c.path)));
+  // The files with drafts, and whose: yours wins the mark.
+  const withDrafts = $derived(
+    drafts.reduce((m, d) => m.set(d.path, m.get(d.path) === "you" || d.author === "user" ? "you" : "agent"), new Map<string, "you" | "agent">()),
+  );
   const showComposer = $derived(!!selection && !!view.file && !composerOff && !asking && !submitting);
 
   // The scope menu: ↑↓ move, Enter picks, Esc closes.
@@ -870,7 +963,7 @@
                       <span class="st s{statusOf(f)}" title={STATUS_TEXT[statusOf(f)] ?? statusOf(f)}>{statusOf(f)}</span>
                       <button class:active={f.path === view.file} onclick={() => (view.file = f.path)} title={f.path} data-file={f.path}>{!dir ? f.path : nameOf(f.path)}</button>
                       {#if f.whitespaceOnly}<span class="ws"><Pill size="xs">whitespace</Pill></span>{/if}
-                      {#if withDrafts.has(f.path)}<span class="has-drafts" title="Has draft comments"><Mark who="you" /></span>{/if}
+                      {#if withDrafts.has(f.path)}<span class="has-drafts" title="Has draft comments"><Mark who={withDrafts.get(f.path) ?? "you"} /></span>{/if}
                     </li>
                   {/each}
                 </ul>
@@ -932,27 +1025,32 @@
             <IconButton icon="x" label="Cancel comment (Esc)" size={22} type="button" onclick={clearSelection} />
           </form>
         {/if}
-        {#if view.comments.length}
+        {#if drafts.length}
           <div class="drafts">
-            <div class="drafts-head"><span class="label-caps">Draft comments</span><span class="count">{view.comments.length}</span></div>
+            <div class="drafts-head"><span class="label-caps">Draft comments</span><span class="count">{drafts.length}</span></div>
             <ul data-drafts>
-              {#each view.comments as c, i}
-                <li>
-                  <Mark who="you" />
-                  <code title={c.path}>{nameOf(c.path)}:{linesOf(c)}</code>
-                  <span class="text" title={c.text}>{c.text}</span>
-                  <IconButton icon="trash" label="Remove draft" size={22} onclick={() => (view.comments = view.comments.filter((_, j) => j !== i))} />
+              {#each drafts as c (c.id)}
+                <li data-draft-row={c.id}>
+                  <Mark who={c.author === "agent" ? "agent" : "you"} />
+                  <button class="goto" onclick={() => goToDraft(c)} title="Show it in {c.path}">
+                    <code class:agent={c.author === "agent"}>{nameOf(c.path)}:{linesOf(c)}</code>
+                    <span class="text">{c.text}</span>
+                  </button>
+                  <IconButton icon="trash" label="Remove draft" size={22} onclick={() => cardActions.remove(c).catch((e) => (error = String(e)))} />
                 </li>
               {/each}
             </ul>
           </div>
+          <!-- All drafts go to the agent as feedback on its work (your PR, issue or task); on
+               someone else's PR they are for GitHub, and each card can ask the agent about one. -->
+          {@const toAgent = canSendToAgent && review?.own}
           <div class="actions">
-            {#if canSendToAgent && agentAway}
+            {#if toAgent && agentAway}
               <span class="waits" title={agentAway}>{agentAway}</span>
-            {:else if canSendToAgent && agentWaits}
+            {:else if toAgent && agentWaits}
               <span class="waits">The agent is waiting for your permission — answer it before sending.</span>
             {/if}
-            {#if canSendToAgent}<Button size="sm" variant="agent" mark="agent" onclick={sendToAgent} disabled={agentWaits || !!agentAway} loading={sendingToAgent} data-send-agent>Send to agent</Button>{/if}
+            {#if toAgent}<Button size="sm" variant="agent" mark="agent" onclick={sendToAgent} disabled={agentWaits || !!agentAway} loading={sendingToAgent} data-send-agent>Send to agent</Button>{/if}
             {#if review?.prHead}
               <span class="submit-anchor">
                 <Button size="sm" mark="gh" onclick={openSubmit} aria-expanded={submitting} data-open-submit>Submit to GitHub…</Button>
@@ -1151,7 +1249,12 @@
     display: flex; align-items: center; gap: var(--sp-4); min-height: 24px; padding: 0 var(--sp-2) 0 var(--sp-4);
     border-radius: var(--r-md); background: var(--you-bg);
   }
+  .goto {
+    flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--sp-3); padding: 0; border: 0; background: none;
+    color: inherit; font: inherit; text-align: left; cursor: pointer;
+  }
   .drafts li code { flex: none; font-size: var(--fs-code-inline); color: var(--you-strong); }
+  .drafts li code.agent { color: var(--agent-strong); }
   .drafts li .text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4) var(--sp-4) var(--sp-6); }
   .waits { flex: 1; min-width: 0; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

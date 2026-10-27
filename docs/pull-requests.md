@@ -47,8 +47,10 @@ tasks and cleanup: [lifecycle.md](lifecycle.md). The review view in detail:
   (CodeMirror's diff only adds character-level detail inside them). When viewing the working
   tree, the right side is editable and can be saved.
 - **Review comments → GitHub or agent:** select code on the right to attach a comment; drafts are
-  collected per item. **Send N comments to the agent** delivers them as one message (with a
-  worktree). **Submit to GitHub…** sends them as a review (Comment, or Approve / Request changes
+  collected per item and shown in the diff below their lines. On others' PRs the agent drafts
+  review comments there too (its context and Ariekei's MCP tools tell it how), which you edit,
+  delete or send back to it with a prompt. **Send to agent** delivers your drafts on your own
+  work as one message (with a worktree). **Submit to GitHub…** sends them as a review (Comment, or Approve / Request changes
   on others' PRs): drafts on lines of the PR diff at its head commit become line comments, the
   others are listed in the review text, and the panel says which is which.
 - **Switching and resume:** each item's tab, review scope, selected file and pending comments are
