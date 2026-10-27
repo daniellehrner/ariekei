@@ -4,14 +4,15 @@
 //! Remote control for the end-to-end tests (cargo feature `e2e`, never in release builds).
 //!
 //! With `ARIEKEI_E2E_PORT` set, the app serves a small HTTP API on 127.0.0.1 that runs
-//! JavaScript in its windows and returns the result, lists and resizes the windows, and quits
-//! the app the way a user would. `e2e/wd.py` drives the app through it on Linux, macOS and
+//! JavaScript in its windows and returns the result, lists and resizes the windows, reads the
+//! clipboard, and quits the app the way a user would. `e2e/wd.py` drives the app through it on Linux, macOS and
 //! Windows alike (WebDriver for Tauri's webviews does not exist on macOS).
 //!
 //!   GET  /status                              → "ok"
 //!   GET  /windows                             → ["main", "w1", …]
 //!   POST /eval    {window, script, args, timeout_ms} → the script's result (a function body)
 //!   POST /resize  {window, width, height}     → {}
+//!   GET  /clipboard                           → the clipboard's text
 //!   POST /quit                                → {}
 
 use serde::Deserialize;
@@ -24,6 +25,7 @@ use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Listener, LogicalSize, Manager};
+use tauri_plugin_clipboard_manager::ClipboardExt;
 
 const RESULT_EVENT: &str = "e2e-result";
 
@@ -162,6 +164,11 @@ fn handle(
                 .map_err(|e| e.to_string())?;
             Ok(json!({}))
         }
+        ("GET", "/clipboard") => app
+            .clipboard()
+            .read_text()
+            .map(|text| json!(text))
+            .map_err(|e| e.to_string()),
         ("POST", "/quit") => {
             // As if the user quit: windows open now come back on the next launch.
             let app = app.clone();

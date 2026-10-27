@@ -125,6 +125,10 @@ class BridgeSession(_Common):
     def js(self, script, *args, timeout=30):
         return self._eval(self.window, script, args, timeout)
 
+    def clipboard(self):
+        """The text on the system clipboard, as the app reads it."""
+        return _request(self.base, "GET", "/clipboard")
+
     def s(self, method, path, body=None):
         if (method, path) == ("GET", "/window/handles"):
             return _request(self.base, "GET", "/windows")

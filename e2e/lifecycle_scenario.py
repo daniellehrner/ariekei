@@ -185,6 +185,15 @@ try:
           "| push to:", git(clone, "config", f"branch.{branch}.remote"))
     check("Start working makes a worktree on a branch from main", os.path.isdir(wt) and branch == "issue-5-crash-on-start" and git(wt, "rev-parse", "HEAD") == git(clone, "rev-parse", "origin/main"), branch)
 
+    # The folder name in the header copies the worktree's path to the system clipboard (through
+    # the clipboard plugin: WebKitGTK's own API refused a click that first focused the window,
+    # which this click, run as script, cannot reproduce).
+    s.click(s.wait(".item header [data-worktree]"))
+    s.wait(".item header [data-worktree]", timeout=10, text="Copied")
+    copied = s.clipboard()
+    print("[copy] clipboard:", copied, "| error:", s.js("return document.querySelector('.item [data-error]')?.textContent.trim() ?? null"))
+    check("clicking the folder name copies the worktree's path", os.path.realpath(copied) == os.path.realpath(wt), copied)
+
     # The fix (made directly with git, as the user "me"), not pushed yet: Done must refuse.
     open(os.path.join(wt, "a.txt"), "a").write("fixed\n")
     commit(wt, "Fix the crash on start", who="me")
