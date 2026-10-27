@@ -3,7 +3,7 @@
 
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import Browse from "./Browse.svelte";
   import Connect from "./Connect.svelte";
   import Inbox from "./Inbox.svelte";
@@ -18,7 +18,7 @@
   import { api, shortName, type Repo, type Row } from "./lib/api";
   import { ATTENTION_LABEL, attentionKind } from "./lib/attention";
   import { isTyping } from "./lib/keys";
-  import { browser, layout, shortcuts } from "./lib/layout.svelte";
+  import { browser, layout, openOn, shortcuts } from "./lib/layout.svelte";
   import { setHome } from "./lib/paths";
 
   let repo: Repo | null | undefined = $state(undefined);
@@ -161,6 +161,27 @@
     selected = id;
   }
 
+  // Browse's Start working: the item opens once the Inbox lists it (an item just added is not
+  // in `rows` yet), and starts working there.
+  async function startWorking(id: number) {
+    const shown = repo?.id;
+    try {
+      const fetched = await api.inbox();
+      if (repo?.id !== shown) return;
+      rows = fetched;
+    } catch (e) {
+      pollError = String(e);
+      return;
+    }
+    // Shown already: it loads again, which is when it starts.
+    if (selected === id) {
+      selected = null;
+      await tick();
+    }
+    Object.assign(openOn, { item: id, tab: null, start: true });
+    selected = id;
+  }
+
   onMount(() => {
     listenToAgents();
     homeDir().then(setHome, () => {});
@@ -241,7 +262,7 @@
     {/if}
   </div>
   {#if browser.open}
-    <Browse onselect={select} onchanged={reload} />
+    <Browse onselect={select} onstart={startWorking} onchanged={reload} />
   {/if}
   {/key}
 {/if}

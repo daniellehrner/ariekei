@@ -63,9 +63,10 @@ told apart in grey-scale and with colour blindness:
   which items are starred. The item header has the star after its title, always shown.
 - **Browse** (Ctrl+K, the Browse field at the top of the Inbox) is a raised
   dialog near the top (`--w-dialog`), as tall as its results: Pull requests | Issues, a search
-  field, and per hit a fixed 128 px slot with **Add to Open**, or the neutral `In Inbox` pill,
-  replaced on the pointer or keyboard row by **Open** (and **Remove** for items the user
-  added). The keyboard row is `--surface-selected`. It stays open after adding.
+  field, and per hit a fixed 200 px slot with a quiet **Add** and **Start working** (which
+  closes it, opens the item and starts it as the item's own button does), or the neutral
+  `In Inbox` pill, replaced on the pointer or keyboard row by **Open** (and **Remove** for
+  items the user added). The keyboard row is `--surface-selected`. It stays open after adding.
 - **Refresh** turns its arrow (`--dur-spin`, like the `Spinner`) until the poll it asked for has
   answered, with new data or an error; with reduced motion it only dims.
 - **New task** is a raised form at the top of the Inbox with visible labels (the branch field in

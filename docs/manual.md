@@ -137,19 +137,21 @@ refresh fails, a "Could not refresh from GitHub" line shows the error. Each sear
 
 ### Browse: adding PRs and issues
 
-**Browse** lists the repository's **open** pull requests and issues, so you can add any of
-them to the Inbox. Open it with **Ctrl+K** (Cmd+K on macOS) or the **Browse PRs and issues…**
+**Browse** lists the repository's **open** pull requests and issues, so you can start working
+on any of them, or add it to the Inbox. Open it with **Ctrl+K** (Cmd+K on macOS) or the **Browse PRs and issues…**
 field at the top of the Inbox.
 
 - Switch between **Pull requests** and **Issues** at the top.
 - Search with GitHub's search syntax: words, `#123`, `author:name`, `label:bug`, and so on.
   Without a search, the 50 most recently updated are listed.
-- **Add to Open** adds an item to the Inbox's **Open** section. Browse stays open, so you can
-  add several.
+- **Start working** adds an item to the Inbox's **Open** section, opens it and does what its
+  own **Start working** does: Browse closes, and you are at its agent in its worktree.
+- **Add** only adds it to **Open**, e.g. a PR to review without a worktree. Browse stays open,
+  so you can add several.
 - An item already in the Inbox is marked `In Inbox`. On the row under the pointer or the
   keyboard cursor, **Open** shows it and, for one you added, **Remove** takes it out again.
-- **↑** / **↓** move through the list, **Enter** adds the item (or opens it, when it is already
-  in the Inbox), **Esc** closes Browse.
+- **↑** / **↓** move through the list, **Enter** starts working on the item (or opens it, when
+  it is already in the Inbox), **Esc** closes Browse.
 
 ## 5. Work items
 
@@ -634,7 +636,7 @@ Press **?** to see them in the app. On macOS, use Cmd instead of Ctrl.
 | ContextMenu | The code menu (or right-click code) |
 | Esc | Drop the selection (comment) |
 
-**In Browse:** ↑ / ↓ move, Enter adds or opens the item, Esc closes.
+**In Browse:** ↑ / ↓ move, Enter starts working on the item or opens it, Esc closes.
 
 **In the New task form:** Ctrl+Enter starts the task, Esc closes the form.
 

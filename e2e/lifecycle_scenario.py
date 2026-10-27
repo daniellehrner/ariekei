@@ -14,7 +14,8 @@ after the user left it, and Done cleans it up. Also: the rate limit used up (the
 refresh recovers), a tracked issue deleted on GitHub (polling goes on), CI going from
 running to failing without the PR changing, automatic cleanup kept back while a merged PR's
 worktree has uncommitted work, and an issue whose branch already has a PR when it is pushed.
-Commits are made with git directly (no agent turn).
+An issue not in the Inbox is started from Browse. Commits are made with git directly (no
+agent turn).
 
 Run it with `python3 e2e/run.py <test-app> lifecycle` (see run.py), which sets the environment.
 """
@@ -70,7 +71,7 @@ json.dump({
     "prs": [{"number": 42, "title": "Feature x", "author": "me", "head_ref": "feature/x", "base_ref": "main", "state": "OPEN"}],
     "issues": [{"number": 5, "title": "Crash on start", "author": "carol", "body": "It crashes when the config is empty.", "assigned": True},
                {"number": 6, "title": "Old idea", "author": "carol", "assigned": True},
-               {"number": 7, "title": "Typo in docs", "author": "carol", "assigned": True}],
+               {"number": 7, "title": "Typo in docs", "author": "carol"}],
 }, open(data_file, "w"))
 
 
@@ -133,7 +134,7 @@ try:
     s.click(s.wait(".connect form button"))
     s.wait(".inbox .row[data-number='5']", timeout=60)
     print("[inbox]", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"))
-    equal("Inbox sections", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"), ["Assigned 3", "My PRs 1"])
+    equal("Inbox sections", s.js("return [...document.querySelectorAll('.inbox .section-head')].map(h => h.textContent.trim().replace(/\\s+/g, ' '))"), ["Assigned 2", "My PRs 1"])
 
     # --- GitHub's rate limit used up: the Inbox says so; a refresh after the reset recovers ---
     limit_flag = os.path.join(gh_dir, "rate-limited")
@@ -240,11 +241,17 @@ try:
     check("merging cleans up the worktree and the branch", not os.path.exists(wt) and not branch_left)
 
     # --- an issue whose branch already has a PR when it is pushed ---
-    select_row(s, 7)
+    # Not in the Inbox: Start working in Browse adds it, opens it and starts its agent.
+    check("an unassigned issue is not in the Inbox", "7" not in (rows(s) or []), rows(s))
+    s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }))")
+    s.wait("[data-browse]", timeout=10)
+    s.js("document.querySelector(\"[data-browse-kind] [data-value='issue']\").click()")
+    s.click(s.wait("[data-browse-hit='7'] [data-browse-start]", timeout=20))
     s.wait(".item header .title", timeout=30, text="Typo in docs")
-    header_button(s, "Start working")
     s.wait(".terminal", timeout=120)
     wt7 = os.path.join(work, "proj_issue7")
+    check("Start working in Browse closes it and starts the agent in a worktree",
+          not s.find("[data-browse]") and os.path.isdir(wt7) and "7" in (rows(s) or []))
     branch7 = git(wt7, "rev-parse", "--abbrev-ref", "HEAD")
     data = json.load(open(data_file))
     data["prs"].append({"number": 130, "title": "Fix the typo", "author": "me", "head_ref": branch7, "base_ref": "main", "state": "OPEN"})

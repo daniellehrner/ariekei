@@ -9,8 +9,8 @@ import type { Tab } from "./attention";
 export const layout = $state({ reviewPanel: false });
 
 // The tab an item opens on next, once (e.g. the task's Terminal after a PR of the task sent its
-// agent something).
-export const openOn = $state<{ item: number | null; tab: Tab | null }>({ item: null, tab: null });
+// agent something); `start`: it starts working, as its Start working button does (Browse's).
+export const openOn = $state<{ item: number | null; tab: Tab | null; start?: boolean }>({ item: null, tab: null });
 
 // Whether the keyboard shortcuts overlay is open (? anywhere, or the review's keyboard button).
 export const shortcuts = $state({ open: false });

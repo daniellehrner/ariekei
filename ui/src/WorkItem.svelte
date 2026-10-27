@@ -150,7 +150,10 @@
       // Asked for (a notice from the agent, asking it about code); a Terminal only where the
       // agent runs.
       if (openOn.item === current && openOn.tab && (openOn.tab !== "terminal" || row.worktree)) ui.tab = openOn.tab;
+      const starting = openOn.item === current && openOn.start && !row.worktree;
       openOn.item = openOn.tab = null;
+      openOn.start = false;
+      if (starting) start();
     });
     api.markSeen(current).then((s) => {
       if (current === id) since = s.before;

@@ -209,8 +209,9 @@ try:
     eventually("the search finds #43", lambda: hits(s), lambda v: v == [43], timeout=20)
     print("[browse] hits:", s.js("return [...document.querySelectorAll('[data-browse-hit]')].map(r => r.innerText.replace(/\\n+/g, ' | '))"))
     s.screenshot(os.path.join(shots, "r0-browse.png"))
-    # Enter adds the hit; Enter again opens it (and closes the browser).
-    press_on(s, "[data-browse-search]", "Enter")
+    # Add puts the hit in the Inbox without an agent (Enter would start working on it); Enter
+    # then opens it (and closes the browser).
+    s.click(s.wait("[data-browse-hit='43'] [data-browse-add]"))
     s.wait("[data-browse-hit='43'] [data-browse-open]", timeout=20)
     press_on(s, "[data-browse-search]", "Enter")
     s.wait(".item header .title", timeout=30, text="Add y to the parser")

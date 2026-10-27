@@ -3,9 +3,10 @@
 
 <!--
   The browser over the window: the repo's open PRs and issues, searched with GitHub's syntax,
-  to add to the Inbox (they are listed under Open) or take out again. It stays open after
-  adding, so several can be added. Esc closes; ↑/↓ move through the list, Enter adds the item
-  (or opens it, when it is in the Inbox).
+  to start working on (added to the Inbox, the item opens and its agent starts in a worktree),
+  only add to the Inbox (listed under Open, e.g. to review without a worktree) or take out
+  again. It stays open after adding, so several can be added. Esc closes; ↑/↓ move through
+  the list, Enter starts working on the item (or opens it, when it is in the Inbox).
 -->
 <script lang="ts">
   import { onMount, untrack } from "svelte";
@@ -22,9 +23,12 @@
 
   let {
     onselect,
+    onstart,
     onchanged,
   }: {
     onselect: (id: number) => void;
+    /** Open item `id` and start working on it. */
+    onstart: (id: number) => void;
     /** An item was added to or taken out of the Inbox. */
     onchanged: () => void;
   } = $props();
@@ -90,6 +94,14 @@
     }
   }
 
+  // Adds it and leaves for its agent: the item makes the worktree, as its own Start working.
+  async function startWorking(hit: SearchHit) {
+    await add(hit);
+    if (hit.itemId == null) return;
+    browser.open = false;
+    onstart(hit.itemId);
+  }
+
   async function remove(hit: SearchHit) {
     if (hit.itemId == null) return;
     busy = [...busy, hit.number];
@@ -127,7 +139,7 @@
     } else if (e.key === "Enter" && e.target === input && hits[cursor] && !busy.includes(hits[cursor].number)) {
       e.preventDefault();
       const hit = hits[cursor];
-      if (hit.itemId == null) add(hit);
+      if (hit.itemId == null) startWorking(hit);
       else open(hit);
     }
   }
@@ -178,7 +190,10 @@
                under the cursor or pointer, Remove (for what the user added) and Open. -->
           <span class="acts">
             {#if hit.itemId == null}
-              <Button size="sm" icon="plus" onclick={() => add(hit)} loading={pending} data-browse-add>Add to Open</Button>
+              <Button size="sm" variant="quiet" icon="plus" onclick={() => add(hit)} disabled={pending}
+                title="Add it to the Inbox's Open section, without a worktree or agent" data-browse-add>Add</Button>
+              <Button size="sm" icon="play" onclick={() => startWorking(hit)} loading={pending}
+                title="Add it to the Inbox, make (or reuse) its worktree and open Claude Code in it" data-browse-start>Start working</Button>
             {:else}
               <span class="at-rest"><Pill size="sm" tone="tint" data-in-inbox>In Inbox</Pill></span>
               <span class="on-row">
@@ -197,10 +212,10 @@
       {/each}
     </ul>
     <p class="foot">
-      {#if hits.length >= PAGE}The {PAGE} most recently updated — search to narrow.{:else}Added items are listed under Open in the Inbox.{/if}
+      {#if hits.length >= PAGE}The {PAGE} most recently updated — search to narrow.{:else}Items you add or start working on are listed under Open in the Inbox.{/if}
       <span class="grow"></span>
       <span class="keys"><Kbd key="↑" /><Kbd key="↓" /> move</span>
-      <span class="keys"><Kbd key="Enter" /> open or add</span>
+      <span class="keys"><Kbd key="Enter" /> start working or open</span>
       <span class="keys"><Kbd key="Esc" /> close</span>
     </p>
   </div>
@@ -246,7 +261,7 @@
   .num { flex: none; font-family: var(--font-mono); font-size: var(--fs-code-inline); color: var(--text-muted); }
   .title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: var(--fw-medium); }
   .line2 { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; overflow: hidden; white-space: nowrap; font-size: var(--fs-11); line-height: var(--lh-11); color: var(--text-muted); }
-  .acts { flex: none; width: 128px; display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-3); }
+  .acts { flex: none; width: 200px; display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-3); }
   .on-row { display: none; gap: var(--sp-3); }
   li:hover .on-row, li.cursor .on-row, li:focus-within .on-row { display: flex; }
   li:hover .at-rest, li.cursor .at-rest, li:focus-within .at-rest { display: none; }
