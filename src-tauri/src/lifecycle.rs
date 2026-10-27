@@ -392,9 +392,27 @@ fn remove_transcript(path: &Path) -> bool {
 }
 
 /// Run after every poll: follow the PRs opened for pushed issue branches, add those opened
-/// for tasks' branches, and clean up items that are finished.
+/// for tasks' branches, pull what was pushed to PRs the user reviewed, and clean up items that
+/// are finished.
 pub fn after_poll(state: &AppState, repo: &Repo) -> Result<(), String> {
     for item in state.store.items(repo.id)? {
+        if item.kind == "pr" && item.open && !busy(state, item.id) {
+            match crate::workitem::pull_reviewed(state, repo, &item) {
+                Ok(true) => crate::notify::lifecycle(
+                    state,
+                    &item.id.to_string(),
+                    &item.label(),
+                    &format!(
+                        "Pulled what was pushed to the PR since into {}.",
+                        item.branch.as_deref().unwrap_or_default()
+                    ),
+                ),
+                Ok(false) => {}
+                Err(e) => {
+                    tracing::warn!("{}: pulling the PR's new commits: {e}", item.short_name())
+                }
+            }
+        }
         if item.is_task() && item.worktree_path.is_some() {
             match track_branch_pr(state, repo, &item) {
                 Ok(Some(number)) => crate::notify::lifecycle(

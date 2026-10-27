@@ -671,8 +671,10 @@ pub fn moved_to(item: &WorkItem) -> Option<String> {
 /// Whether GitHub's head of PR `item` is one its worktree's branch lacks: "new" when the clone
 /// has not fetched it, "fast-forward" when the branch can move up to it, "rewritten" when the
 /// author rewrote the PR's history since (e.g. rebased it). Not when the branch is ahead with
-/// commits of its own: those are for pushing. Nor while GitHub has the head it had when the
-/// item followed another branch (`follow_branch`): that one is the PR's next version.
+/// commits of its own: those are for pushing. Nor when the branch had GitHub's head before
+/// (its reflog says so) and was rewritten here since, e.g. rebased by the agent: GitHub has
+/// nothing it lacks, the rewrite is for pushing too. Nor while GitHub has the head it had when
+/// the item followed another branch (`follow_branch`): that one is the PR's next version.
 pub fn update_of(item: &WorkItem) -> Option<&'static str> {
     if item.kind != "pr" || !item.open {
         return None;
@@ -697,7 +699,7 @@ pub fn update_of(item: &WorkItem) -> Option<&'static str> {
         None
     } else if !git::commit_exists(dir, &head) {
         Some("new")
-    } else if git::is_ancestor(dir, &head, &tip) {
+    } else if git::is_ancestor(dir, &head, &tip) || git::branch_had(dir, branch, &head) {
         None
     } else if git::is_ancestor(dir, &tip, &head) {
         Some("fast-forward")
@@ -857,6 +859,34 @@ pub fn update_branch(state: &AppState, id: i64, rewrite: bool) -> Result<bool, S
         ));
     }
     git::git(&dir, &["reset", "--keep", "--quiet", &pulled]).map(|_| true)
+}
+
+/// For a PR the user reviewed: brings its worktree's branch up to what the author pushed since
+/// (`update_of`), most likely the fixes for the review, without the user pressing Update.
+/// Returns whether it did. Not while the worktree is on another branch, nor when it would drop
+/// commits GitHub does not have (the Update bar says why), nor while the agent is in the middle
+/// of a turn (the caller's check): its files would change under it.
+pub fn pull_reviewed(state: &AppState, repo: &Repo, item: &WorkItem) -> Result<bool, String> {
+    if item.role != "reviewed" || moved_to(item).is_some() {
+        return Ok(false);
+    }
+    let Some(update) = update_of(item) else {
+        return Ok(false);
+    };
+    // Fetched already: whether updating would drop anything is known without asking GitHub,
+    // so a branch that cannot follow does not fetch on every poll.
+    if update == "rewritten" {
+        let dir = worktree_of(item)?;
+        let branch = item.branch.clone().unwrap_or_default();
+        let head = summary(item)?.head_sha;
+        let tip = format!("refs/heads/{branch}");
+        if !crate::lifecycle::not_on_github(&repo.path, &dir, &[&tip], Some(&branch), &[&head])?
+            .is_empty()
+        {
+            return Ok(false);
+        }
+    }
+    update_branch(state, item.id, true)
 }
 
 /// Refuses to send work to the agent of item `id` while its worktree is on another branch:
@@ -2311,6 +2341,77 @@ mod tests {
         update_branch(&app.state, id, true).unwrap();
         assert_eq!(here(), github());
         assert_eq!(update(), None);
+    }
+
+    #[test]
+    fn a_rebase_here_is_no_update() {
+        let app = TestApp::new();
+        let (id, wt) = app.pr_with_worktree(5, "feat");
+        let up = &app.upstream;
+        let update = || {
+            app.poll().unwrap();
+            app.rows().into_iter().find(|r| r.id == id).unwrap().update
+        };
+        git(up, &["update-ref", "refs/pull/5/head", "feat"]);
+        assert_eq!(update(), None);
+
+        // The agent rebases the branch onto a newer main, not pushed yet: GitHub has nothing
+        // the branch lacks.
+        app.push_to("main", &[("m.txt", "carol's\n")], "carol");
+        git(&wt, &["fetch", "-q", "origin", "main"]);
+        let me = ["-c", "user.name=me", "-c", "user.email=me@example.com"];
+        git(&wt, &[&me[..], &["rebase", "-q", "FETCH_HEAD"]].concat());
+        assert_eq!(update(), None);
+
+        // The author pushes to the PR: that is news.
+        app.push_to("feat", &[("c.txt", "bob's\n")], "bob");
+        git(up, &["update-ref", "refs/pull/5/head", "feat"]);
+        assert_eq!(update(), Some("new"));
+        git(&wt, &["fetch", "-q", "origin", "refs/pull/5/head"]);
+        assert_eq!(update(), Some("rewritten"));
+    }
+
+    #[test]
+    fn a_reviewed_prs_new_commits_are_pulled() {
+        let app = TestApp::new();
+        let up = &app.upstream;
+        app.push_to("fix", &[("b.txt", "bob's\n")], "bob");
+        git(up, &["update-ref", "refs/pull/6/head", "fix"]);
+        app.add_pr(
+            json!({"number": 6, "title": "Fix", "head_ref": "fix", "author": "bob", "reviewed": true}),
+        );
+        app.poll().unwrap();
+        let id = app.item(6).id;
+        mark_seen(&app.state, id).unwrap();
+        let wt = prepare(&app.state, id).unwrap().path;
+        let branch = app.item(6).branch.unwrap();
+        assert_eq!(app.item(6).role, "reviewed");
+        let rev = |r: &str| git(&wt, &["rev-parse", r]);
+        let github = || git(up, &["rev-parse", "fix"]);
+
+        // The author pushes the fixes for the review: the next poll pulls them.
+        app.push_to("fix", &[("c.txt", "fixed\n")], "bob");
+        git(up, &["update-ref", "refs/pull/6/head", "fix"]);
+        app.poll().unwrap();
+        assert_eq!(rev(&branch), github());
+        assert_eq!(app.row(6).unwrap().update, None);
+
+        // Rebased by the author: the branch takes that version too.
+        app.push_to("main", &[("m.txt", "carol's\n")], "carol");
+        rebase_upstream(&app, "fix", 6);
+        app.poll().unwrap();
+        assert_eq!(rev(&branch), github());
+
+        // A commit of the user's own would be dropped: the branch stays, and the bar says so.
+        write(&wt.join("d.txt"), "mine\n");
+        commit(&wt, "mine, not pushed", "me");
+        let mine = rev("HEAD");
+        app.push_to("main", &[("n.txt", "carol's\n")], "carol");
+        rebase_upstream(&app, "fix", 6);
+        app.poll().unwrap();
+        app.poll().unwrap();
+        assert_eq!(rev(&branch), mine);
+        assert_eq!(app.row(6).unwrap().update, Some("rewritten"));
     }
 
     #[test]

@@ -215,7 +215,14 @@ the author rewrote the PR's history (rebased or force-pushed it), the bar says s
 replaces the branch with GitHub's version, but only when that drops no commit GitHub does not
 have; otherwise it lists them and leaves the branch as it is. (When only Update's fetch finds
 the history rewritten, it changes nothing yet: the bar says so, and you press Update again.) Uncommitted changes stay, or git refuses. Commits
-of your own that are not pushed yet bring no bar.
+of your own that are not pushed yet bring no bar, and neither does a branch rewritten here
+(e.g. rebased by the agent) while GitHub has nothing it did not have before: its reflog says
+it had GitHub's head, so the rewrite is for pushing.
+
+On a PR you reviewed (the **Reviewed** section), Ariekei does not wait for you: after each
+poll it pulls what was pushed to the PR into the worktree's branch, most likely the fixes for
+your review, a rebased version too. Not while its agent is in the middle of a turn, and not
+when that would drop commits GitHub does not have; then the bar stays.
 
 You do not need a worktree to review someone else's PR: its Review tab fetches the PR head
 read-only (the first time, and whenever the PR has new commits), and works on that.

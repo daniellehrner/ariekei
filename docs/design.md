@@ -86,7 +86,8 @@ told apart in grey-scale and with colour blindness:
   Switch back nor Move here leaves commits GitHub lacks behind.
 - When GitHub's PR head is one the worktree's branch lacks (pushed to, or rebased by the
   author), a bar offers **Update `<branch>`**, so getting the author's version never takes a
-  detached checkout.
+  detached checkout. Not for a branch rewritten locally that had GitHub's head (its reflog),
+  and not on a PR the user reviewed: the poll pulls it there unless that would lose work.
 - When the agent exits by itself, a bar under the terminal's title bar says so ("The agent
   exited (exit 1).") with **Start again**; its last output stays, dimmed and inert. Not for a merged or closed item: its branch is done
   with.

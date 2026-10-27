@@ -323,6 +323,35 @@ pub fn is_ancestor(cwd: &Path, a: &str, b: &str) -> bool {
     git(cwd, &["merge-base", "--is-ancestor", a, b]).is_ok()
 }
 
+/// The local `branch` had `commit` once, as its reflog remembers (the newest 100 entries): it
+/// was at that commit or at one built on it. False also when either is unknown.
+pub fn branch_had(cwd: &Path, branch: &str, commit: &str) -> bool {
+    let Ok(log) = git_str(
+        cwd,
+        &[
+            "reflog",
+            "show",
+            "-n",
+            "100",
+            "--format=%H",
+            &format!("refs/heads/{branch}"),
+            "--",
+        ],
+    ) else {
+        return false;
+    };
+    let mut was: Vec<&str> = log.lines().collect();
+    was.sort_unstable();
+    was.dedup();
+    if was.is_empty() {
+        return false;
+    }
+    // Nothing of `commit` that none of them reaches: one of them reaches `commit` itself.
+    let mut args = vec!["rev-list", "-n", "1", commit, "--not"];
+    args.extend(was);
+    git_str(cwd, &args).is_ok_and(|left| left.is_empty())
+}
+
 /// Uncommitted changes, including untracked files.
 pub fn is_dirty(cwd: &Path) -> Result<bool, String> {
     Ok(!git(cwd, &["status", "--porcelain"])?.is_empty())
