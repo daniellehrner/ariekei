@@ -17,10 +17,11 @@ export const ariekeiTheme = EditorView.theme({
   ".cm-content": { caretColor: "var(--you)" },
   ".cm-cursor, .cm-dropCursor": { borderLeft: "2px solid var(--you)" },
   // The selection is drawn above the text, as a tint: below it, the changed lines' backgrounds
-  // would hide it. (CodeMirror sets the layer's z-index inline, hence !important.)
+  // would hide it. (CodeMirror sets the layer's z-index inline, hence !important; its own
+  // colour for a focused editor is opaque, and its rule more specific than any here.)
   ".cm-selectionLayer": { zIndex: "1 !important", pointerEvents: "none" },
-  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground":
-    { backgroundColor: "var(--diff-selection)" },
+  "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground":
+    { backgroundColor: "var(--diff-selection) !important" },
   ".cm-activeLine": { backgroundColor: "transparent" },
   ".cm-gutters": { backgroundColor: "var(--surface-editor)",
     color: "var(--diff-gutter-text)", border: "none" },

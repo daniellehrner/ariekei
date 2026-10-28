@@ -370,6 +370,17 @@ try:
         return [Number(getComputedStyle(layer).zIndex), over, el10.className];"""),
         lambda v: v[0] > 0 and v[1] and "cm-changedLine" in v[2], timeout=10)
     print("[selection] layer z-index, drawn over line 10, its classes:", shown)
+    # Above the text it is a see-through tint, also in a focused editor (as a mouse selection
+    # leaves it), where CodeMirror's own colour is opaque. (The window under Xvfb never has the
+    # focus, so the editor is styled as focused by hand.)
+    select_lines(s, 9, 11)
+    tint = eventually("the selection of a focused editor is a tint", lambda: s.js(NEW_SIDE + """
+        view.dom.classList.add('cm-focused');
+        const b = view.dom.querySelector('.cm-selectionBackground');
+        return [view.dom.classList.contains('cm-focused'), b ? getComputedStyle(b).backgroundColor : null];"""),
+        lambda v: v[0] and v[1] and v[1].startswith("rgba(") and float(v[1].rstrip(")").split(",")[-1]) < 0.5, timeout=10)
+    s.js(NEW_SIDE + "view.dom.classList.remove('cm-focused')")
+    print("[selection] focused editor, selection colour:", tint)
     # Esc in the composer drops the selection (and the composer with it).
     select_lines(s, 3, 4)
     s.wait("[data-composer] input", timeout=10)
