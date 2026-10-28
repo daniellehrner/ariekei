@@ -297,7 +297,7 @@ try:
         s.click(s.wait("[data-task-form] button[type=submit]"))
         s.wait(".terminal .xterm", timeout=120)
         s.wait(".inbox .row[data-number='-1'] [data-agent='ready'], .inbox .row[data-number='-1'] [data-agent='finished']", timeout=60)
-        wt = os.path.join(work, "proj_task1")
+        wt = os.path.join(work, "proj_peers-drop-after-restart")
         write(os.path.join(wt, "src/main/java/org/example/p2p/PeerTable.java"), "package org.example.p2p;\n\nclass PeerTable {}\n")
         commit(wt, "Reset the peer table once")
         s.js("const t = Object.values(window.__ariekeiTerminals).at(-1); t.focus(); "

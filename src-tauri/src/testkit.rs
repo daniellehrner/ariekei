@@ -452,6 +452,6 @@ mod tests {
         let sent = app.events.take();
         assert!(sent.contains(&Sent::Status(key.clone(), AgentStatus::Starting)));
         assert!(sent.contains(&Sent::Status(key, AgentStatus::Ready)));
-        assert!(app.path("proj_task1").is_dir());
+        assert!(app.path("proj_look").is_dir());
     }
 }

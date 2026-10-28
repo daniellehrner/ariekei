@@ -474,11 +474,13 @@ Press **Ctrl+N** (Cmd+N on macOS) or **+** in the Inbox header. The form has:
 - optionally an **existing branch** (see below);
 - optionally **what to look into**; the agent gets it as context with the title.
 
-**Start task** (or **Ctrl+Enter** in any field; **Esc** closes the form) creates the branch
-`task-<n>-<words of the title>` from the default branch in
-`../<clone>_task<n>` (set up for `git push` like an issue's) and starts the agent. Tasks are
-numbered per repository: T1, T2, … A number whose worktree folder or `task-<n>` branches are
-still there (kept, say, by a PR an earlier task's agent opened) is skipped.
+**Start task** (or **Ctrl+Enter** in any field; **Esc** closes the form) creates a branch named
+after the title (`Peers drop after restart` → `peers-drop-after-restart`) from the default
+branch, in the folder `../<clone>_<branch>` (set up for `git push` like an issue's), and starts
+the agent. If the clone has that branch already (local or on a remote), or the folder exists,
+`-2`, `-3`, … is added. Tasks are numbered per repository: T1, T2, …; a number whose
+`<clone>_task<n>` folder or `task-<n>` branches (from older versions) are still there is
+skipped.
 
 ### A task on an existing branch
 
@@ -492,9 +494,10 @@ branch:
 
 Ariekei uses the clone's remote for that repository, or adds one named after the owner (as
 `gh pr checkout` does), fetches the branch and checks it out in the task's worktree, tracking
-it, so a plain `git push` updates it. Without a title, the task is named after the branch. If
-a local branch of that name tracks something else, it is left alone and the worktree gets a
-`task-<n>-…` branch instead. The review compares the branch with the default branch.
+it, so a plain `git push` updates it. The worktree's folder is named after the branch
+(`../<clone>_<branch>`, a `/` becomes `-`). Without a title, the task is named after the
+branch. If a local branch of that name tracks something else, it is left alone and the worktree
+gets a branch named after the title instead. The review compares the branch with the default branch.
 
 A branch that is not on GitHub yet but is in your clone works too (by its name alone, or as
 `owner:branch` for where it will go): the task uses your local branch as it is, with no fetch,
@@ -706,7 +709,8 @@ activity, a grey bar for lifecycle news.
   GitHub last gave it) is in an SQLite database `ariekei.db` in the app data directory. One
   Ariekei runs on it at a time: starting Ariekei again brings the running one's window to the
   front.
-- Worktrees are created next to your clone (`../<clone>_pr<N>`, `_issue<N>`, `_task<n>`).
+- Worktrees are created next to your clone (`../<clone>_pr<N>`, `_issue<N>`, and for a task
+  `_<its branch>`).
 - Branches and Ariekei's refs live in your clone: `refs/ariekei/pull/<N>/head` holds the PR
   head fetched for read-only review.
 - Agent conversations are Claude Code's own sessions.

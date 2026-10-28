@@ -342,6 +342,8 @@ pub fn prepare(state: &AppState, id: i64) -> Result<Prepared, String> {
             note: None,
         });
     }
+    // The branch a task was given before, if it had one.
+    let own = item.snapshot["branch"].as_str().filter(|_| item.is_task());
     let prepared = if let Some(head) = task_head(&item) {
         worktree::prepare_task_on(
             &repo,
@@ -349,10 +351,11 @@ pub fn prepare(state: &AppState, id: i64) -> Result<Prepared, String> {
             item.title(),
             &head,
             &current_default_branch(&repo)?,
+            own,
         )?
     } else if item.is_task() {
         let default = current_default_branch(&repo)?;
-        worktree::prepare_task(&repo, -item.number, item.title(), &default)?
+        worktree::prepare_task(&repo, -item.number, item.title(), &default, own)?
     } else if item.kind == "issue" {
         let issue = issue_summary(&item)?;
         let default = current_default_branch(&repo)?;
@@ -367,6 +370,9 @@ pub fn prepare(state: &AppState, id: i64) -> Result<Prepared, String> {
         !prepared.adopted,
         prepared.branch_created,
     )?;
+    if item.is_task() && own.is_none() {
+        state.store.set_task_branch(id, &prepared.branch)?;
+    }
     Ok(prepared)
 }
 
@@ -1475,7 +1481,7 @@ mod tests {
     fn save_refuses_to_overwrite_what_changed_on_disk_since_it_was_loaded() {
         let app = TestApp::new();
         let task = create_task(&app.state, Some(app.repo.clone()), "Edit", "", "").unwrap();
-        let file = app.path("proj_task1").join("a.txt");
+        let file = app.path("proj_edit").join("a.txt");
         let loaded = std::fs::read_to_string(&file).unwrap();
         save_file(&app.state, task, "a.txt", "mine\n", &loaded).unwrap();
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "mine\n");
@@ -1695,7 +1701,7 @@ mod tests {
         };
         app.push_to("main", &[("old.txt", &lines(0))], "me");
         let task = create_task(&app.state, Some(app.repo.clone()), "Move", "", "").unwrap();
-        let wt = app.path("proj_task1");
+        let wt = app.path("proj_move");
         git(&wt, &["mv", "old.txt", "new.txt"]);
         write(&wt.join("new.txt"), &lines(20));
         commit(&wt, "move it", "me");
@@ -1888,11 +1894,8 @@ mod tests {
         )
         .unwrap();
         let t = app.state.store.item(task).unwrap();
-        assert_eq!(
-            (t.number, t.branch.as_deref()),
-            (-1, Some("task-1-investigate"))
-        );
-        assert!(app.path("proj_task1").join("a.txt").exists());
+        assert_eq!((t.number, t.branch.as_deref()), (-1, Some("investigate")));
+        assert!(app.path("proj_investigate").join("a.txt").exists());
         let context =
             std::fs::read_to_string(app.state.data_dir.join("context/owner-proj-task1.md"));
         assert!(
@@ -1928,7 +1931,7 @@ mod tests {
         assert!(row(21).removable, "an issue like any other the user added");
         let origin = app.item(20).origin.unwrap();
         assert!(
-            origin.contains("task T1 (\"Investigate\", on `task-1-investigate`)")
+            origin.contains("task T1 (\"Investigate\", on `investigate`)")
                 && origin.contains("**User:** Why do peers drop?")
                 && origin.contains("**Agent:** The table resets twice."),
             "{origin}"
@@ -1996,13 +1999,10 @@ mod tests {
         crate::testkit::git(&app.clone, &["branch", "task-2-old-work", "main"]);
         let id = create_task(&app.state, Some(app.repo.clone()), "Next", "", "").unwrap();
         let task = app.state.store.item(id).unwrap();
-        assert_eq!(
-            (task.number, task.branch.as_deref()),
-            (-3, Some("task-3-next"))
-        );
+        assert_eq!((task.number, task.branch.as_deref()), (-3, Some("next")));
         assert_eq!(
             std::fs::canonicalize(task.worktree_path.unwrap()).unwrap(),
-            std::fs::canonicalize(app.path("proj_task3")).unwrap()
+            std::fs::canonicalize(app.path("proj_next")).unwrap()
         );
     }
 
@@ -2010,7 +2010,7 @@ mod tests {
     fn a_task_reviews_its_worktree_against_the_default_branch() {
         let app = TestApp::new();
         let task = create_task(&app.state, Some(app.repo.clone()), "Try", "", "").unwrap();
-        let wt = app.path("proj_task1");
+        let wt = app.path("proj_try");
         write(&wt.join("a.txt"), "one\ntwo\nthree\nfour\n");
         commit(&wt, "four", "me");
         let state = review_state(&app.state, task, false).unwrap();
@@ -2035,7 +2035,7 @@ mod tests {
         data["default_branch"] = json!("trunk");
         app.set_data(&data);
         let task = create_task(&app.state, Some(app.repo.clone()), "Renamed", "", "").unwrap();
-        let wt = app.path("proj_task1");
+        let wt = app.path("proj_renamed");
         assert_eq!(
             git(&wt, &["rev-parse", "HEAD"]),
             git(&app.upstream, &["rev-parse", "trunk"])
@@ -2057,7 +2057,7 @@ mod tests {
                 "worktree",
                 "remove",
                 "--force",
-                &app.path("proj_task1").to_string_lossy(),
+                &app.path("proj_gone").to_string_lossy(),
             ],
         );
         reconcile(&app.state).unwrap();
@@ -2068,7 +2068,7 @@ mod tests {
             prepare(&app.state, task)
                 .unwrap()
                 .path
-                .ends_with("proj_task1")
+                .ends_with("proj_gone")
         );
     }
 
@@ -2743,7 +2743,7 @@ mod tests {
         let (_, branch, upstream, _) = checkout(&app, id);
         assert_eq!(
             (branch.as_str(), upstream.as_str()),
-            ("task-1-feature-x", "friend/feature-x")
+            ("feature-x-2", "friend/feature-x")
         );
         assert_eq!(
             crate::git::upstream(&app.clone, "feature-x").as_deref(),

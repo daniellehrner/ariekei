@@ -844,7 +844,7 @@ mod tests {
                 create_task(&app.state, Some(app.repo.clone()), "Done soon", "", "").unwrap();
             app.add_pr(json!({"number": 20, "title": "Fix", "head_ref": "main"}));
             track_opened(&app.state, task, "pr", 20).unwrap();
-            let wt = app.path("proj_task1");
+            let wt = app.path("proj_done-soon");
 
             write(&wt.join("x.txt"), "work\n");
             let Cleanup::Blocked { blockers } = clean_up(&app.state, task).unwrap() else {
@@ -876,11 +876,11 @@ mod tests {
             };
             assert!(transcripts.iter().all(|t| !t.exists()), "{removed:?}");
             assert!(
-                removed.iter().any(|r| r.contains("proj_task1")),
+                removed.iter().any(|r| r.contains("proj_done-soon")),
                 "{removed:?}"
             );
             assert!(app.state.store.item(task).is_err(), "the task is deleted");
-            assert!(!wt.exists() && !branch_exists(&app, "task-1-done-soon"));
+            assert!(!wt.exists() && !branch_exists(&app, "done-soon"));
             assert!(app.item(20).tracked, "its PR stays");
         }
 
@@ -888,7 +888,7 @@ mod tests {
         fn removing_a_repo_forgets_its_items_and_leaves_the_disk_alone() {
             let app = TestApp::new();
             let task = create_task(&app.state, Some(app.repo.clone()), "Keep me", "", "").unwrap();
-            let wt = app.path("proj_task1");
+            let wt = app.path("proj_keep-me");
             let context = app
                 .state
                 .data_dir
@@ -914,7 +914,7 @@ mod tests {
             assert!(app.state.store.item(task).is_err(), "its items are gone");
             assert_eq!(app.state.terminals.status(&task.to_string()), None);
             assert!(!context.exists());
-            assert!(wt.exists() && branch_exists(&app, "task-1-keep-me"));
+            assert!(wt.exists() && branch_exists(&app, "keep-me"));
             assert!(app.clone.exists());
         }
 
@@ -923,7 +923,7 @@ mod tests {
             let app = TestApp::new();
             let task =
                 create_task(&app.state, Some(app.repo.clone()), "Throwaway", "", "").unwrap();
-            let wt = app.path("proj_task1");
+            let wt = app.path("proj_throwaway");
             write(&wt.join("a.txt"), "changed\n");
             commit(&wt, "local only", "me");
             write(&wt.join("x.txt"), "uncommitted\n");
@@ -945,7 +945,7 @@ mod tests {
                 discard(&app.state, task).unwrap(),
                 Cleanup::Cleaned { .. }
             ));
-            assert!(!wt.exists() && !branch_exists(&app, "task-1-throwaway"));
+            assert!(!wt.exists() && !branch_exists(&app, "throwaway"));
             assert!(app.state.store.item(task).is_err());
             assert_eq!(
                 app.state.terminals.status(&task.to_string()),
@@ -1177,7 +1177,7 @@ mod tests {
             assert!(again.path.exists() && !again.adopted, "{again:?}");
 
             let task = create_task(&app.state, Some(app.repo.clone()), "Gone", "", "").unwrap();
-            let task_wt = app.path("proj_task1");
+            let task_wt = app.path("proj_gone");
             std::fs::remove_dir_all(&task_wt).unwrap();
             let Cleanup::Cleaned { removed } = clean_up(&app.state, task).unwrap() else {
                 panic!("nothing would be lost");
@@ -1186,7 +1186,7 @@ mod tests {
                 removed.iter().any(|r| r.contains("already gone")),
                 "{removed:?}"
             );
-            assert!(!branch_exists(&app, "task-1-gone"));
+            assert!(!branch_exists(&app, "gone"));
         }
 
         #[test]
@@ -1194,22 +1194,22 @@ mod tests {
             let app = TestApp::new();
             git(&app.clone, &["checkout", "-q", "-b", "elsewhere"]);
             let task = create_task(&app.state, Some(app.repo.clone()), "", "", "main").unwrap();
-            assert!(app.path("proj_task1").exists());
+            assert!(app.path("proj_main").exists());
             let Cleanup::Cleaned { .. } = clean_up(&app.state, task).unwrap() else {
                 panic!("nothing would be lost");
             };
-            assert!(!app.path("proj_task1").exists() && branch_exists(&app, "main"));
+            assert!(!app.path("proj_main").exists() && branch_exists(&app, "main"));
         }
 
         #[test]
         fn a_task_whose_pr_was_squash_merged_and_pruned_loses_nothing() {
             let app = TestApp::new();
             let task = create_task(&app.state, Some(app.repo.clone()), "Squash", "", "").unwrap();
-            let wt = app.path("proj_task1");
+            let wt = app.path("proj_squash");
             write(&wt.join("a.txt"), "done\n");
             commit(&wt, "the work", "me");
             git(&wt, &["push", "-q"]);
-            let branch = "task-1-squash";
+            let branch = "squash";
             app.add_pr(json!({"number": 20, "title": "Squash", "head_ref": branch}));
             track_opened(&app.state, task, "pr", 20).unwrap();
             // GitHub keeps the PR head; the branch is deleted after the squash merge.

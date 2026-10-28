@@ -5,8 +5,8 @@
 
 GitHub is e2e/fake_gh.py (ARIEKEI_GH) and the agent e2e/fake_claude.py (ARIEKEI_CLAUDE); the
 "GitHub" repo is a local git repo reached through insteadOf. Covers: New task (Ctrl+N;
-worktree on task-<n>-<slug> from main, the notes in the agent's context, the agent starts), the agent
-opening a PR and an issue (`gh pr create` / `gh issue create`) which become items of their own
+worktree on a branch named after the title, from main, the notes in the agent's context, the
+agent starts), the agent opening a PR and an issue (`gh pr create` / `gh issue create`) which become items of their own
 in their sections, Start working on that PR (it adopts the task's checkout; its agent is told
 how the PR came about) and sending its review threads to its agent, asking the task's agent
 about code from the review (right-click a line or an old-side selection; refused while it waits
@@ -183,12 +183,12 @@ try:
     s.type(s.wait("[data-task-form] textarea"), "Look at how the peer table is reset.")
     s.click(s.wait("[data-task-form] button[type=submit]"))
     s.wait(".terminal", timeout=120)
-    wt = os.path.join(work, "proj_task1")
+    wt = os.path.join(work, "proj_peers-drop-after-restart")
     branch = git(wt, "rev-parse", "--abbrev-ref", "HEAD")
     print("[task] header:", s.js("return document.querySelector('.item header').innerText.replace(/\\n+/g, ' | ')"),
           "| branch:", branch, "| tabs:", s.js("return [...document.querySelectorAll('.item [role=tab]')].map(b => b.textContent.trim())"))
     check("New task makes a worktree on a branch from main",
-          branch == "task-1-peers-drop-after-restart" and git(wt, "rev-parse", "HEAD") == git(clone, "rev-parse", "origin/main"), branch)
+          branch == "peers-drop-after-restart" and git(wt, "rev-parse", "HEAD") == git(clone, "rev-parse", "origin/main"), branch)
     contains("the task is titled", s.js("return document.querySelector('.item header .title').textContent"), "T1Peers drop after restart")
     equal("a task has no Comments tab", s.js("return [...document.querySelectorAll('.item [role=tab]')].map(b => b.textContent.trim())"),
           ["Overview", "Review", "Terminal"])
@@ -374,7 +374,7 @@ try:
     s.type(s.wait("[data-task-form] input"), "Slow start")
     s.click(s.wait("[data-task-form] button[type=submit]"))
     s.wait(".item header .title", timeout=120, text="Slow start")
-    wt2 = os.path.join(work, "proj_task1")
+    wt2 = os.path.join(work, "proj_slow-start")
     eventually("the second task's worktree", lambda: os.path.isdir(wt2), lambda v: v, timeout=60)
     branch2 = git(wt2, "rev-parse", "--abbrev-ref", "HEAD")
     eventually("its agent is ready", lambda: agent(s, -1), lambda a: a in ("ready", "finished"), timeout=60)
@@ -401,7 +401,7 @@ try:
     s.type(s.wait("[data-task-branch]"), "friend:feature-x")
     s.click(s.wait("[data-task-form] button[type=submit]"))
     s.wait(".item header .title", timeout=120, text="feature-x")
-    wt3 = os.path.join(work, "proj_task1")
+    wt3 = os.path.join(work, "proj_feature-x")
     eventually("the fork task's worktree", lambda: os.path.isdir(wt3), lambda v: v, timeout=60)
     checkout = (git(wt3, "rev-parse", "--abbrev-ref", "HEAD"), git(wt3, "rev-parse", "--abbrev-ref", "@{u}"),
                 git(clone, "config", "--get", "remote.friend.url"))
@@ -434,7 +434,7 @@ try:
     where = s.js("return document.querySelector('.item [data-worktree]').title").split(" — ")[0]
     print("[own checkout] worktree:", where)
     check("the task works in the user's checkout",
-          os.path.samefile(where, clone) and not os.path.exists(os.path.join(work, "proj_task2")), where)
+          os.path.samefile(where, clone) and not os.path.exists(os.path.join(work, "proj_feature-y")), where)
     eventually("its agent is ready", lambda: agent(s, -2), lambda a: a in ("ready", "finished"), timeout=60)
     # Switched to another branch (as in an IDE): Ariekei sends the agent nothing until it is
     # back, but its terminal still takes what the user types.

@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! A work item's isolated working copy: an existing worktree that already has its branch,
-//! or a new one next to the main clone (`<clone>_pr<N>`, `<clone>_issue<N>`, `<clone>_task<n>`).
+//! or a new one next to the main clone (`<clone>_pr<N>`, `<clone>_issue<N>`, and for a task
+//! `<clone>_<its branch>`).
 
 use crate::git::{self, git, git_str};
 use crate::github::PrSummary;
@@ -204,12 +205,71 @@ pub fn issue_branch(number: i64, title: &str) -> String {
     branch_name(&format!("issue-{number}"), title)
 }
 
-/// Branch name for task `T<n>`: `task-<n>-<words of the title>`.
-pub fn task_branch(n: i64, title: &str) -> String {
-    branch_name(&format!("task-{n}"), title)
+/// Branch name for a new task `T<n>`: the words of its title (`task-<n>` if it has none), with
+/// `-2`, `-3`, … added while that name is taken: a branch of the clone's, local or of a remote,
+/// or the folder its worktree would get (`task_folder`).
+pub fn task_branch(repo: &Repo, n: i64, title: &str) -> String {
+    let name = match slug(title) {
+        s if s.is_empty() => format!("task-{n}"),
+        s => s,
+    };
+    let taken = |b: &str| {
+        sibling(repo, &task_folder(b)).exists()
+            || git_str(
+                &repo.path,
+                &[
+                    "for-each-ref",
+                    "--format=%(refname)",
+                    &format!("refs/heads/{b}"),
+                    &format!("refs/remotes/*/{b}"),
+                ],
+            )
+            .is_ok_and(|refs| !refs.is_empty())
+    };
+    (1..)
+        .map(|i| {
+            if i == 1 {
+                name.clone()
+            } else {
+                format!("{name}-{i}")
+            }
+        })
+        .find(|b| !taken(b))
+        .unwrap_or(name)
+}
+
+/// The folder of a task's worktree, `<clone>_<folder>`: named after its branch.
+fn task_folder(branch: &str) -> String {
+    branch.replace('/', "-")
+}
+
+/// `<clone>_<task_folder(branch)>`, or with `-2`, `-3`, … added while that is taken.
+fn free_task_path(repo: &Repo, branch: &str) -> PathBuf {
+    let name = task_folder(branch);
+    (1..)
+        .map(|i| {
+            sibling(
+                repo,
+                &if i == 1 {
+                    name.clone()
+                } else {
+                    format!("{name}-{i}")
+                },
+            )
+        })
+        .find(|p| !p.exists())
+        .unwrap_or_else(|| sibling(repo, &name))
 }
 
 fn branch_name(prefix: &str, title: &str) -> String {
+    match slug(title) {
+        s if s.is_empty() => prefix.to_owned(),
+        s => format!("{prefix}-{s}"),
+    }
+}
+
+/// The first words of `title` (up to 40 characters), lowercase, joined by `-`.
+fn slug(title: &str) -> String {
     let mut slug = String::new();
     for word in title
         .to_lowercase()
@@ -224,11 +284,7 @@ fn branch_name(prefix: &str, title: &str) -> String {
         }
         slug.push_str(word);
     }
-    if slug.is_empty() {
-        prefix.to_owned()
-    } else {
-        format!("{prefix}-{slug}")
-    }
+    slug
 }
 
 /// Where pushes of new branches go: the viewer's fork if the clone has a remote for it,
@@ -256,20 +312,19 @@ pub fn prepare_issue(
     )
 }
 
-/// A worktree for task `T<n>`, like an issue's: branch `task-<n>-…`, path `<clone>_task<n>`.
+/// A worktree for task `T<n>`, like an issue's: a new branch named after its title
+/// (`task_branch`) in `<clone>_<branch>`. `branch`: the one it had before, if any (its
+/// worktree is gone).
 pub fn prepare_task(
     repo: &Repo,
     n: i64,
     title: &str,
     default_branch: &str,
+    branch: Option<&str>,
 ) -> Result<Prepared, String> {
-    new_branch_worktree(
-        repo,
-        task_branch(n, title),
-        &format!("task{n}"),
-        default_branch,
-        "start the task",
-    )
+    let branch = branch.map_or_else(|| task_branch(repo, n, title), str::to_owned);
+    let folder = task_folder(&branch);
+    new_branch_worktree(repo, branch, &folder, default_branch, "start the task")
 }
 
 /// Whether a new task `T<n>` would run into what an earlier task `T<n>` left: its worktree
@@ -292,14 +347,16 @@ pub fn task_number_taken(repo: &Repo, n: i64) -> bool {
 
 /// A worktree for task `T<n>` on an existing branch (e.g. on a fork): adds a remote for its
 /// repository if the clone has none, fetches the branch and checks it out in
-/// `<clone>_task<n>`, tracking it, so a plain `git push` updates it. A branch that is not on
-/// GitHub but in the clone is used as it is (`on_local_branch`).
+/// `<clone>_<branch>`, tracking it, so a plain `git push` updates it. A branch that is not on
+/// GitHub but in the clone is used as it is (`on_local_branch`). `own`: the branch of its own
+/// it had before, if any (when the clone's branch of that name tracks something else).
 pub fn prepare_task_on(
     repo: &Repo,
     n: i64,
     title: &str,
     head: &BranchRef,
     default_branch: &str,
+    own: Option<&str>,
 ) -> Result<Prepared, String> {
     let BranchRef {
         owner,
@@ -328,12 +385,14 @@ pub fn prepare_task_on(
                 let _ = git(&repo.path, &["remote", "remove", &remote]);
             }
             if local {
-                return on_local_branch(repo, n, branch, (!added || keep).then_some(&remote));
+                return on_local_branch(repo, branch, (!added || keep).then_some(&remote));
             }
             return Err(format!("could not fetch {branch} from {owner}/{name}: {e}"));
         }
     };
-    let own = task_branch(n, title);
+    let own = own
+        .filter(|b| b != branch)
+        .map_or_else(|| task_branch(repo, n, title), str::to_owned);
     // A task on the default branch itself works in the clone if that is where it is.
     let on_base = remote == repo.base_remote && branch == default_branch;
     let base = (!on_base).then_some(default_branch);
@@ -347,13 +406,7 @@ pub fn prepare_task_on(
             note: None,
         });
     }
-    let path = sibling(repo, &format!("task{n}"));
-    if path.exists() {
-        return Err(format!(
-            "{} already exists; move it away to start the task",
-            path.display()
-        ));
-    }
+    let path = free_task_path(repo, branch);
     let (branch, note, branch_created) =
         track_worktree(&repo.path, &path, branch, own, &tracking, &tracking)?;
     Ok(Prepared {
@@ -439,16 +492,11 @@ fn new_branch_worktree(
     })
 }
 
-/// A worktree for task `T<n>` on `branch`, which is only in the clone (not on GitHub yet):
-/// the worktree that has it checked out (the clone itself, too), or a new `<clone>_task<n>`.
+/// A worktree for a task on `branch`, which is only in the clone (not on GitHub yet): the
+/// worktree that has it checked out (the clone itself, too), or a new `<clone>_<branch>`.
 /// The branch is left as it is; without an upstream it gets one on `push_to`, so a plain
 /// `git push` creates it there (and its PR can then be linked to the task).
-fn on_local_branch(
-    repo: &Repo,
-    n: i64,
-    branch: &str,
-    push_to: Option<&str>,
-) -> Result<Prepared, String> {
+fn on_local_branch(repo: &Repo, branch: &str, push_to: Option<&str>) -> Result<Prepared, String> {
     forget_missing(&repo.path);
     if let Some(remote) = push_to.filter(|_| git::upstream(&repo.path, branch).is_none()) {
         git(
@@ -476,13 +524,7 @@ fn on_local_branch(
             note: None,
         });
     }
-    let path = sibling(repo, &format!("task{n}"));
-    if path.exists() {
-        return Err(format!(
-            "{} already exists; move it away to start the task",
-            path.display()
-        ));
-    }
+    let path = free_task_path(repo, branch);
     let path_arg = path.to_string_lossy().into_owned();
     git(
         &repo.path,
@@ -1063,25 +1105,46 @@ mod tests {
     #[test]
     fn task_worktree_is_a_new_branch_from_the_default_branch() {
         let (root, repo, _pr) = setup();
-        let p = prepare_task(&repo, 2, "Why does sync stall?", "main").unwrap();
-        assert_eq!(canon(&p.path), canon(&root.path().join("proj_task2")));
+        let p = prepare_task(&repo, 2, "Why does sync stall?", "main", None).unwrap();
+        // Both named after its title.
+        assert_eq!(
+            canon(&p.path),
+            canon(&root.path().join("proj_why-does-sync-stall"))
+        );
         assert_eq!(
             (p.branch.as_str(), p.adopted),
-            ("task-2-why-does-sync-stall", false)
+            ("why-does-sync-stall", false)
         );
         assert_eq!(
             git::head(&p.path).unwrap(),
             git_str(&repo.path, &["rev-parse", "origin/main"]).unwrap()
         );
         assert_eq!(
-            git_str(
-                &repo.path,
-                &["config", "branch.task-2-why-does-sync-stall.merge"]
-            )
-            .unwrap(),
-            "refs/heads/task-2-why-does-sync-stall"
+            git_str(&repo.path, &["config", "branch.why-does-sync-stall.merge"]).unwrap(),
+            "refs/heads/why-does-sync-stall"
         );
-        assert_eq!(task_branch(3, "!"), "task-3");
+        // Asked again (its worktree is gone), it keeps its branch.
+        assert_eq!(
+            prepare_task(
+                &repo,
+                2,
+                "Why does sync stall?",
+                "main",
+                Some("why-does-sync-stall")
+            )
+            .unwrap()
+            .branch,
+            "why-does-sync-stall"
+        );
+        // A name the clone has (a branch, local or a remote's, or the folder) gets a number.
+        assert_eq!(
+            task_branch(&repo, 3, "Why does sync stall?"),
+            "why-does-sync-stall-2"
+        );
+        assert_eq!(task_branch(&repo, 3, "Main"), "main-2");
+        std::fs::create_dir(root.path().join("proj_tidy-up")).unwrap();
+        assert_eq!(task_branch(&repo, 3, "Tidy up"), "tidy-up-2");
+        assert_eq!(task_branch(&repo, 3, "!"), "task-3");
     }
 
     #[test]
@@ -1142,7 +1205,7 @@ mod tests {
             repo: "proj".into(),
             branch: "main".into(),
         };
-        let p = prepare_task_on(&repo, 1, "", &main, "main").unwrap();
+        let p = prepare_task_on(&repo, 1, "", &main, "main", None).unwrap();
         assert_eq!(
             (canon(&p.path), p.branch.as_str(), p.adopted),
             (canon(&repo.path), "main", true)

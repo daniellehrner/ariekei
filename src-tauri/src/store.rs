@@ -802,6 +802,12 @@ impl Store {
         self.update(id, "kept = ?2", kept)
     }
 
+    /// The branch of its own task `id` was given (named after its title, once): kept with the
+    /// task, so a worktree made again (e.g. after its folder was deleted) is on it again.
+    pub fn set_task_branch(&self, id: i64, branch: &str) -> Result<(), String> {
+        self.update(id, "snapshot = json_set(snapshot, '$.branch', ?2)", branch)
+    }
+
     /// Item `id` is gone from GitHub (deleted, or moved to another repository): it counts as
     /// closed.
     pub fn mark_gone(&self, id: i64) -> Result<(), String> {

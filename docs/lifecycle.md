@@ -26,17 +26,17 @@ Work that starts with nothing on GitHub, e.g. investigating a bug. It may end as
 PRs and issues, or be thrown away.
 
 - **New task** (Ctrl+N, or + in the Inbox header): a title and, optionally, what to look into. Ariekei
-  creates the branch `task-<n>-<words of the title>` from the default branch in
-  `../<clone>_task<n>`, set up for `git push` like an issue's, and starts the agent there with
-  the title and notes as context. Tasks are numbered per repo: T1, T2, …
+  creates a branch named after the title (with `-2`, … if the clone has that name already) from
+  the default branch in `../<clone>_<branch>`, set up for `git push` like an issue's, and starts
+  the agent there with the title and notes as context. Tasks are numbered per repo: T1, T2, …
 - **On an existing branch:** give New task a branch instead of (or as well as) a title, e.g. a
   branch on a fork that has no PR yet: `owner:branch` (the fork has the repo's name),
   `owner/repo:branch`, a GitHub branch URL (`https://github.com/owner/repo/tree/<branch>`), or
   a plain branch name of the repo itself. Ariekei uses the clone's remote for that repository,
   or adds one named after the owner as `gh pr checkout` does, fetches the branch and checks it
-  out in `../<clone>_task<n>` tracking it, so a plain `git push` updates it. Without a title the
+  out in `../<clone>_<branch>` tracking it, so a plain `git push` updates it. Without a title the
   task is named after the branch. If a local branch of that name tracks something else, the
-  worktree gets `task-<n>-…` instead and leaves it alone. A branch that can't be fetched leaves
+  worktree gets a branch named after the title instead and leaves it alone. A branch that can't be fetched leaves
   no task and no remote behind. The review compares the branch with the default branch.
 - **The agent opens the PRs and issues**, when you ask it to: `gh pr create` / `gh issue create`
   (or a GitHub tool whose name contains `create_pull_request` / `create_issue`). Ariekei reads
