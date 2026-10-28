@@ -272,6 +272,24 @@ pub fn prepare_task(
     )
 }
 
+/// Whether a new task `T<n>` would run into what an earlier task `T<n>` left: its worktree
+/// folder, or a branch of its (`task-<n>`, `task-<n>-…`), e.g. kept by a PR its agent opened
+/// (an item of its own, which outlives the task).
+pub fn task_number_taken(repo: &Repo, n: i64) -> bool {
+    let branches = format!("refs/heads/task-{n}");
+    sibling(repo, &format!("task{n}")).exists()
+        || git_str(
+            &repo.path,
+            &[
+                "for-each-ref",
+                "--format=%(refname)",
+                &branches,
+                &format!("{branches}-*"),
+            ],
+        )
+        .is_ok_and(|refs| !refs.is_empty())
+}
+
 /// A worktree for task `T<n>` on an existing branch (e.g. on a fork): adds a remote for its
 /// repository if the clone has none, fetches the branch and checks it out in
 /// `<clone>_task<n>`, tracking it, so a plain `git push` updates it. A branch that is not on

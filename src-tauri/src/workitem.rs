@@ -556,7 +556,9 @@ pub fn create_task(
         .map(|h| serde_json::to_value(h).unwrap_or_default());
     let id = state
         .store
-        .create_task(repo.id, title, notes.trim(), snapshot.as_ref())?;
+        .create_task(repo.id, title, notes.trim(), snapshot.as_ref(), |n| {
+            worktree::task_number_taken(&repo, n)
+        })?;
     if let Err(e) = prepare(state, id) {
         state.store.delete_item(id)?;
         return Err(e);
@@ -1969,13 +1971,38 @@ mod tests {
     #[test]
     fn a_task_whose_worktree_cannot_be_made_is_not_left_behind() {
         let app = TestApp::new();
-        std::fs::create_dir_all(app.path("proj_task1")).unwrap();
-        let err = create_task(&app.state, Some(app.repo.clone()), "Blocked", "", "").unwrap_err();
-        assert!(err.contains("already exists"), "{err}");
+        let err = create_task(
+            &app.state,
+            Some(app.repo.clone()),
+            "Blocked",
+            "",
+            "no-such-branch",
+        )
+        .unwrap_err();
+        assert!(err.contains("could not fetch no-such-branch"), "{err}");
         assert!(app.items().iter().all(|i| !i.is_task()));
         assert!(
             create_task(&app.state, Some(app.repo.clone()), "  ", "", "").is_err(),
             "no title"
+        );
+    }
+
+    #[test]
+    fn a_task_skips_the_numbers_of_what_earlier_tasks_left() {
+        // T1's worktree folder, and a branch of T2 (kept, say, by the PR T2's agent opened,
+        // after the task itself was done).
+        let app = TestApp::new();
+        std::fs::create_dir_all(app.path("proj_task1")).unwrap();
+        crate::testkit::git(&app.clone, &["branch", "task-2-old-work", "main"]);
+        let id = create_task(&app.state, Some(app.repo.clone()), "Next", "", "").unwrap();
+        let task = app.state.store.item(id).unwrap();
+        assert_eq!(
+            (task.number, task.branch.as_deref()),
+            (-3, Some("task-3-next"))
+        );
+        assert_eq!(
+            std::fs::canonicalize(task.worktree_path.unwrap()).unwrap(),
+            std::fs::canonicalize(app.path("proj_task3")).unwrap()
         );
     }
 

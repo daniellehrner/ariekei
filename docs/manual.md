@@ -477,7 +477,8 @@ Press **Ctrl+N** (Cmd+N on macOS) or **+** in the Inbox header. The form has:
 **Start task** (or **Ctrl+Enter** in any field; **Esc** closes the form) creates the branch
 `task-<n>-<words of the title>` from the default branch in
 `../<clone>_task<n>` (set up for `git push` like an issue's) and starts the agent. Tasks are
-numbered per repository: T1, T2, …
+numbered per repository: T1, T2, … A number whose worktree folder or `task-<n>` branches are
+still there (kept, say, by a PR an earlier task's agent opened) is skipped.
 
 ### A task on an existing branch
 

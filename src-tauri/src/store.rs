@@ -715,22 +715,28 @@ impl Store {
     }
 
     /// A new task (see the migration for how tasks are stored); returns its id. `head` is
-    /// the existing branch it works on, if any (`worktree::BranchRef`).
+    /// the existing branch it works on, if any (`worktree::BranchRef`). Its number is the next
+    /// one not `taken` (by what an earlier task of that number left behind, see
+    /// `worktree::task_number_taken`).
     pub fn create_task(
         &self,
         repo_id: i64,
         title: &str,
         notes: &str,
         head: Option<&serde_json::Value>,
+        taken: impl Fn(i64) -> bool,
     ) -> Result<i64, String> {
         let conn = self.conn.lock().unwrap();
-        let number: i64 = conn
+        let mut number: i64 = conn
             .query_row(
                 "SELECT COALESCE(MIN(number), 0) - 1 FROM work_items WHERE repo_id = ?1 AND number < 0",
                 [repo_id],
                 |r| r.get(0),
             )
             .map_err(err)?;
+        while taken(-number) {
+            number -= 1;
+        }
         conn.execute(
             "INSERT INTO work_items (repo_id, number, snapshot, open, role, kind, last_seen)
              VALUES (?1, ?2, json_patch(json_object('title', ?3, 'notes', ?4,
@@ -1203,9 +1209,11 @@ mod tests {
     fn tasks_get_negative_numbers_stay_open_and_lose_their_links_when_deleted() {
         let (store, repo) = store_with_repo();
         let t1 = store
-            .create_task(repo.id, "Flaky sync", "look at peers", None)
+            .create_task(repo.id, "Flaky sync", "look at peers", None, |_| false)
             .unwrap();
-        let t2 = store.create_task(repo.id, "Slow start", "", None).unwrap();
+        let t2 = store
+            .create_task(repo.id, "Slow start", "", None, |_| false)
+            .unwrap();
         let task = store.item(t1).unwrap();
         assert_eq!((task.kind.as_str(), task.number), ("task", -1));
         assert_eq!(task.snapshot["title"], "Flaky sync");
@@ -1232,7 +1240,11 @@ mod tests {
         // The next task does not reuse a live number.
         assert_eq!(
             store
-                .item(store.create_task(repo.id, "x", "", None).unwrap())
+                .item(
+                    store
+                        .create_task(repo.id, "x", "", None, |_| false)
+                        .unwrap()
+                )
                 .unwrap()
                 .number,
             -3
