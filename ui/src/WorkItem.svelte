@@ -5,6 +5,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { onMount, untrack } from "svelte";
+  import AgentWorktrees from "./AgentWorktrees.svelte";
   import Comments from "./Comments.svelte";
   import Overview from "./Overview.svelte";
   import TaskOverview from "./TaskOverview.svelte";
@@ -30,12 +31,15 @@
     repoId,
     viewer,
     onchanged,
+    onopen,
   }: {
     row: Row;
     repoId: number;
     /** The user's GitHub login. */
     viewer: string;
     onchanged: () => void;
+    /** Shows another item (e.g. a task made here). */
+    onopen: (id: number) => void;
   } = $props();
 
   // Per-item view state, stored with the work item so switching back restores it.
@@ -413,6 +417,7 @@
       {/if}
     </div>
   {/if}
+  <AgentWorktrees {id} kind={row.kind === "pr" ? "PR" : row.kind} {status} onopen={(task) => { onchanged(); onopen(task); }} />
   {#if moved}
     <div class="banner">
       <Banner tone="bad" icon="branch" data-moved>

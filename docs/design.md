@@ -78,6 +78,11 @@ told apart in grey-scale and with colour blindness:
   a click copies it) and ends with the agent's status at the right.
 - While the agent waits for permission, a strip under the header shows what it asks to run, with
   "Answer in Terminal". Below a 1200 px window the command wraps instead of being cut.
+- The worktrees the agent made itself are listed under the header in an agent-tinted box (the
+  agent's doing): folder (click copies the path), branch, and what removing each would lose in
+  amber, or "nothing unsaved"; **Make it a task** and **Remove** at the right. Remove asks with
+  a neutral confirm when nothing is lost, a red one when something is. Nothing shows while there
+  are none.
 - When the agent's worktree is on another branch than the item's (it may be the user's own
   checkout), a red banner says so, with **Switch back to `<branch>`** (and, on a detached HEAD,
   **Move `<branch>` here**; on another branch, **Continue on `<branch>`**, which makes it the

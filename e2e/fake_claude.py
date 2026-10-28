@@ -299,6 +299,19 @@ def turn(text, say, hook, keys, mcp=None):
         subprocess.run([*git, "commit", "-qm", message], check=True, capture_output=True)
         hook("PostToolUse", tool_name="Bash", tool_input={"command": command})
         say(f"⏺ Committed {message}")
+    elif made := re.search(r"make a worktree (\S+)( with a draft)?", text, re.I):
+        # Next to the one it works in, on a new branch: as an agent trying something aside.
+        name, draft = made.group(1), made.group(2)
+        command = f"git worktree add -q -b {name} ../{name}"
+        hook("PreToolUse", tool_name="Bash", tool_input={"command": command})
+        path = os.path.join(os.path.dirname(os.getcwd()), name)
+        subprocess.run(["git", "worktree", "add", "-q", "-b", name, path], check=True, capture_output=True)
+        if draft:
+            with open(os.path.join(path, "draft.txt"), "w", encoding="utf-8") as f:
+                f.write("draft\n")
+        hook("PostToolUse", tool_name="Bash", tool_input={"command": command},
+             tool_response={"stdout": "", "stderr": "", "interrupted": False})
+        say(f"⏺ Made the worktree ../{name}")
     elif job := re.search(r"(\d+) second job in the background", text):
         command = f"sleep {job.group(1)}"
         hook("PreToolUse", tool_name="Bash", tool_input={"command": command, "run_in_background": True})

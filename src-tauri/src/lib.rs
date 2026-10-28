@@ -1,6 +1,7 @@
 // Copyright contributors to Ariekei.
 // SPDX-License-Identifier: Apache-2.0
 
+mod agent_worktrees;
 mod claude;
 mod confine;
 mod context;
@@ -49,6 +50,8 @@ pub struct AppState {
     events: Arc<dyn events::Events>,
     /// The user agreed to quit although it stops agents' work (`quit`).
     quit_confirmed: std::sync::atomic::AtomicBool,
+    /// The worktrees there were before the agents made theirs (`agent_worktrees`).
+    agent_worktrees: agent_worktrees::Watch,
 }
 
 impl AppState {
@@ -67,6 +70,7 @@ impl AppState {
             windows: windows::Windows::default(),
             events,
             quit_confirmed: Default::default(),
+            agent_worktrees: Default::default(),
         }
     }
 
@@ -499,6 +503,32 @@ fn delete_drafts(state: State<'_, AppState>, id: i64, drafts: Vec<i64>) -> Res<(
     drafts::delete(&state, id, &drafts)
 }
 
+/// The worktrees item `id`'s agent made itself (`agent_worktrees`).
+#[tauri::command]
+async fn agent_worktrees(app: tauri::AppHandle, id: i64) -> Res<Vec<agent_worktrees::Shown>> {
+    blocking(app, move |s| agent_worktrees::list(s, id)).await
+}
+
+/// Removes one; `force`: although that loses work (the user saw what).
+#[tauri::command]
+async fn remove_agent_worktree(
+    app: tauri::AppHandle,
+    id: i64,
+    worktree: i64,
+    force: bool,
+) -> Res<()> {
+    blocking(app, move |s| {
+        agent_worktrees::remove_one(s, id, worktree, force)
+    })
+    .await
+}
+
+/// Makes one a task of its own; returns the task.
+#[tauri::command]
+async fn agent_worktree_task(app: tauri::AppHandle, id: i64, worktree: i64) -> Res<i64> {
+    blocking(app, move |s| agent_worktrees::make_task(s, id, worktree)).await
+}
+
 #[tauri::command]
 async fn submit_review(
     app: tauri::AppHandle,
@@ -758,6 +788,16 @@ pub fn run() {
             if let Err(e) = workitem::unlink_from_tasks(&app.state::<AppState>()) {
                 tracing::warn!("unlinking the tasks' PRs and issues failed: {e}");
             }
+            // The worktrees there are now are nobody's: the agents' are those made later.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let state = handle.state::<AppState>();
+                for repo in state.store.repos().unwrap_or_default() {
+                    if let Err(e) = state.agent_worktrees.baseline(&repo.path) {
+                        tracing::warn!("listing the worktrees of {}: {e}", repo.path.display());
+                    }
+                }
+            });
             windows::restore(app.handle());
             #[cfg(feature = "e2e")]
             e2e::start(app.handle());
@@ -824,6 +864,9 @@ pub fn run() {
             add_draft,
             edit_draft,
             delete_drafts,
+            agent_worktrees,
+            remove_agent_worktree,
+            agent_worktree_task,
             submit_review,
             reply_comment,
             post_comment,

@@ -382,7 +382,8 @@ fn handle(stream: TcpStream, expected_path: &str) -> std::io::Result<Option<Hook
 }
 
 /// Routes a hook event to its work item and updates the item's status. What a task's agent
-/// opened on GitHub is added to the Inbox in the background (it fetches each from GitHub).
+/// opened on GitHub is added to the Inbox in the background (it fetches each from GitHub), and
+/// so are worktrees it made noticed (`agent_worktrees`).
 pub fn dispatch(app: &AppHandle, event: HookEvent) {
     // Events can arrive before the app state exists (startup race): drop those.
     let Some(state) = app.try_state::<crate::AppState>() else {
@@ -392,6 +393,7 @@ pub fn dispatch(app: &AppHandle, event: HookEvent) {
         let app = app.clone();
         std::thread::spawn(move || track_opened(&app.state::<crate::AppState>(), &links));
     }
+    crate::agent_worktrees::after_event(app, &state, &event);
 }
 
 /// The part of `dispatch` that needs no app: records the session start and the status of

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! What the backend tells the windows and the desktop: agent status, Inbox refreshes and
-//! poll errors, review drafts, and notices. The app sends them through Tauri (`TauriEvents`);
+//! poll errors, review drafts, the agents' own worktrees, and notices. The app sends them through Tauri (`TauriEvents`);
 //! tests record them (`Recorded`), so the logic behind them runs without a Tauri app.
 
 use crate::hooks::AgentStatus;
@@ -19,6 +19,8 @@ pub trait Events: Send + Sync {
     fn inbox_error(&self, repo: i64, message: &str);
     /// The review drafts of item `id` changed, by the user or its agent (`drafts-changed`).
     fn drafts_changed(&self, id: i64);
+    /// The worktrees item `id`'s agent made changed (`agent-worktrees-changed`).
+    fn worktrees_changed(&self, id: i64);
     /// Tells the user something about item `key`: in the focused window, or as an OS
     /// notification. `kind`: needs-you, finished, error, ci-failing, activity or lifecycle;
     /// `body`: the detail after the kind's reason (the whole sentence for lifecycle news).
@@ -81,6 +83,10 @@ impl Events for TauriEvents {
         let _ = self.0.emit("drafts-changed", id);
     }
 
+    fn worktrees_changed(&self, id: i64) {
+        let _ = self.0.emit("agent-worktrees-changed", id);
+    }
+
     // While an Ariekei window is focused the notice appears in it (an OS notification is
     // easy to miss with the app in front, and some desktops don't show one then).
     fn notice(&self, key: &str, kind: &str, title: &str, body: &str) {
@@ -137,6 +143,7 @@ pub enum Sent {
     InboxChanged(i64),
     InboxError(i64, String),
     DraftsChanged(i64),
+    WorktreesChanged(i64),
     Notice {
         key: String,
         kind: String,
@@ -189,6 +196,10 @@ impl Events for Recorded {
 
     fn drafts_changed(&self, id: i64) {
         self.sent.lock().unwrap().push(Sent::DraftsChanged(id));
+    }
+
+    fn worktrees_changed(&self, id: i64) {
+        self.sent.lock().unwrap().push(Sent::WorktreesChanged(id));
     }
 
     fn notice(&self, key: &str, kind: &str, title: &str, body: &str) {

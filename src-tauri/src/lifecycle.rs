@@ -22,7 +22,7 @@ use std::path::Path;
 
 /// Item `id`'s agent is in the middle of a turn (working, or waiting for permission): its
 /// cleanup waits.
-fn busy(state: &AppState, id: i64) -> bool {
+pub(crate) fn busy(state: &AppState, id: i64) -> bool {
     matches!(
         state.terminals.status(&id.to_string()),
         Some(AgentStatus::Working | AgentStatus::WaitingForPermission)
@@ -41,14 +41,37 @@ fn shown(state: &AppState, id: i64) -> bool {
 /// A worktree Ariekei adopted (e.g. the user's own checkout) is kept, so what is in it is not
 /// lost.
 pub fn blockers(repo: &Repo, item: &WorkItem, prs: &[i64]) -> Vec<String> {
-    let mut found = vec![];
     if !item.worktree_created {
-        return found;
+        return vec![];
     }
     let dir = item.worktree_path.as_deref().filter(|p| p.exists());
     let own_branch = item.branch.as_deref().filter(|b| !b.is_empty());
     let deleted_branch =
         own_branch.filter(|b| item.branch_created && git::branch_exists(&repo.path, b));
+    if dir.is_none() && deleted_branch.is_none() {
+        return vec![];
+    }
+    fetch_heads(repo, prs, &item.short_name());
+    losses(repo, dir, own_branch, deleted_branch)
+}
+
+/// Fetches GitHub's copies of the heads of `prs` (see `blockers`); `whose`: for the log.
+pub(crate) fn fetch_heads(repo: &Repo, prs: &[i64], whose: &str) {
+    if let Err(e) = worktree::fetch_pull_heads(&repo.path, &repo.base_remote, prs) {
+        tracing::warn!("{whose}: could not fetch its PR heads: {e}");
+    }
+}
+
+/// What removing worktree `dir` (if there is one) and deleting `deleted_branch` would lose:
+/// uncommitted changes, and commits not on GitHub (`not_on_github`, so fetch the PR heads
+/// first). `own_branch` is the one checked out there.
+pub(crate) fn losses(
+    repo: &Repo,
+    dir: Option<&Path>,
+    own_branch: Option<&str>,
+    deleted_branch: Option<&str>,
+) -> Vec<String> {
+    let mut found = vec![];
     if let Some(dir) = dir {
         match git::git_str(dir, &["status", "--porcelain"]) {
             Ok(status) if !status.is_empty() => {
@@ -79,9 +102,6 @@ pub fn blockers(repo: &Repo, item: &WorkItem, prs: &[i64]) -> Vec<String> {
     }
     if tips.is_empty() {
         return found;
-    }
-    if let Err(e) = worktree::fetch_pull_heads(&repo.path, &repo.base_remote, prs) {
-        tracing::warn!("{}: could not fetch its PR heads: {e}", item.short_name());
     }
     let tips: Vec<&str> = tips.iter().map(String::as_str).collect();
     match not_on_github(
@@ -169,7 +189,9 @@ pub fn clean_up(state: &AppState, id: i64) -> Result<Cleanup, String> {
         .store
         .repo(item.repo_id)?
         .ok_or("repository not found")?;
-    let found = blockers(&repo, &item, &pull_heads(state, &item)?);
+    let prs = pull_heads(state, &item)?;
+    let mut found = blockers(&repo, &item, &prs);
+    found.extend(crate::agent_worktrees::blockers(state, &repo, &item, &prs)?);
     if !found.is_empty() {
         state.store.set_cleanup_blockers(id, Some(&found))?;
         return Ok(Cleanup::Blocked { blockers: found });
@@ -191,14 +213,17 @@ pub fn clean_up(state: &AppState, id: i64) -> Result<Cleanup, String> {
 }
 
 /// What discarding task `id` would lose besides the agent session: uncommitted changes and
-/// commits that are not on GitHub.
+/// commits that are not on GitHub, in its worktree and those its agent made.
 pub fn discard_losses(state: &AppState, id: i64) -> Result<Vec<String>, String> {
     let item = state.store.item(id)?;
     let repo = state
         .store
         .repo(item.repo_id)?
         .ok_or("repository not found")?;
-    Ok(blockers(&repo, &item, &pull_heads(state, &item)?))
+    let prs = pull_heads(state, &item)?;
+    let mut found = blockers(&repo, &item, &prs);
+    found.extend(crate::agent_worktrees::blockers(state, &repo, &item, &prs)?);
+    Ok(found)
 }
 
 /// Deletes task `id` with its worktree and branch even if that loses work (the user
@@ -222,9 +247,10 @@ pub fn discard(state: &AppState, id: i64) -> Result<Cleanup, String> {
     Ok(Cleanup::Cleaned { removed })
 }
 
-/// Removes the item's agent, worktree and branch (if Ariekei created them and no other item
-/// works there), transcript, refs and context files; `force`: even with uncommitted changes.
-/// The transcript goes last: if git refuses to remove the worktree, the agent can resume.
+/// Removes the item's agent, the worktrees its agent made (first: they may be inside its own),
+/// its worktree and branch (if Ariekei created them and no other item works there),
+/// transcript, refs and context files; `force`: even with uncommitted changes. The transcript
+/// goes last: if git refuses to remove a worktree, the agent can resume.
 fn remove(
     state: &AppState,
     repo: &Repo,
@@ -237,6 +263,9 @@ fn remove(
         state.terminals.close(&key);
         removed.push("the agent process".to_owned());
     }
+    removed.extend(crate::agent_worktrees::remove_all(
+        state, repo, item, force,
+    )?);
     if let Some(dir) = item.worktree_path.as_deref() {
         let sharing: Vec<String> = state
             .store
@@ -299,7 +328,7 @@ fn remove(
 
 /// Whether `a` and `b` are the same folder. Paths that git listed and paths Ariekei made are
 /// spelled differently on macOS (`/private/var/…`) and Windows (`C:/Users/RUNNER~1/…`).
-fn same_dir(a: &Path, b: &Path) -> bool {
+pub(crate) fn same_dir(a: &Path, b: &Path) -> bool {
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
         (Ok(a), Ok(b)) => a == b,
         _ => a == b,
@@ -310,7 +339,7 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 /// worktree has changes after all. Git also refuses any worktree with an initialized
 /// submodule, clean or not; a changed submodule shows in `git status` (checked before), so
 /// such a worktree is removed with --force. A locked one is refused.
-fn remove_worktree(clone: &Path, dir: &Path, force: bool) -> Result<(), String> {
+pub(crate) fn remove_worktree(clone: &Path, dir: &Path, force: bool) -> Result<(), String> {
     let dir_arg = dir.to_string_lossy();
     let mut args = vec!["worktree", "remove", dir_arg.as_ref()];
     if force {

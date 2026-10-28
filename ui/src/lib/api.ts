@@ -92,6 +92,18 @@ export interface Prepared {
   note: string | null;
 }
 
+/** A worktree an item's agent made itself; `agent-worktrees-changed` says when they change. */
+export interface AgentWorktree {
+  id: number;
+  path: string;
+  /** null: a detached HEAD. */
+  branch: string | null;
+  /** The agent made the branch too: it goes with the worktree. */
+  branchCreated: boolean;
+  /** What removing it would lose (uncommitted changes, commits not on GitHub). */
+  losses: string[];
+}
+
 export interface Commit {
   sha: string;
   subject: string;
@@ -270,6 +282,12 @@ export const api = {
   replyComment: (id: number, commentId: number, body: string) => invoke<void>("reply_comment", { id, commentId, body }),
   postComment: (id: number, body: string) => invoke<void>("post_comment", { id, body }),
   resolveThread: (threadId: string, resolved: boolean) => invoke<void>("resolve_thread", { threadId, resolved }),
+  agentWorktrees: (id: number) => invoke<AgentWorktree[]>("agent_worktrees", { id }),
+  /** `force`: although that loses its `losses` (the user saw them). */
+  removeAgentWorktree: (id: number, worktree: number, force: boolean) =>
+    invoke<void>("remove_agent_worktree", { id, worktree, force }),
+  /** Makes it a task of its own on its branch; returns the task. */
+  agentWorktreeTask: (id: number, worktree: number) => invoke<number>("agent_worktree_task", { id, worktree }),
   markDone: (id: number) => invoke<Cleanup>("mark_done", { id }),
   keepItem: (id: number) => invoke<void>("keep_item", { id }),
   discardLosses: (id: number) => invoke<string[]>("discard_losses", { id }),

@@ -164,6 +164,19 @@ CREATE TABLE review_drafts (
 );
 CREATE INDEX review_drafts_item ON review_drafts(item_id);
 "#,
+    r#"
+-- Worktrees an item's agent made itself (`agent_worktrees`): cleaned up with the item.
+CREATE TABLE agent_worktrees (
+    id INTEGER PRIMARY KEY,
+    item_id INTEGER NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
+    path TEXT NOT NULL UNIQUE,
+    -- NULL for a detached HEAD.
+    branch TEXT,
+    -- The agent made the branch too: it goes with the worktree.
+    branch_created INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX agent_worktrees_item ON agent_worktrees(item_id);
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -270,6 +283,19 @@ pub struct ReviewDraft {
     pub author: String,
     /// The user changed the agent's draft.
     pub edited: bool,
+}
+
+/// A worktree an item's agent made itself (`agent_worktrees`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentWorktree {
+    pub id: i64,
+    pub item_id: i64,
+    pub path: PathBuf,
+    /// `None` for a detached HEAD.
+    pub branch: Option<String>,
+    /// The agent made the branch too: it goes with the worktree.
+    pub branch_created: bool,
 }
 
 /// One PR as found by a poll.
@@ -1013,6 +1039,60 @@ impl Store {
         }
         Ok(n)
     }
+
+    /// The worktrees the agents of repo `repo`'s items made (`None`: of item `item` only).
+    pub fn agent_worktrees(
+        &self,
+        repo: i64,
+        item: Option<i64>,
+    ) -> Result<Vec<AgentWorktree>, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT a.id, a.item_id, a.path, a.branch, a.branch_created
+                 FROM agent_worktrees a JOIN work_items w ON w.id = a.item_id
+                 WHERE w.repo_id = ?1 AND (?2 IS NULL OR a.item_id = ?2) ORDER BY a.id",
+            )
+            .map_err(err)?;
+        stmt.query_map(params![repo, item], |r| {
+            Ok(AgentWorktree {
+                id: r.get(0)?,
+                item_id: r.get(1)?,
+                path: PathBuf::from(r.get::<_, String>(2)?),
+                branch: r.get(3)?,
+                branch_created: r.get(4)?,
+            })
+        })
+        .map_err(err)?
+        .collect::<Result<_, _>>()
+        .map_err(err)
+    }
+
+    /// Item `id`'s agent made the worktree at `path` (one that was at the same path before is
+    /// forgotten).
+    pub fn add_agent_worktree(
+        &self,
+        id: i64,
+        path: &Path,
+        branch: Option<&str>,
+        branch_created: bool,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO agent_worktrees (item_id, path, branch, branch_created) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(path) DO UPDATE SET item_id = ?1, branch = ?3, branch_created = ?4",
+            params![id, path_str(path), branch, branch_created],
+        )
+        .map(|_| ())
+        .map_err(err)
+    }
+
+    pub fn delete_agent_worktree(&self, worktree: i64) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM agent_worktrees WHERE id = ?1", [worktree])
+            .map(|_| ())
+            .map_err(err)
+    }
 }
 
 #[cfg(test)]
@@ -1464,5 +1544,40 @@ mod tests {
         assert_eq!(store.delete_drafts(id, &[mine]).unwrap(), 1);
         store.delete_item(id).unwrap();
         assert!(store.drafts(id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn agent_worktrees_are_their_items_and_go_with_them() {
+        let (store, repo) = store_with_repo();
+        let id = store.track(repo.id, &polled(7, json!({}))).unwrap();
+        let other = store.track(repo.id, &polled(8, json!({}))).unwrap();
+        store
+            .add_agent_worktree(id, Path::new("/w/a"), Some("try-a"), true)
+            .unwrap();
+        store
+            .add_agent_worktree(other, Path::new("/w/b"), None, false)
+            .unwrap();
+        // Made again at the same path, by another agent.
+        store
+            .add_agent_worktree(other, Path::new("/w/a"), Some("try-a"), false)
+            .unwrap();
+        let mine = |item| {
+            store
+                .agent_worktrees(repo.id, item)
+                .unwrap()
+                .into_iter()
+                .map(|w| (w.item_id, w.path.display().to_string(), w.branch_created))
+                .collect::<Vec<_>>()
+        };
+        assert!(mine(Some(id)).is_empty());
+        assert_eq!(
+            mine(None),
+            [
+                (other, "/w/a".to_owned(), false),
+                (other, "/w/b".to_owned(), false)
+            ]
+        );
+        store.delete_item(other).unwrap();
+        assert!(mine(None).is_empty());
     }
 }

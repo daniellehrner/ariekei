@@ -125,6 +125,8 @@ pub struct Worktree {
     pub path: PathBuf,
     pub branch: Option<String>,
     pub main: bool,
+    /// Why it is locked (`git worktree lock`; `""`: no reason given), if it is.
+    pub locked: Option<String>,
 }
 
 pub fn parse_worktrees(porcelain: &str) -> Vec<Worktree> {
@@ -133,17 +135,21 @@ pub fn parse_worktrees(porcelain: &str) -> Vec<Worktree> {
         .filter_map(|block| {
             let mut path = None;
             let mut branch = None;
+            let mut locked = None;
             for line in block.lines() {
                 if let Some(p) = line.strip_prefix("worktree ") {
                     path = Some(PathBuf::from(p));
                 } else if let Some(b) = line.strip_prefix("branch refs/heads/") {
                     branch = Some(b.to_owned());
+                } else if line == "locked" || line.starts_with("locked ") {
+                    locked = Some(line["locked".len()..].trim().to_owned());
                 }
             }
             Some(Worktree {
                 path: path?,
                 branch,
                 main: false,
+                locked,
             })
         })
         .enumerate()
@@ -863,11 +869,15 @@ pub mod tests {
 
     #[test]
     fn parses_worktree_list() {
-        let porcelain = "worktree /src/besu\nHEAD 1\nbranch refs/heads/main\n\nworktree /src/besu_pr1\nHEAD 2\nbranch refs/heads/fix/x\n\nworktree /src/det\nHEAD 3\ndetached\n";
+        let porcelain = "worktree /src/besu\nHEAD 1\nbranch refs/heads/main\n\nworktree /src/besu_pr1\nHEAD 2\nbranch refs/heads/fix/x\n\nworktree /src/det\nHEAD 3\ndetached\nlocked claude session x (pid 7 start 9)\n";
         let w = parse_worktrees(porcelain);
         assert_eq!(w.len(), 3);
         assert!(w[0].main && !w[1].main);
         assert_eq!(w[1].branch.as_deref(), Some("fix/x"));
         assert_eq!(w[2].branch, None);
+        assert_eq!(
+            (w[1].locked.as_deref(), w[2].locked.as_deref()),
+            (None, Some("claude session x (pid 7 start 9)"))
+        );
     }
 }

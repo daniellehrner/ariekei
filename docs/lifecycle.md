@@ -84,7 +84,12 @@ PRs and issues, or be thrown away.
 - Waits while the agent is in the middle of a turn (working, or waiting for permission): not a
   blocker, nothing is recorded or told; the first poll after the turn cleans up, and Done is
   refused until then.
-- Removes, in this order: the agent process; the worktree **if Ariekei created it** and no
+- Also refused while a worktree the item's agent made itself (`agent_worktrees`) would lose
+  something, by the same checks; the reason names the worktree.
+- Removes, in this order: the agent process; the worktrees its agent made itself (they may be
+  inside its own; a Claude Code lock is lifted once that Claude Code is gone), with their
+  branches if the agent made those too (the branch's reflog starts after Ariekei first listed
+  the clone's worktrees); the worktree **if Ariekei created it** and no
   other item works in it (`git worktree remove` without `--force`, so git refuses too if
   something changed; `--force` only for initialized submodules, which git always refuses and
   whose changes `git status` already showed; `git worktree prune` if the folder was deleted by
@@ -115,13 +120,20 @@ PRs and issues, or be thrown away.
   (`gh pr create` output, `gh issue create`, an MCP tool, another repo's URL, `gh pr view`),
   what a task's agent opens keeping its origin (the conversation without tool calls, cut when
   long), and old links turned into origins.
+- Unit tests for the agents' own worktrees: whose a new one is (inside the agent's worktree, or
+  named by its worktree command; those there before stay nobody's), the branch it made going
+  with it and one that was there staying, cleanup blocked by an uncommitted file or a commit
+  and then removing both (Claude Code's stale lock lifted), Make it a task, Claude Code's
+  lock reasons.
 - E2E: `e2e/task_scenario.py`: New task → worktree, notes in the context, agent started →
   the agent opens PR #100 and issue #101, both in their own sections → Start working on #100
   adopts the task's checkout, its agent's context says how it came about, PR feedback goes to
   it, Done takes it out → a closed issue is cleaned up → Discard lists the uncommitted file,
   then the worktree, branch and task are gone → a task on `friend:feature-x` (a fork): the
   branch checked out tracking the fork's remote, the context naming it, and its PR, opened on
-  GitHub, added to the Inbox.
+  GitHub, added to the Inbox. The second task's agent makes two worktrees (`git worktree add`): both listed with
+  what they would lose → Remove takes one with its branch → Make it a task opens a task in the
+  other, whose Discard names its draft and takes worktree and branch.
 - Live, read-only on besu: assigned issues, issue conversation, default branch.
 
 ## Not covered yet

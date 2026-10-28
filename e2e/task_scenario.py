@@ -14,6 +14,8 @@ for permission), Save file in the review (refused when the agent changed the fil
 Reload; CRLF kept), Ctrl+B and ? in the terminal staying with the agent, Discard refused while
 the agent waits for permission, a closed issue cleaned up like any other, Discard (shows the
 work it loses, then removes the worktree, branch and task), and a second task (the + button)
+whose agent makes worktrees of its own (listed on the task with what removing them would lose;
+Remove takes one with its branch, Make it a task makes another a task, discarded with it), and
 whose merged PR is cleaned up while the task stays until Done, and a task on a fork's branch
 (named after it, the fork's remote added, the branch tracking it, its context naming it) whose
 PR, opened on GitHub, is added to the Inbox on a poll, and a task on the branch the user's own
@@ -378,6 +380,44 @@ try:
     eventually("the second task's worktree", lambda: os.path.isdir(wt2), lambda v: v, timeout=60)
     branch2 = git(wt2, "rev-parse", "--abbrev-ref", "HEAD")
     eventually("its agent is ready", lambda: agent(s, -1), lambda a: a in ("ready", "finished"), timeout=60)
+
+    # --- worktrees the agent makes itself: listed on its task, removed, or made a task ---
+    ask(s, "Make a worktree try-faster")
+    ask(s, "Make a worktree scratch with a draft")
+    s.wait("[data-agent-worktree='scratch']", timeout=30)
+    made = s.js("return [...document.querySelectorAll('[data-agent-worktree]')].map(r => r.innerText.replace(/\\s*\\n+\\s*/g, ' | '))")
+    print("[agent worktrees]", s.text(s.wait("[data-agent-worktrees] .head")).strip(), made)
+    equal("the task lists the worktrees its agent made",
+          s.js("return [...document.querySelectorAll('[data-agent-worktree]')].map(r => r.dataset.agentWorktree)"), ["try-faster", "scratch"])
+    contains("with their branches", made[0], "try-faster | nothing unsaved")
+    contains("and what removing one would lose", made[1], "1 uncommitted change: draft.txt")
+    tried = os.path.join(work, "try-faster")
+    s.click(s.wait("[data-agent-worktree='try-faster'] [data-remove-worktree]"))
+    contains("Remove asks first", s.text(s.wait("[data-confirm-remove]")), "Remove try-faster and its branch try-faster?")
+    s.click(s.wait("[data-confirm-remove] button", text="Remove"))
+    s.wait_js("return !document.querySelector(\"[data-agent-worktree='try-faster']\")", timeout=30)
+    branch_left = subprocess.run(["git", "-C", clone, "show-ref", "--verify", "--quiet", "refs/heads/try-faster"]).returncode == 0
+    print("[agent worktrees] removed try-faster:", not os.path.exists(tried), "| branch deleted:", not branch_left)
+    check("Remove takes the worktree and the branch the agent made", not os.path.exists(tried) and not branch_left)
+    s.click(s.wait("[data-agent-worktree='scratch'] [data-make-task]"))
+    s.wait(".item header .title", timeout=60, text="scratch")
+    s.wait(".item [data-worktree]", timeout=30)
+    where = s.js("return document.querySelector('.item [data-worktree]').title").split(" — ")[0]
+    scratch = os.path.join(work, "scratch")
+    print("[agent worktrees] made a task:", s.text(s.wait(".item header .title")), "in", where, "| inbox:", listed(s))
+    check("Make it a task opens a task in that worktree", os.path.samefile(where, scratch) and -2 in listed(s), where)
+    # Discarding the task takes the worktree and its branch, as for one Ariekei made.
+    s.click(s.wait("[data-discard]"))
+    s.wait("[data-losses]", timeout=30)
+    contains("Discard names the draft", s.text(s.wait("[data-losses]")), "draft.txt")
+    s.click(s.wait("[data-confirm-discard] button", text="Discard"))
+    eventually("the scratch task is gone", lambda: listed(s), lambda rows: -2 not in rows, timeout=30)
+    branch_left = subprocess.run(["git", "-C", clone, "show-ref", "--verify", "--quiet", "refs/heads/scratch"]).returncode == 0
+    check("with its worktree and branch", not os.path.exists(scratch) and not branch_left)
+    select(s, -1)
+    s.wait(".item header .title", timeout=30, text="Slow start")
+    check("the task lists no worktrees of its agent now", not s.find("[data-agent-worktrees]"))
+
     open(os.path.join(wt2, "start.txt"), "w").write("faster\n")
     commit(wt2, "Start faster")
     ask(s, "Open a pull request titled 'Start faster'")

@@ -287,6 +287,37 @@ When the agent exits by itself (it crashed, could not start, or you typed `/exit
 says so above its last output and takes no keys; **Start again** resumes the conversation. A
 crash also brings a notice when you are not looking at the item.
 
+### Worktrees the agent makes
+
+Agents sometimes make worktrees of their own, to try something aside or run a test against
+another version: a `git worktree add` of their own, Claude Code's worktrees (`EnterWorktree`,
+a subagent with `isolation: worktree`, both under `.claude/worktrees/` in the agent's
+worktree). Ariekei notices one after the tool call that made it, and lists it on the item under
+the header, **The agent made a worktree**: its folder (a click copies the full path), its branch,
+and what removing it would lose (uncommitted changes, commits not on GitHub) or "nothing
+unsaved".
+
+Whose a new worktree is: one inside an agent's own worktree is that agent's, and one elsewhere
+is the agent's whose shell command was about worktrees and named it (its folder or branch). The
+worktrees a repository had before (when Ariekei started, or first saw an agent of it at work),
+and those no agent's command named (e.g. ones you make yourself), are nobody's: Ariekei leaves
+them alone.
+
+- **Remove** removes the worktree, and its branch if the agent made that too (a branch that was
+  there before stays), after you confirm. If that would lose work, the confirmation says so in
+  red, and removing it then loses it. Refused while the agent is in the middle of a turn: it
+  may work there.
+- **Make it a task** makes it a task of its own, on its branch, and opens it; the task works
+  in that worktree and cleans it up like one Ariekei made. Not with a detached HEAD: check out
+  a branch there first.
+
+Cleaning up the item cleans up its agent's worktrees with it, under the same rules (see
+[Finishing and cleanup](#11-finishing-and-cleanup)); discarding a task discards them too. A
+worktree the agent removed itself (Claude Code removes its own when they hold nothing) leaves
+the list. Claude Code locks the worktrees it makes and leaves the lock behind when it exits:
+once that Claude Code is gone, Ariekei lifts such a lock to remove the worktree. Any other lock
+is yours, and refuses.
+
 ### Switching items and restarting
 
 Terminals keep running while you look at other items. A terminal nobody looks at whose agent
@@ -583,7 +614,9 @@ finished item says "Cleanup blocked" in the Inbox:
   fetched from GitHub either. So a squash-merged PR whose branch was deleted is safe, and so is
   the old version of a PR you only reviewed whose author rebased it since, even after
   `git fetch --prune`. A commit of yours that a force-push dropped is not;
-- git refusing to remove the worktree (e.g. one you locked with `git worktree lock`).
+- git refusing to remove the worktree (e.g. one you locked with `git worktree lock`);
+- the same in a worktree the item's agent made itself (see
+  [Worktrees the agent makes](#worktrees-the-agent-makes)), named in the reason.
 
 Commit and push, or discard the changes, then press **Done** again.
 
@@ -592,7 +625,8 @@ is still wrapping up: the item is cleaned up on the first poll after the turn en
 **Done** is refused until then.
 
 Cleanup removes the agent process and its Claude Code session transcripts (also those of
-conversations before a `/clear`), the worktree and its branch **if Ariekei created them** (worktrees Ariekei adopted are only detached, and so is one
+conversations before a `/clear`), the worktrees the agent made itself (and their branches, if it
+made those too), the worktree and its branch **if Ariekei created them** (worktrees Ariekei adopted are only detached, and so is one
 another item works in too; a local branch Ariekei only reused, such as your `main`, is kept),
 Ariekei's ref for the PR head, its context file, and the Inbox entry. Adding the PR or issue
 again with Browse brings it back while it is open. It also comes back by itself when it is
