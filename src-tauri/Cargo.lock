@@ -73,6 +73,7 @@ name = "ariekei"
 version = "0.0.3"
 dependencies = [
  "anyhow",
+ "libc",
  "portable-pty",
  "rusqlite",
  "serde",

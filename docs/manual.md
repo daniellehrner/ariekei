@@ -770,6 +770,14 @@ activity, a grey bar for lifecycle news.
   its checkout is on another branch (see [Your own checkout](#your-own-checkout)): switch it
   back, e.g. with **Switch back to `<branch>`** in the red banner, or keep the new branch
   with **Continue on `<new branch>`**.
+- **Ariekei disappeared**: its log says why. Started from the desktop on Linux, the log is in
+  the journal (`journalctl --user -t ariekei.desktop`, or the lines of `ariekei.desktop`);
+  started from a terminal, it is in that terminal. It names a crash signal ("fatal signal
+  SIGSEGV"), a signal that asked it to end ("ended by SIGTERM"), a panic with its backtrace, an
+  `exit()` it did not ask for (e.g. the desktop session's display went away), or "quitting"
+  with the reason. A run that ended without exiting cleanly is reported when Ariekei starts
+  again; if its last lines name nothing, it was killed with SIGKILL (e.g. a Force Quit). Your
+  agents' conversations resume when you open their items again.
 
 Not supported yet:
 

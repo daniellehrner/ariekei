@@ -5,6 +5,7 @@ mod agent_worktrees;
 mod claude;
 mod confine;
 mod context;
+mod crashlog;
 mod drafts;
 #[cfg(feature = "e2e")]
 mod e2e;
@@ -699,6 +700,7 @@ pub fn run() {
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
+    crashlog::install();
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -727,9 +729,11 @@ pub fn run() {
                     "Ariekei runs already on {}: it was asked to show its window",
                     data_dir.display()
                 );
+                crashlog::quitting("another Ariekei owns the data directory");
                 std::process::exit(0);
             };
             app.manage(instance);
+            crashlog::started(&data_dir);
 
             let handle = app.handle().clone();
             let hook_server =
@@ -809,10 +813,17 @@ pub fn run() {
                 if window.app_handle().webview_windows().len() == 1
                     && quit::ask_first(window.app_handle()) =>
             {
+                tracing::info!("window {} asked to close: checking first", window.label());
                 api.prevent_close();
                 quit::check(window.app_handle().clone(), window.label().to_owned());
             }
-            tauri::WindowEvent::Destroyed => windows::closed(window.app_handle(), window.label()),
+            tauri::WindowEvent::CloseRequested { .. } => {
+                tracing::info!("window {} closes", window.label());
+            }
+            tauri::WindowEvent::Destroyed => {
+                tracing::info!("window {} is gone", window.label());
+                windows::closed(window.app_handle(), window.label())
+            }
             _ => {}
         })
         .invoke_handler(tauri::generate_handler![
@@ -881,6 +892,15 @@ pub fn run() {
         .expect("error while building Ariekei");
 
     app.run(|app, event| {
+        if let RunEvent::ExitRequested { code, .. } = &event {
+            tracing::info!(
+                "exit requested ({})",
+                match code {
+                    Some(code) => format!("code {code}"),
+                    None => "the last window closed".to_owned(),
+                }
+            );
+        }
         if let RunEvent::ExitRequested { api, .. } = &event
             && let Some(state) = app.try_state::<AppState>()
         {
@@ -896,6 +916,7 @@ pub fn run() {
                 api.prevent_exit();
                 quit::check(app.clone(), label);
             } else {
+                crashlog::quitting("nothing running needs a look first, or the user confirmed");
                 // Windows destroyed while quitting stay recorded, to come back next launch.
                 state.windows.exiting();
             }
@@ -905,6 +926,7 @@ pub fn run() {
         {
             // Conversations stay resumable; only the processes end.
             state.terminals.close_all();
+            crashlog::exited();
         }
     });
 }

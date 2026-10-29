@@ -350,6 +350,8 @@ try:
     s.js("setTimeout(() => document.querySelector('[data-quit-anyway]').click(), 100)")
     s.proc.wait(timeout=30)
     print("[quit] Quit anyway: the app exited with", s.proc.returncode)
+    # A clean exit leaves no mark: the next start does not report a crash.
+    check("quitting is a clean exit", not os.path.exists(os.path.join(os.environ["ARIEKEI_DATA_DIR"], "running")))
     if os.name == "posix":
         time.sleep(1)
         try:

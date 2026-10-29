@@ -106,5 +106,6 @@ pub fn quit_now(app: &AppHandle) {
     app.state::<AppState>()
         .quit_confirmed
         .store(true, Ordering::Relaxed);
+    crate::crashlog::quitting("Quit, with nothing running or after the user confirmed");
     app.exit(0);
 }
