@@ -132,6 +132,8 @@ mod signals {
             // (Rust's names a stack overflow).
             // si_code tells: Linux gives a sent one zero or less (SI_USER, SI_QUEUE, SI_TKILL),
             // macOS 0x10001 and up (SI_USER, …); a fault gets a small positive one there and here.
+            // Not always on macOS: a SIGSEGV the process raised itself gets one like a fault's,
+            // so it goes on to Rust's handler and the process lives on, as without this one.
             // abort() raises its signal again once the handler returns. With as little as that
             // here: an abort after a stack overflow runs on what is left of the signal stack.
             if signal == libc::SIGABRT {
@@ -299,18 +301,25 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn fatal_signals_are_named_and_still_end_it() {
-        let (stderr, signal) = crash("fault");
-        assert!(stderr.contains("Ariekei: fatal signal SIGSEGV"), "{stderr}");
-        assert_eq!(signal, Some(libc::SIGSEGV), "{stderr}");
-        let (stderr, signal) = crash("sent");
-        assert!(stderr.contains("Ariekei: fatal signal SIGSEGV"), "{stderr}");
-        assert_eq!(signal, Some(libc::SIGSEGV), "{stderr}");
-        // Rust's own handler still names a stack overflow.
-        let (stderr, signal) = crash("overflow");
-        assert!(stderr.contains("has overflowed its stack"), "{stderr}");
-        assert_eq!(signal, Some(libc::SIGABRT), "{stderr}");
-        let (stderr, signal) = crash("term");
-        assert!(stderr.contains("Ariekei: ended by SIGTERM"), "{stderr}");
-        assert_eq!(signal, Some(libc::SIGTERM), "{stderr}");
+        // Each case, then all that went wrong.
+        let mut cases = vec![
+            ("fault", "Ariekei: fatal signal SIGSEGV", libc::SIGSEGV),
+            // Rust's own handler still names a stack overflow.
+            ("overflow", "has overflowed its stack", libc::SIGABRT),
+            ("term", "Ariekei: ended by SIGTERM", libc::SIGTERM),
+        ];
+        // macOS cannot tell this one from a fault (see `on_fault`).
+        if cfg!(target_os = "linux") {
+            cases.push(("sent", "Ariekei: fatal signal SIGSEGV", libc::SIGSEGV));
+        }
+        let failed: Vec<String> = cases
+            .into_iter()
+            .filter_map(|(how, says, ends_by)| {
+                let (stderr, signal) = crash(how);
+                (!stderr.contains(says) || signal != Some(ends_by))
+                    .then(|| format!("{how}: ended by {signal:?}, not {ends_by}:\n{stderr}"))
+            })
+            .collect();
+        assert!(failed.is_empty(), "{}", failed.join("\n\n"));
     }
 }
