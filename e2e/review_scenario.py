@@ -653,7 +653,7 @@ try:
     eventually("the agent is ready", screen, lambda v: "❯" in v, timeout=60)
     to_agent(s, "Draft a review comment on a.txt line 10: Maybe call it line10_renamed?")
     eventually("the agent drafts it with Ariekei's tool", screen, lambda v: "Drafted #" in v, timeout=60)
-    print("[drafts] the agent said:", next(line for line in screen().splitlines() if "Drafted #" in line).strip())
+    print("[drafts] the agent said:", next(line for line in screen().splitlines() if "Drafted #" in line).replace("⏺", "").strip())
     tab(s, "Review")
     s.click(s.wait(".files [data-file='a.txt']"))
     agents = ".diff [data-draft][data-author='agent']"

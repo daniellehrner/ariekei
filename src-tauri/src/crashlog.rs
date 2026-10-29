@@ -132,14 +132,16 @@ mod signals {
             // (Rust's names a stack overflow).
             // si_code tells: Linux gives a sent one zero or less (SI_USER, SI_QUEUE, SI_TKILL),
             // macOS 0x10001 and up (SI_USER, …); a fault gets a small positive one there and here.
-            let sent = signal == libc::SIGABRT
-                || info.is_null()
-                || (*info).si_code <= 0
-                || (*info).si_code >= 0x10000;
-            if sent {
+            // abort() raises its signal again once the handler returns. With as little as that
+            // here: an abort after a stack overflow runs on what is left of the signal stack.
+            if signal == libc::SIGABRT {
                 libc::signal(signal, libc::SIG_DFL);
                 libc::raise(signal);
                 return;
+            }
+            let sent = info.is_null() || (*info).si_code <= 0 || (*info).si_code >= 0x10000;
+            if sent {
+                die(signal);
             }
             match (*std::ptr::addr_of!(PREVIOUS))
                 .get(signal as usize)
@@ -159,10 +161,25 @@ mod signals {
         say(b"\nAriekei: ended by ");
         say(name(signal));
         say(b"\n");
-        // SA_RESETHAND made the default action current: it ends the process once this returns.
-        // SAFETY: raise(3) is async-signal-safe.
+        // SAFETY: see `die`.
+        unsafe { die(signal) }
+    }
+
+    /// Ends the process with `signal`'s default action, as it would have without Ariekei's
+    /// handler: unblocked (a handler runs with its signal blocked) and raised again, and should
+    /// it still be alive, exit status 128 + signal.
+    ///
+    /// SAFETY: only async-signal-safe calls (signal, sigprocmask, raise, _exit).
+    unsafe fn die(signal: libc::c_int) -> ! {
         unsafe {
+            libc::signal(signal, libc::SIG_DFL);
+            let mut set: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut set);
+            libc::sigaddset(&mut set, signal);
+            libc::sigprocmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
+            // To this thread: delivered before raise returns, now that it is unblocked.
             libc::raise(signal);
+            libc::_exit(128 + signal)
         }
     }
 
@@ -190,7 +207,7 @@ mod signals {
             for signal in ENDS {
                 let mut action: libc::sigaction = std::mem::zeroed();
                 action.sa_sigaction = on_end as *const () as usize;
-                action.sa_flags = libc::SA_RESETHAND;
+                action.sa_flags = 0;
                 libc::sigemptyset(&mut action.sa_mask);
                 libc::sigaction(signal, &action, std::ptr::null_mut());
             }
