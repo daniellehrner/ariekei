@@ -285,8 +285,8 @@ try:
             click(s, "[data-toggle='side']")
             shot(s, "review-hidden")
     if need("task"):
-        # A task whose agent opened a PR: the Tasks section with the PR under it, and the task's
-        # Overview listing it.
+        # A task whose agent opened a PR: the task's Overview, and the PR an item of its own in
+        # My PRs.
         s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, bubbles: true }))")
         # The form keeps what the new-task screen typed.
         s.wait("[data-task-form]")

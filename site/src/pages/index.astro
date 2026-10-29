@@ -111,7 +111,7 @@ const marks = {
           <Shot
             name="drafts"
             eager
-            alt="Ariekei: the Inbox on the left, a pull request under review on the right, with a side-by-side diff, a draft comment, and a banner saying the agent is waiting for permission."
+            alt="Ariekei: the Inbox on the left, a pull request under review on the right, with a side-by-side diff and a draft comment as a card under the lines it is about."
           />
         </div>
       </section>
@@ -181,13 +181,14 @@ const marks = {
           <h2 id="wt-title">One worktree and one agent per item.</h2>
           <ul class="dashes">
             <li>Start working on a PR and it gets a worktree on its branch, next to your clone.</li>
-            <li>An issue gets a new branch; a task needs neither, and the PRs and issues its agent opens are linked under it.</li>
+            <li>An issue gets a new branch; a task needs neither, and what its agent opens becomes an item of its own that knows where it came from.</li>
+            <li>Worktrees an agent makes itself are listed on its item, to remove or make a task of.</li>
             <li>Agents keep their conversation across restarts.</li>
             <li>Merged or closed items are cleaned up, without ever losing uncommitted or unpushed work.</li>
           </ul>
           <a class="more" href="/docs/lifecycle/">Issues, tasks and cleanup</a>
         </div>
-        <Shot name="task" sizes="(min-width: 860px) 700px, 100vw" alt="A task in Ariekei with the pull request its agent opened, listed under the task in the Inbox." />
+        <Shot name="task" sizes="(min-width: 860px) 700px, 100vw" alt="A task in Ariekei with what to look into, and the pull request its agent opened as an item of its own under My PRs." />
       </section>
 
       <section class="wrap feature" id="review" aria-labelledby="rv-title">
@@ -198,6 +199,7 @@ const marks = {
             <li>All changes against the base branch or one commit at a time, in a review order instead of alphabetical, with keyboard navigation.</li>
             <li>Works without a worktree for other people’s PRs.</li>
             <li>Comments go to GitHub as a review, or to the agent.</li>
+            <li>On someone else’s PR the agent drafts its review comments right into the diff, next to yours, to edit or send back before you submit.</li>
             <li>Select code and ask the agent about it: the file, lines and code go along.</li>
           </ul>
           <p class="keys" aria-label="Keyboard shortcuts">
@@ -310,7 +312,7 @@ const marks = {
             </div>
             <div class="card">
               <h3>Build from source</h3>
-              <p>Rust 1.88+, Node 22+, and on Linux the WebKitGTK 4.1 and GTK 3 development packages.</p>
+              <p>Rust 1.89+, Node 22+, and on Linux the WebKitGTK 4.1 and GTK 3 development packages.</p>
               <pre><span>$</span> git clone {repo}.git
 <span>$</span> cd ariekei
 <span>$</span> npm ci

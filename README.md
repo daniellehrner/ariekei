@@ -14,7 +14,7 @@ How to use it: [docs/manual.md](docs/manual.md) (user manual).
   **Open** (what you added); each item is in the first section that fits, and within a section
   ordered by attention (agent needs you, CI failing, new comments, ready for review, …). Star
   any item to keep it at the top. **Browse** (Ctrl+K) lists the repo's open PRs and issues with
-  GitHub's search syntax and adds them to Open; what you added can be removed again. Notifications for the same events: in the window while Ariekei is in front
+  GitHub's search syntax and starts work on any of them (Enter) or adds them to Open; what you added can be removed again. Notifications for the same events: in the window while Ariekei is in front
   (click one to open its item), OS notifications otherwise.
 - **Work item:** Overview (description, checks, reviewers), Comments (review threads and
   conversation; reply, resolve, comment), Review, and Terminal.
@@ -24,18 +24,27 @@ How to use it: [docs/manual.md](docs/manual.md) (user manual).
 - **Review:** all changes vs the base branch, or single commits; a review order instead of
   alphabetical, whitespace and unified toggles, keyboard navigation; works without a worktree
   for other people's PRs. Comments go to GitHub as a review or to the agent; right-click code
-  to ask the agent about it (file, lines and code go along). See [docs/review.md](docs/review.md).
+  to ask the agent about it (file, lines and code go along). On someone else's PR the agent
+  drafts its review comments into the diff through Ariekei's own MCP tools: its drafts and yours
+  are cards under their lines, to edit or send back to the agent, and Submit posts them all. See
+  [docs/review.md](docs/review.md).
 - **Repos and windows:** the repo name in the Inbox header switches the window to another
   connected repo, opens one in a new window, or connects another. Each repo is shown in one
   window at a time; every open repo is kept current, and the windows come back after a
   restart.
 - **Tasks:** start work with no PR or issue yet (Ctrl+N or + in the Inbox, e.g. to investigate a bug). The
-  task gets a new branch, or an existing one such as `owner:branch` on a fork (the fork's remote
-  is added if the clone has none, and `git push` goes back there), plus a worktree and agent; the
-  PRs and issues its agent opens (`gh pr create`, `gh issue create`) and a PR opened for its
-  branch are linked and listed under it. Done or Discard ends it.
-- **Lifecycle:** an issue gets a branch and worktree; once a PR is opened for the branch (by you or the agent), the item follows it. Merged
-  or closed items are cleaned up automatically, never losing uncommitted or unpushed work.
+  task gets a new branch named after its title, or an existing one such as `owner:branch` on a
+  fork (the fork's remote is added if the clone has none, and `git push` goes back there), plus a
+  worktree and agent. The PRs and issues its agent opens (`gh pr create`, `gh issue create`)
+  become items of their own, in their sections, and keep how they came about (the task's notes
+  and conversation), so Start working gives each its own agent with that context. Done or
+  Discard ends it.
+- **Lifecycle:** an issue gets a branch and worktree; once a PR is opened for the branch (by you or the agent), the item follows it. A
+  worktree switched to another branch can be switched back or follow it, a PR's branch updated to
+  GitHub's head, and a PR you reviewed pulls the author's fixes by itself. Worktrees an agent
+  makes itself are listed on its item, to remove or make a task of. Merged or closed items are
+  cleaned up automatically (one you have open asks first), never losing uncommitted or unpushed
+  work, also in the worktrees the agent made.
 
 Language-agnostic: the review diff comes from git, any file type is syntax-highlighted, and the
 agent works in any language. Code navigation and debugging are left to your IDE.
@@ -86,11 +95,13 @@ windows never show up on your desktop or take focus, and its notifications stay 
 `E2E_HEADED=1` shows the windows on your display instead.
 
 - `review`: Inbox sections, browsing and adding, starring and removing, Overview, Comments, review without a worktree, review order,
-  n / p across files, submitting a review, a push showing up in the review.
+  n / p across files, submitting a review, a push showing up in the review, the agent's drafted
+  review comments (edited, redrafted, submitted).
 - `windows`: two repos, switching, a window per repo, restoring windows after a restart.
 - `lifecycle`: issue → worktree → push → its PR → merge → cleanup.
-- `task`: new task → the agent opens a PR and an issue → linked under the task → asking the
-  agent about code from the review → discard → a task on a fork's branch, its PR linked.
+- `task`: new task → the agent opens a PR and an issue, each an item of its own → asking the
+  agent about code from the review → discard → worktrees the agent makes (removed, made a task)
+  → a task on a fork's branch, its PR added.
 - `agent`: the agent in the terminal (turns that commit, a permission prompt), the review loop,
   idle shutdown (not while a background job runs) and resume after a restart.
 
@@ -107,7 +118,8 @@ design. Test-only environment variables:
 | `ARIEKEI_GH` | Use this binary instead of `gh` |
 | `ARIEKEI_NO_POLL` | Do not poll GitHub |
 | `ARIEKEI_POLL_SECS` | Poll every N seconds instead of 60 |
-| `ARIEKEI_IDLE_SECS` | Close idle, unwatched agents (without background processes) after N seconds instead of 15 minutes |
+| `ARIEKEI_IDLE_SECS` | Close idle, unwatched agents (without background processes) after N seconds instead of 45 minutes |
+| `ARIEKEI_QUIET_SECS` | Take a working agent whose terminal has shown nothing new for N seconds as done with its turn, instead of 30 |
 | `ARIEKEI_AGENT_MEMORY_MAX` | Cap each agent's memory at this (bytes, or with K, M or G) instead of half the RAM (Linux, Windows) |
 | `ARIEKEI_CLAUDE_ARGS` | Extra arguments for `claude` |
 | `ARIEKEI_CLAUDE` | Use this `claude` binary |

@@ -58,10 +58,9 @@ PRs and issues, or be thrown away.
   (`--force`) and branch, the agent session and the task. Refused only while the agent is in the
   middle of a turn.
 - **Never cleaned up automatically:** a task may open another PR after the first one merged,
-  and cleanup deletes the agent's conversation. When all of its PRs and issues are closed, the
-  task says so in the Inbox ("all closed") and a notice suggests marking it done.
+  and cleanup deletes the agent's conversation. End it with Done or Discard.
 - Stored as a work item of kind `task` with a negative number (T1 is -1), so it never collides
-  with GitHub's numbers; PRs and issues point to it with `task_id`.
+  with GitHub's numbers.
 
 ## Cleanup
 
@@ -139,4 +138,4 @@ PRs and issues, or be thrown away.
 ## Not covered yet
 
 - Choosing the base branch of an issue's branch, or the push remote.
-- Cleaning up items of repos that are not the active one.
+- Cleaning up items of repos that are not open in any window.

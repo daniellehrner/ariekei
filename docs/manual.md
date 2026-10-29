@@ -28,13 +28,15 @@ Contents:
 
 ## 1. Before you start
 
-You need, on your `PATH`:
+You need:
 
-- `git`
+- `git`, on your `PATH`
 - the GitHub CLI `gh`, logged in (`gh auth login`). Ariekei uses your `gh` login for all
   GitHub access; it has no login of its own.
-- Claude Code (`claude`). Ariekei runs your installed `claude`, unmodified, with your own
-  settings and plan.
+- Claude Code (`claude`), on your `PATH` or where its installer or Homebrew puts it
+  (`~/.local/bin`, `~/.claude/local`, `/opt/homebrew/bin`, `/usr/local/bin`); set
+  `ARIEKEI_CLAUDE=/path/to/claude` to use another one. Ariekei runs your installed `claude`,
+  unmodified, with your own settings and plan.
 
 You also need a local clone of the repository you want to work on, with a GitHub remote.
 
@@ -125,6 +127,7 @@ Within a section, items are ordered by their most urgent reason, then by last up
    since.
 5. **Agent working**.
 6. Everything else.
+7. Finished (merged or closed) items, last.
 
 ### Refreshing
 
@@ -179,12 +182,12 @@ A work item is a pull request, an issue or a task. Selecting it shows its header
 |---|---|
 | **Overview** | State, branches (`author wants to merge head into base`), labels, description, reviewers, checks (click a check to open it), the discussion and a link to GitHub. For a task: what to look into. |
 | **Comments** | Review threads, unresolved first and the latest commented first, with their diff snippet; the conversation; reply, resolve and comment. Not shown for tasks. |
-| **Review** | The diff review (see [Reviewing changes](#7-reviewing-changes)). |
+| **Review** | The diff review (see [Reviewing changes](#7-reviewing-changes)). For PRs, and for issues and tasks once they have a worktree. |
 | **Terminal** | The agent, running in the item's worktree. Only with a worktree. |
 
 An item opens on the tab you left it on. The first time you open it, it opens on the tab that
 deals with why it needs you: agent needs you → Terminal, new activity → Comments, ready for
-review → Review, CI failing, cleanup blocked or all closed → Overview.
+review → Review, CI failing or cleanup blocked → Overview. A new task opens on its Terminal.
 
 Each item remembers its tab, review scope, selected file and draft comments (yours and the
 agent's), so you can switch between items freely.
@@ -250,6 +253,8 @@ A new conversation starts with the item as context:
   failing checks with the failing part of the Actions job log.
 - **Issue:** the issue's text and comments.
 - **Task:** its title and notes, and the branch it works on.
+- **A PR or issue a task's agent opened:** also the task's title, notes and conversation up to
+  then (see [PRs and issues from a task](#prs-and-issues-from-a-task)).
 - **Someone else's PR:** also that you are reviewing it, and that it drafts review comments into
   Ariekei (see [Drafts from the agent](#drafts-from-the-agent)).
 
@@ -417,12 +422,13 @@ take the question (a dialog open in its Terminal, say), the box stays open with 
 
 Everything of your review is in the dock under the diff.
 
-1. Select code on the right (new) side of the diff. The dock offers **Comment on these lines**
-   (**c**, or **Comment on lines** in the code menu, takes you there).
+1. Select code on the right (new) side of the diff. The dock shows a comment field for those
+   lines (**c**, or **Comment on lines** in the code menu, takes you there).
 2. Type your comment and press **Add comment** (Enter). **Esc** drops the selection, also while
    you type. The comment shows in the diff as a card right below its last line, where GitHub
    will show it, and its lines keep a small blue square in the gutter.
-3. Each card has **Edit** (Ctrl+Enter saves, Esc cancels), **Ask agent** and a trash button.
+3. Each card has **Edit** (Ctrl+Enter saves, Esc cancels), **Ask agent** (when the item has an
+   agent) and a trash button.
    Drafts also collect in **Draft comments** in the dock, per item; click one to go to its card.
 4. Send them:
    - **Send to agent** (your own PR, an issue or a task, with an agent) delivers all drafts to
@@ -445,8 +451,9 @@ approval.
 When you review someone else's PR, ask its agent in the Terminal to review it (for example
 `/code-review`, or in your own words). It puts each review comment it drafts into Ariekei rather
 than only into its answer, and its cards appear in the diff as it goes, beside yours: a copper
-**Agent** card, its lines marked with a copper circle in the gutter. Its answer in the Terminal
-says when a draft is not on lines GitHub takes as a line comment, so it can move it.
+**Agent** card, its lines marked with a copper circle in the gutter. Ariekei's reply to each
+draft tells the agent when GitHub would not take it as a line comment (outside the diff's hunks,
+or its worktree is not at the PR's head), so it can move it.
 
 - **Edit** a draft to change it in your words; it is then marked **edited by you**.
 - **Ask agent** on a card sends the agent that draft and your prompt (Ctrl+Enter), e.g. "make it
@@ -469,18 +476,19 @@ The **Comments** tab shows:
   - **Resolve** / **Unresolve** (resolved threads are folded; click to open).
   - **Show in Review** opens the file in the Review tab.
 - The **Conversation**: comments and reviews in order.
+  - **New comment** → **Comment on GitHub**.
 
 Comments and reviews by others since you last opened the item are labeled `new`, and the heading
 counts the threads that have some. With the item open, new ones arrive with each poll; the item
 does not show the violet diamond in the Inbox for what is in front of you.
-- **New comment** → **Comment on GitHub**.
 
 Markdown is rendered by GitHub and sanitized; links open in your system browser.
 
 ## 9. Issues: from issue to PR
 
 1. Issues assigned to you appear under **Assigned**; add any other open issue with
-   [Browse](#browse-adding-prs-and-issues). Overview and Comments show the issue.
+   [Browse](#browse-adding-prs-and-issues), or press **Start working** right there. Overview and
+   Comments show the issue.
 2. **Start working** creates the branch `issue-<N>-<words of the title>` from the default
    branch (as GitHub has it now, also when it was renamed), in `../<clone>_issue<N>`. A plain `git push` creates the branch on your fork (a
    remote pointing at `<you>/<repo>`), or on the base remote when you have no fork.
@@ -506,12 +514,16 @@ Press **Ctrl+N** (Cmd+N on macOS) or **+** in the Inbox header. The form has:
 - optionally **what to look into**; the agent gets it as context with the title.
 
 **Start task** (or **Ctrl+Enter** in any field; **Esc** closes the form) creates a branch named
-after the title (`Peers drop after restart` → `peers-drop-after-restart`) from the default
+after the title (`Peers drop after restart` → `peers-drop-after-restart`: its ASCII letters and
+digits, lowercase, whole words up to 40 characters; `task-<n>` if it has none) from the default
 branch, in the folder `../<clone>_<branch>` (set up for `git push` like an issue's), and starts
 the agent. If the clone has that branch already (local or on a remote), or the folder exists,
 `-2`, `-3`, … is added. Tasks are numbered per repository: T1, T2, …; a number whose
 `<clone>_task<n>` folder or `task-<n>` branches (from older versions) are still there is
 skipped.
+
+A worktree an agent made itself can also become a task: **Make it a task** on it (see
+[Worktrees the agent makes](#worktrees-the-agent-makes)).
 
 ### A task on an existing branch
 
@@ -586,8 +598,9 @@ or by the fork's owner) is added on the next poll.
 
 - **Done** cleans the task up like any item (refused if work would be lost) and deletes it.
 - **Discard** first lists what would be lost (uncommitted changes, commits not on GitHub),
-  then, after you confirm, removes the worktree and branch, the agent session and the task.
-  Refused only while the agent is in the middle of a turn.
+  in its worktree and in the worktrees its agent made, then, after you confirm, removes them,
+  their branches, the agent session and the task. Refused only while the agent is in the middle
+  of a turn.
 
 Tasks are never cleaned up automatically: mark one done when you are finished with it.
 
@@ -645,10 +658,11 @@ Ariekei notifies you when:
 - a PR's CI starts failing;
 - there are new reviews or comments;
 - something happens in an item's lifecycle: an issue now follows its PR, a PR for a task's
-  branch is added, or an item was cleaned up or kept so no work is lost.
+  branch is added, what was pushed to a PR you reviewed was pulled into its branch, an item is
+  gone from GitHub, or an item was cleaned up or kept so no work is lost.
 
-Nothing is shown for the item you are looking at in a focused window, nor for items that are
-not in the Inbox (cleaned up or marked done). While an Ariekei window
+Nothing is shown for the item you are looking at in a focused window, nor CI or activity news
+for items that are not in the Inbox (cleaned up or marked done). While an Ariekei window
 is in front, notices appear inside the window, in the bottom right corner (above the review's
 dock); otherwise they are OS notifications. Each notice names the item and says why in the
 Inbox's words (**Agent needs you**, **Ready for review**, **CI failing**, **New activity**,
@@ -710,8 +724,12 @@ Press **?** to see them in the app. On macOS, use Cmd instead of Ctrl.
 
 **In the New task form:** Ctrl+Enter starts the task, Esc closes the form.
 
-Shortcuts do nothing while you type in a field, in the editable diff or in the terminal. Every
-control is reachable with Tab.
+**In the Ask agent box:** Enter sends, Shift+Enter starts a new line, Esc closes. **In a draft
+card:** Ctrl+Enter saves or sends, Esc cancels.
+
+The single-key shortcuts (`?` and the review's) do nothing while you type in a field, in the
+editable diff or in the terminal. The Ctrl shortcuts work everywhere except in the terminal,
+where they go to the agent. Every control is reachable with Tab.
 
 ## 15. Colours and symbols
 
@@ -739,10 +757,16 @@ activity, a grey bar for lifecycle news.
 
 ## 16. Where your data lives
 
-- Ariekei's state (work items, stars, view state, drafts, and each item's conversation as
-  GitHub last gave it) is in an SQLite database `ariekei.db` in the app data directory. One
-  Ariekei runs on it at a time: starting Ariekei again brings the running one's window to the
-  front.
+- Ariekei's state (work items, stars, view state, drafts, the worktrees agents made, and each
+  item's conversation as GitHub last gave it) is in an SQLite database `ariekei.db` in the app
+  data directory: `~/.local/share/me.lehrner.ariekei` on Linux, `~/Library/Application
+  Support/me.lehrner.ariekei` on macOS, `%APPDATA%\me.lehrner.ariekei` on Windows. One Ariekei
+  runs on it at a time (`ariekei.lock`, `instance`): starting Ariekei again brings the running
+  one's window to the front.
+- Also there: the agents' context files (`context/<owner>-<repo>-<item>.md`); the hooks settings
+  and MCP config passed to every `claude` Ariekei starts (`claude-hooks.json`,
+  `claude-mcp.json`, written at each start); and `running`, the mark of a run that has not
+  exited yet (see Troubleshooting).
 - Worktrees are created next to your clone (`../<clone>_pr<N>`, `_issue<N>`, and for a task
   `_<its branch>`).
 - Branches and Ariekei's refs live in your clone: `refs/ariekei/pull/<N>/head` holds the PR
@@ -779,10 +803,14 @@ activity, a grey bar for lifecycle news.
   again; if its last lines name nothing, it was killed with SIGKILL (e.g. a Force Quit). Your
   agents' conversations resume when you open their items again.
 
+- **The agent lists review comments in its answer instead of drafting them into the Review
+  tab**: Claude Code did not load Ariekei's MCP server (`claude-mcp.json`), e.g. because of a
+  managed MCP allowlist. `/mcp` in its terminal shows whether `ariekei` is connected.
+
 Not supported yet:
 
 - Pending (multi-session) GitHub reviews, suggestions, comments on deleted lines, editing or
   deleting your comments, a markdown preview.
 - Choosing the base branch or push remote for an issue's branch.
 - Accepting or rejecting single hunks, build/test results next to the diff, and opening a file
-  in your editor from the review (planned; see the README's Roadmap).
+  in your editor from the review (planned).

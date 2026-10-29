@@ -88,8 +88,7 @@ live in your clone.
 
 - Pending (multi-session) GitHub reviews, suggestions, comments on deleted lines (left side),
   editing or deleting your comments, and a markdown preview for what you write.
-- Accepting or rejecting single hunks; build/test status in the review view (see the README's
-  Roadmap).
+- Accepting or rejecting single hunks; build/test status in the review view (planned).
 - Not exercised end to end: **Send PR feedback to agent** against real GitHub, and
   notifications on a real desktop (Xvfb has no notification daemon).
 - The first time Claude Code sees a repository it asks for trust in the terminal, with "No, exit"

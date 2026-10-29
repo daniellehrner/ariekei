@@ -23,10 +23,9 @@ How the review view works, and the research it is based on.
   focus.
 - **Ask the agent about code:** right-click a line, or a selection of lines on either side of
   the diff, and choose **Ask agent…** (the ContextMenu key or `a` works too). Your prompt goes to
-  the item's agent (a PR worked on by a task goes to the task's) with the file, the lines, which
+  the item's agent with the file, the lines, which
   version they are from (old or new side, the commit, or the working tree with unsaved edits)
-  and the code itself (up to 80 lines). Then the agent's Terminal opens (the task's, for such
-  a PR), where the answer appears; the Review tab keeps your place. While the agent waits for
+  and the code itself (up to 80 lines). Then the agent's Terminal opens, where the answer appears; the Review tab keeps your place. While the agent waits for
   permission nothing can be sent, since the text would answer its prompt; while it works,
   Claude Code reads it after the turn. The prompt is sent as you wrote it: ask a question or
   ask for a change.
