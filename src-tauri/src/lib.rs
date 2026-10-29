@@ -27,6 +27,7 @@ mod terminal;
 #[cfg(test)]
 mod testkit;
 mod tools;
+mod webview;
 mod windows;
 mod workitem;
 mod worktree;
@@ -807,6 +808,7 @@ pub fn run() {
             e2e::start(app.handle());
             Ok(())
         })
+        .on_page_load(|webview, _| webview::watch(webview))
         .on_window_event(|window, event| match event {
             // Closing the last window quits: asked first if that stops agents' work.
             tauri::WindowEvent::CloseRequested { api, .. }
@@ -822,6 +824,7 @@ pub fn run() {
             }
             tauri::WindowEvent::Destroyed => {
                 tracing::info!("window {} is gone", window.label());
+                webview::forget(window.label());
                 windows::closed(window.app_handle(), window.label())
             }
             _ => {}

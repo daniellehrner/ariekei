@@ -802,6 +802,10 @@ activity, a grey bar for lifecycle news.
   with the reason. A run that ended without exiting cleanly is reported when Ariekei starts
   again; if its last lines name nothing, it was killed with SIGKILL (e.g. a Force Quit). Your
   agents' conversations resume when you open their items again.
+- **A window turned grey**: its page (WebKit runs it in a process of its own) ended, e.g. over
+  WebKit's memory limit. Ariekei logs why ("the page of window … ended") and loads the page
+  again by itself; the agents keep running and their terminals reattach. If it ends again
+  within a minute, it is left grey: restart Ariekei (on Linux).
 
 - **The agent lists review comments in its answer instead of drafting them into the Review
   tab**: Claude Code did not load Ariekei's MCP server (`claude-mcp.json`), e.g. because of a

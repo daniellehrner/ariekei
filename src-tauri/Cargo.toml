@@ -35,6 +35,10 @@ uuid = { version = "=1.26.1", features = ["v4"] }
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.190"
 
+# The web view behind Tauri's, to notice its page process ending (`webview`).
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { version = "=2.0.2", features = ["v2_40"] }
+
 [dev-dependencies]
 tempfile = "=3.27.0"
 
