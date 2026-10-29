@@ -130,7 +130,13 @@ mod signals {
             // A signal that was sent (kill, raise, abort()) ends the process as it would have;
             // a fault, once this returns, runs its instruction again with the previous handler
             // (Rust's names a stack overflow).
-            if info.is_null() || (*info).si_code <= 0 {
+            // si_code tells: Linux gives a sent one zero or less (SI_USER, SI_QUEUE, SI_TKILL),
+            // macOS 0x10001 and up (SI_USER, …); a fault gets a small positive one there and here.
+            let sent = signal == libc::SIGABRT
+                || info.is_null()
+                || (*info).si_code <= 0
+                || (*info).si_code >= 0x10000;
+            if sent {
                 libc::signal(signal, libc::SIG_DFL);
                 libc::raise(signal);
                 return;
@@ -232,6 +238,7 @@ mod tests {
     }
 
     /// Crashes as `ARIEKEI_TEST_CRASH` says (run by `crash`; does nothing otherwise).
+    #[cfg(unix)]
     #[test]
     fn crashes() {
         let Ok(how) = std::env::var("ARIEKEI_TEST_CRASH") else {

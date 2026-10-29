@@ -583,6 +583,8 @@ mod tests {
             ],
         );
         scan(&app.state, id, Some("git worktree add ../proj_try")).unwrap();
+        // As git and the cleanup spell it (`/private/var/…` on macOS), while it is there.
+        let spelled = canon(&path);
 
         crate::testkit::write(&path.join("new.txt"), "x\n");
         let blocked = crate::lifecycle::clean_up(&app.state, id).unwrap();
@@ -610,7 +612,7 @@ mod tests {
             panic!("blocked: {cleaned:?}");
         };
         assert!(
-            removed.contains(&format!("the agent's worktree {}", canon(&path).display())),
+            removed.contains(&format!("the agent's worktree {}", spelled.display())),
             "{removed:?}"
         );
         assert!(
