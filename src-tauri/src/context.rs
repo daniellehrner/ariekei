@@ -11,7 +11,7 @@ use std::fmt::Write as _;
 
 const MAX_BODY: usize = 6_000;
 
-fn truncate(s: &str, max: usize) -> &str {
+pub(crate) fn truncate(s: &str, max: usize) -> &str {
     match s.char_indices().nth(max) {
         Some((i, _)) => &s[..i],
         None => s,
@@ -21,8 +21,8 @@ fn truncate(s: &str, max: usize) -> &str {
 /// Added to the context of a PR someone else wrote (see `drafts`).
 pub const REVIEWING: &str = "\n## Reviewing\n\nThe user is reviewing this pull request, which \
 someone else wrote. When you draft review comments for them, add each one with Ariekei's \
-add_review_comment tool instead of only listing it in your reply: they edit and submit the \
-drafts from Ariekei's Review tab.\n";
+add_review_comment tool instead of only listing it in your reply, and an answer in an existing \
+thread with reply_to_review_thread: they edit and submit the drafts from Ariekei's Review tab.\n";
 
 /// Markdown for the agent. `logs` holds `(check name, log tail)` for failing checks.
 pub fn render(number: i64, pr: &PrDetail, logs: &[(String, String)]) -> String {
@@ -47,13 +47,10 @@ pub fn render(number: i64, pr: &PrDetail, logs: &[(String, String)]) -> String {
         }
     }
 
-    if !pr.unresolved.is_empty() {
-        let _ = writeln!(
-            md,
-            "\n## Unresolved review threads ({})",
-            pr.unresolved.len()
-        );
-        for t in &pr.unresolved {
+    let unresolved: Vec<_> = pr.threads.iter().filter(|t| !t.resolved).collect();
+    if !unresolved.is_empty() {
+        let _ = writeln!(md, "\n## Unresolved review threads ({})", unresolved.len());
+        for t in unresolved {
             let location = match t.line {
                 Some(l) => format!("{}:{l}", t.path),
                 None => t.path.clone(),
@@ -63,7 +60,7 @@ pub fn render(number: i64, pr: &PrDetail, logs: &[(String, String)]) -> String {
             } else {
                 ""
             };
-            let _ = writeln!(md, "\n### {location}{outdated}");
+            let _ = writeln!(md, "\n### {location}{outdated} (thread {})", t.id);
             for c in &t.comments {
                 let _ = writeln!(md, "\n**{}:** {}", c.author, c.body.trim());
             }
@@ -304,10 +301,12 @@ mod tests {
             url: "https://github.com/o/r/pull/7".into(),
             head_ref: "feat".into(),
             base_ref: "main".into(),
-            unresolved: vec![Thread {
+            threads: vec![Thread {
+                id: "PRRT_1".into(),
                 path: "src/A.java".into(),
                 line: Some(12),
                 outdated: true,
+                resolved: false,
                 comments: vec![ThreadComment {
                     author: "alice".into(),
                     body: "Null check?".into(),
@@ -333,7 +332,7 @@ mod tests {
         assert!(md.starts_with("# Work item: pull request #7: Notifier"));
         assert!(md.contains("Wait for the user's instructions"));
         assert!(md.contains(
-            "### src/A.java:12 (outdated: the code changed since)\n\n**alice:** Null check?"
+            "### src/A.java:12 (outdated: the code changed since) (thread PRRT_1)\n\n**alice:** Null check?"
         ));
         assert!(md.contains("**bob** (changes requested): Split this up"));
         assert!(md.contains(

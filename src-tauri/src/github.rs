@@ -706,9 +706,12 @@ pub struct ThreadComment {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Thread {
+    /// GraphQL node id (a reply in a review needs it).
+    pub id: String,
     pub path: String,
     pub line: Option<i64>,
     pub outdated: bool,
+    pub resolved: bool,
     pub comments: Vec<ThreadComment>,
 }
 
@@ -728,7 +731,8 @@ pub struct PrDetail {
     pub url: String,
     pub head_ref: String,
     pub base_ref: String,
-    pub unresolved: Vec<Thread>,
+    /// The review threads, resolved ones too.
+    pub threads: Vec<Thread>,
     /// Review bodies (top-level review text), oldest first.
     pub reviews: Vec<(String, String, String)>,
     pub failing: Vec<FailingCheck>,
@@ -971,6 +975,61 @@ pub fn submit_review(
     Ok(s(&v["html_url"]))
 }
 
+/// A reply of a review in an existing thread (`thread`: its GraphQL node id).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadReply {
+    pub thread: String,
+    pub body: String,
+}
+
+/// Submits a review with replies in existing threads, which the REST API does not take in a
+/// review's comments: the review is made pending (the line comments with it), the replies are
+/// added to it, and then it is submitted, as GitHub's own page does. Returns its URL. When a
+/// step fails, the pending review is deleted, so nothing was posted.
+pub fn submit_review_with_replies(
+    owner: &str,
+    name: &str,
+    number: i64,
+    payload: &Value,
+    replies: &[ThreadReply],
+) -> Result<String, String> {
+    let reviews = format!("repos/{owner}/{name}/pulls/{number}/reviews");
+    let mut pending = payload.clone();
+    let (event, body) = match pending.as_object_mut() {
+        Some(p) => (p.remove("event"), p.remove("body")),
+        None => (None, None),
+    };
+    let review = post(&reviews, &pending)?;
+    let (id, node) = (
+        review["id"].as_i64().unwrap_or_default(),
+        s(&review["node_id"]),
+    );
+    let submitted = (|| {
+        for r in replies {
+            graphql(
+                "mutation($review: ID!, $thread: ID!, $body: String!) {
+                  addPullRequestReviewThreadReply(input: { pullRequestReviewId: $review, pullRequestReviewThreadId: $thread, body: $body }) { comment { id } } }",
+                &[("review", &node), ("thread", &r.thread), ("body", &r.body)],
+                &[],
+            )?;
+        }
+        let mut submit = json!({ "event": event });
+        if let Some(body) = body.filter(|b| b.as_str().is_some_and(|b| !b.is_empty())) {
+            submit["body"] = body;
+        }
+        post(&format!("{reviews}/{id}/events"), &submit)
+    })();
+    match submitted {
+        Ok(v) => Ok(s(&v["html_url"])),
+        Err(e) => {
+            if let Err(gone) = gh(&["api", "--method", "DELETE", &format!("{reviews}/{id}")]) {
+                tracing::warn!("could not delete the pending review {id}: {gone}");
+            }
+            Err(e)
+        }
+    }
+}
+
 /// Replies to the review thread that `comment_id` belongs to.
 pub fn reply(
     owner: &str,
@@ -1008,13 +1067,14 @@ pub fn resolve_thread(thread_id: &str, resolved: bool) -> Result<(), String> {
 }
 
 pub fn parse_detail(pr: &Value) -> PrDetail {
-    let unresolved = nodes(&pr["reviewThreads"])
+    let threads = nodes(&pr["reviewThreads"])
         .iter()
-        .filter(|t| t["isResolved"] == false)
         .map(|t| Thread {
+            id: s(&t["id"]),
             path: s(&t["path"]),
             line: t["line"].as_i64().or(t["originalLine"].as_i64()),
             outdated: t["isOutdated"].as_bool().unwrap_or_default(),
+            resolved: t["isResolved"].as_bool().unwrap_or_default(),
             comments: nodes(&t["comments"])
                 .iter()
                 .map(|c| ThreadComment {
@@ -1066,7 +1126,7 @@ pub fn parse_detail(pr: &Value) -> PrDetail {
         url: s(&pr["url"]),
         head_ref: s(&pr["headRefName"]),
         base_ref: s(&pr["baseRefName"]),
-        unresolved,
+        threads,
         reviews,
         failing,
     }
@@ -1392,15 +1452,14 @@ mod tests {
             ] } } } } ] }
         });
         let d = parse_detail(&pr);
-        assert_eq!(d.unresolved.len(), 2);
+        let t = &d.threads;
+        assert_eq!(t.len(), 3);
         assert_eq!(
-            (d.unresolved[0].path.as_str(), d.unresolved[0].line),
-            ("src/A.java", Some(12))
+            (t[0].path.as_str(), t[0].line, t[0].resolved),
+            ("src/A.java", Some(12), false)
         );
-        assert_eq!(
-            (d.unresolved[1].line, d.unresolved[1].outdated),
-            (Some(5), true)
-        );
+        assert_eq!((t[1].line, t[1].outdated), (Some(5), true));
+        assert!(t[2].resolved);
         assert_eq!(
             d.reviews,
             [(
@@ -1503,7 +1562,7 @@ mod live {
             println!(
                 "detail #{}: {} unresolved, {} reviews with text, {} failing",
                 p.number,
-                d.unresolved.len(),
+                d.threads.iter().filter(|t| !t.resolved).count(),
                 d.reviews.len(),
                 d.failing.len()
             );

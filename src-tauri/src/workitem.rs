@@ -22,7 +22,7 @@ pub fn summary(item: &WorkItem) -> Result<PrSummary, String> {
         .map_err(|e| format!("PR #{}: bad snapshot: {e}", item.number))
 }
 
-fn item_repo(state: &AppState, id: i64) -> Result<(WorkItem, Repo), String> {
+pub(crate) fn item_repo(state: &AppState, id: i64) -> Result<(WorkItem, Repo), String> {
     let item = state.store.item(id)?;
     let repo = state
         .store
@@ -1371,14 +1371,16 @@ pub fn comment_ranges(
 
 /// Submits a review on GitHub of the PR at `commit`, the head the review showed (empty: the
 /// PR's head now). `comments` must already be on lines of the PR diff at that commit (see
-/// `comment_ranges`); everything else belongs in `body`. The author may have pushed since:
-/// against the newer head the comments' line numbers would point at other lines.
+/// `comment_ranges`); everything else belongs in `body`; `replies` go in existing threads.
+/// The author may have pushed since: against the newer head the comments' line numbers would
+/// point at other lines.
 pub fn submit_review(
     state: &AppState,
     id: i64,
     event: &str,
     body: &str,
     comments: &[github::LineComment],
+    replies: &[github::ThreadReply],
     commit: &str,
 ) -> Result<String, String> {
     let (item, repo) = item_repo(state, id)?;
@@ -1390,7 +1392,11 @@ pub fn submit_review(
         commit => commit.to_owned(),
     };
     let payload = github::review_payload(&commit, event, body, comments);
-    let url = github::submit_review(&repo.owner, &repo.name, item.number, &payload)?;
+    let url = if replies.is_empty() {
+        github::submit_review(&repo.owner, &repo.name, item.number, &payload)?
+    } else {
+        github::submit_review_with_replies(&repo.owner, &repo.name, item.number, &payload, replies)?
+    };
     state.poller.refresh();
     Ok(url)
 }
@@ -1551,7 +1557,7 @@ mod tests {
             side: "RIGHT".into(),
             body: "Why?".into(),
         };
-        submit_review(&app.state, id, "COMMENT", "", &[comment], &seen).unwrap();
+        submit_review(&app.state, id, "COMMENT", "", &[comment], &[], &seen).unwrap();
         let posted = app.writes().pop().unwrap();
         assert_eq!(posted["body"]["commit_id"], seen.as_str());
     }

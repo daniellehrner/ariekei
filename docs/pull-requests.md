@@ -48,11 +48,14 @@ tasks and cleanup: [lifecycle.md](lifecycle.md). The review view in detail:
   tree, the right side is editable and can be saved.
 - **Review comments → GitHub or agent:** select code on the right to attach a comment; drafts are
   collected per item and shown in the diff below their lines. On others' PRs the agent drafts
-  review comments there too (its context and Ariekei's MCP tools tell it how), which you edit,
-  delete or send back to it with a prompt. **Send to agent** delivers your drafts on your own
+  review comments there too (its context and Ariekei's MCP tools tell it how), and replies in
+  existing threads, which you edit, delete or send back to it with a prompt. **Send to agent** delivers your drafts on your own
   work as one message (with a worktree). **Submit to GitHub…** sends them as a review (Comment, or Approve / Request changes
   on others' PRs): drafts on lines of the PR diff at its head commit become line comments, the
-  others are listed in the review text, and the panel says which is which.
+  others are listed in the review text, and the panel says which is which. Replies go into
+  their threads as part of the review: it is made pending, the replies are added to it
+  (GraphQL `addPullRequestReviewThreadReply`), then it is submitted; if a step fails, the
+  pending review is deleted and nothing is posted.
 - **Switching and resume:** each item's tab, review scope, selected file and pending comments are
   stored with the item. Terminals keep running while you look at other items. A terminal nobody
   looks at whose agent has been waiting for 45 minutes is closed, unless the agent still runs

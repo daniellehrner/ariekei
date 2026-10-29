@@ -73,6 +73,7 @@
     type LineComment,
     type Ranges,
     type ReviewDraft,
+    type ThreadReply,
   } from "./lib/reviewComments";
 
   let {
@@ -178,7 +179,7 @@
   let summary = $state("");
   // What goes where, and the commit it goes to: the PR head the drafts were made on; `drafts`
   // are the ones submitted (deleted once they are on GitHub).
-  let preview: { line: LineComment[]; body: DraftComment[]; commit: string; drafts: number[] } | null = $state(null);
+  let preview: { line: LineComment[]; body: DraftComment[]; replies: ThreadReply[]; commit: string; drafts: number[] } | null = $state(null);
   let busy = $state(false);
 
   // The draft comments, the user's and the agent's (it drafts them with Ariekei's tools),
@@ -453,7 +454,7 @@
   }
   function scrollToDraft(d: ReviewDraft) {
     const v = newSide();
-    if (!v || d.toLine > v.state.doc.lines) return;
+    if (!v || d.toLine < 1 || d.toLine > v.state.doc.lines) return;
     v.dispatch({ effects: EditorView.scrollIntoView(v.state.doc.line(d.toLine).to, { y: "center" }) });
   }
 
@@ -741,7 +742,7 @@
     if (review.own) event = "COMMENT";
     try {
       const all = drafts;
-      const paths = [...new Set(all.map((c) => c.path))];
+      const paths = [...new Set(all.filter((c) => !c.replyTo).map((c) => c.path))];
       const commit = review.prHead;
       const ranges: Ranges = Object.fromEntries(await api.commentRanges(id, paths, commit));
       preview = { ...classify(all, commit, ranges), commit, drafts: all.map((d) => d.id) };
@@ -756,10 +757,12 @@
     busy = true;
     try {
       const body = reviewBody(summary, preview.body);
-      if (event === "REQUEST_CHANGES" && !body && !preview.line.length) throw new Error("To request changes, add a summary or a line comment.");
-      const url = await api.submitReview(id, event, body, preview.line, preview.commit);
+      const { line, replies } = preview;
+      if (event === "REQUEST_CHANGES" && !body && !line.length && !replies.length) throw new Error("To request changes, add a summary or a line comment.");
+      const url = await api.submitReview(id, event, body, line, replies, preview.commit);
       const what = { COMMENT: "Review submitted", APPROVE: "Approved", REQUEST_CHANGES: "Changes requested" }[event];
-      say(`${what} on GitHub with ${preview.line.length} line comment${preview.line.length === 1 ? "" : "s"}.`, url || null);
+      const inThreads = replies.length ? ` and ${replies.length} repl${replies.length === 1 ? "y" : "ies"} in threads` : "";
+      say(`${what} on GitHub with ${line.length} line comment${line.length === 1 ? "" : "s"}${inThreads}.`, url || null);
       // Drafts added meanwhile (the agent may still be at it) stay.
       await api.deleteDrafts(id, preview.drafts).catch((e) => (error = `Submitted, but the drafts stay: ${e}`));
       await loadDrafts();
@@ -1034,6 +1037,7 @@
                   <Mark who={c.author === "agent" ? "agent" : "you"} />
                   <button class="goto" onclick={() => goToDraft(c)} title="Show it in {c.path}">
                     <code class:agent={c.author === "agent"}>{nameOf(c.path)}:{linesOf(c)}</code>
+                    {#if c.replyTo}<span class="reply-to" title="A reply in {c.replyTo.author}'s thread">↩ {c.replyTo.author}</span>{/if}
                     <span class="text">{c.text}</span>
                   </button>
                   <IconButton icon="trash" label="Remove draft" size={22} onclick={() => cardActions.remove(c).catch((e) => (error = String(e)))} />
@@ -1096,7 +1100,7 @@
     {#if review?.own}<p class="own">Your own PR: you can only comment.</p>{/if}
     {#if preview}
       <p class="preview" data-preview>
-        {preview.line.length} as line comment{preview.line.length === 1 ? "" : "s"} on the PR diff{#if preview.body.length}; {preview.body.length} in the review text (not on lines of the PR diff at its head commit){/if}.
+        {preview.line.length} as line comment{preview.line.length === 1 ? "" : "s"} on the PR diff{#if preview.replies.length}; {preview.replies.length} as repl{preview.replies.length === 1 ? "y" : "ies"} in {preview.replies.length === 1 ? "its thread" : "their threads"}{/if}{#if preview.body.length}; {preview.body.length} in the review text (not on lines of the PR diff at its head commit){/if}.
       </p>
     {/if}
     <div class="submit-actions">
@@ -1255,6 +1259,7 @@
   }
   .drafts li code { flex: none; font-size: var(--fs-code-inline); color: var(--you-strong); }
   .drafts li code.agent { color: var(--agent-strong); }
+  .drafts li .reply-to { flex: none; color: var(--text-muted); white-space: nowrap; }
   .drafts li .text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4) var(--sp-4) var(--sp-6); }
   .waits { flex: 1; min-width: 0; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

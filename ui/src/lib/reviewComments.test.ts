@@ -29,6 +29,14 @@ test("other versions, lines outside the diff and unknown files go into the body"
   assert.equal(body.length, 5);
 });
 
+test("a reply goes into its thread, wherever its lines are", () => {
+  const reply = { ...draft({ rev: "older", fromLine: 40, toLine: 40, text: " Agreed. " }), replyTo: { thread: "PRRT_1", author: "bob", text: "Why?" } };
+  const { line, body, replies } = classify([draft({}), reply], "head", { "A.java": [[8, 12]] });
+  assert.equal(line.length, 1);
+  assert.equal(body.length, 0);
+  assert.deepEqual(replies, [{ thread: "PRRT_1", body: "Agreed." }]);
+});
+
 test("the review body lists folded comments after the summary", () => {
   assert.equal(reviewBody("Looks good", [draft({ fromLine: 3, toLine: 4, text: "nit" })]), "Looks good\n\n- `A.java:3-4` — nit");
   assert.equal(reviewBody("  ", []), "");
@@ -75,10 +83,12 @@ test("long code is cut, and a fence outlasts backticks in the code", () => {
 });
 
 test("the agent is told which draft, what it says, who wrote it, and the prompt", () => {
-  const d: ReviewDraft = { id: 12, path: "src/a.rs", fromLine: 3, toLine: 5, code: "x", text: "Why?\nIt looks off.", rev: null, author: "agent", edited: true };
+  const d: ReviewDraft = { id: 12, path: "src/a.rs", fromLine: 3, toLine: 5, code: "x", text: "Why?\nIt looks off.", rev: null, author: "agent", edited: true, replyTo: null };
   assert.equal(
     draftMessage(d, " Make it friendlier "),
     "About review comment #12 on src/a.rs:3–5 (drafted by you, edited by me):\n\n> Why?\n> It looks off.\n\nMake it friendlier\n\nIf it should change, change it with update_review_comment.",
   );
   assert.ok(draftMessage({ ...d, author: "user", edited: false, toLine: 3 }, "?").startsWith("About review comment #12 on src/a.rs:3 (drafted by me):"));
+  const reply = { ...d, toLine: 3, replyTo: { thread: "PRRT_1", author: "bob", text: "?" } };
+  assert.ok(draftMessage(reply, "?").startsWith("About reply #12 in bob's thread PRRT_1 on src/a.rs:3 (drafted by you, edited by me):"));
 });

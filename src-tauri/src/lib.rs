@@ -538,10 +538,11 @@ async fn submit_review(
     event: String,
     body: String,
     comments: Vec<github::LineComment>,
+    replies: Vec<github::ThreadReply>,
     commit: String,
 ) -> Res<String> {
     blocking(app, move |s| {
-        workitem::submit_review(s, id, &event, &body, &comments, &commit)
+        workitem::submit_review(s, id, &event, &body, &comments, &replies, &commit)
     })
     .await
 }

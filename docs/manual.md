@@ -455,12 +455,17 @@ than only into its answer, and its cards appear in the diff as it goes, beside y
 draft tells the agent when GitHub would not take it as a line comment (outside the diff's hunks,
 or its worktree is not at the PR's head), so it can move it.
 
+The agent can also answer in a thread another reviewer started (it knows the unresolved threads
+from its context, and can list them all). Such a reply shows at the thread's line, its card
+saying whose thread it is and how that started (**reply in bob's thread**). It stays in that
+thread: it can be edited, asked about or deleted, not moved.
+
 - **Edit** a draft to change it in your words; it is then marked **edited by you**.
 - **Ask agent** on a card sends the agent that draft and your prompt (Ctrl+Enter), e.g. "make it
   shorter" or "is this really a bug?". The agent answers in the Terminal and changes the draft
   in place.
 - Delete the ones you do not want. **Submit to GitHub…** sends all the drafts left, the agent's
-  and yours alike, as your review.
+  and yours alike, as your review, the replies in their threads; the form counts them.
 
 A draft on an older version of the file (the author pushed since) says which commit it was
 made on, and goes into the review text rather than onto a line.

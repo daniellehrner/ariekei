@@ -15,11 +15,20 @@ export interface DraftComment {
   rev: string | null;
 }
 
-// A draft as stored, the user's or the agent's; `edited`: the user changed the agent's.
+// An existing review thread on GitHub: its GraphQL id, and who started it with what.
+export interface ThreadRef {
+  thread: string;
+  author: string;
+  text: string;
+}
+
+// A draft as stored, the user's or the agent's; `edited`: the user changed the agent's;
+// `replyTo`: it answers in that thread (its lines are the thread's).
 export interface ReviewDraft extends DraftComment {
   id: number;
   author: "user" | "agent";
   edited: boolean;
+  replyTo: ThreadRef | null;
 }
 
 export const draftLines = (c: DraftComment) => (c.fromLine === c.toLine ? `${c.fromLine}` : `${c.fromLine}–${c.toLine}`);
@@ -28,7 +37,8 @@ export const draftLines = (c: DraftComment) => (c.fromLine === c.toLine ? `${c.f
 export function draftMessage(d: ReviewDraft, prompt: string): string {
   const by = d.author === "agent" ? (d.edited ? "drafted by you, edited by me" : "drafted by you") : "drafted by me";
   const quote = d.text.trim().split("\n").map((l) => `> ${l}`).join("\n");
-  return `About review comment #${d.id} on ${d.path}:${draftLines(d)} (${by}):\n\n${quote}\n\n${prompt.trim()}\n\nIf it should change, change it with update_review_comment.`;
+  const what = d.replyTo ? `reply #${d.id} in ${d.replyTo.author}'s thread ${d.replyTo.thread}` : `review comment #${d.id}`;
+  return `About ${what} on ${d.path}:${draftLines(d)} (${by}):\n\n${quote}\n\n${prompt.trim()}\n\nIf it should change, change it with update_review_comment.`;
 }
 
 export interface LineComment {
@@ -39,16 +49,28 @@ export interface LineComment {
   body: string;
 }
 
+// A reply in an existing thread, as submitted with the review.
+export interface ThreadReply {
+  thread: string;
+  body: string;
+}
+
 export type Ranges = Record<string, [number, number][]>;
 
 const lines = (c: DraftComment) => (c.fromLine === c.toLine ? `${c.fromLine}` : `${c.fromLine}-${c.toLine}`);
 
 // GitHub takes a line comment only on lines of the PR diff at its head commit. A draft
 // made on another version of the file, or outside the diff's hunks, goes into the body.
-export function classify(comments: DraftComment[], prHead: string, ranges: Ranges) {
+// A reply goes into its thread, wherever that is.
+export function classify(comments: (DraftComment & { replyTo?: ThreadRef | null })[], prHead: string, ranges: Ranges) {
   const line: LineComment[] = [];
   const body: DraftComment[] = [];
+  const replies: ThreadReply[] = [];
   for (const c of comments) {
+    if (c.replyTo) {
+      replies.push({ thread: c.replyTo.thread, body: c.text.trim() });
+      continue;
+    }
     const inHunk = (ranges[c.path] ?? []).some(([a, b]) => c.fromLine >= a && c.toLine <= b);
     if (c.rev === prHead && inHunk) {
       line.push({
@@ -62,7 +84,7 @@ export function classify(comments: DraftComment[], prHead: string, ranges: Range
       body.push(c);
     }
   }
-  return { line, body };
+  return { line, body, replies };
 }
 
 export function reviewBody(summary: string, folded: DraftComment[]): string {
@@ -74,10 +96,11 @@ export function reviewBody(summary: string, folded: DraftComment[]): string {
   return parts.filter(Boolean).join("\n\n");
 }
 
-export function feedbackMessage(comments: DraftComment[]): string {
+export function feedbackMessage(comments: (DraftComment & { replyTo?: ThreadRef | null })[]): string {
   const items = comments.map((c, i) => {
     const quote = c.code.split("\n").slice(0, 6).map((l) => `   > ${l}`).join("\n");
-    return `${i + 1}. ${c.path}:${lines(c)}\n${quote}\n   ${c.text.trim().replaceAll("\n", "\n   ")}`;
+    const thread = c.replyTo ? ` (answering ${c.replyTo.author}'s review thread there)` : "";
+    return `${i + 1}. ${c.path}:${lines(c)}${thread}\n${quote}\n   ${c.text.trim().replaceAll("\n", "\n   ")}`;
   });
   return `Review feedback on your changes:\n\n${items.join("\n\n")}\n\nPlease address each point.`;
 }

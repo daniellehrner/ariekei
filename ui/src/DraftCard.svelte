@@ -2,8 +2,9 @@
      SPDX-License-Identifier: Apache-2.0 -->
 
 <!--
-  A draft comment in the diff, below its last line (lib/draftCards.ts): whose it is, its text,
-  and what can be done with it: Edit it in place, Ask the agent about it (it changes the draft
+  A draft comment in the diff, below its last line (lib/draftCards.ts): whose it is, the
+  thread it answers in if it is a reply (who started it, with what), its text, and what can be
+  done with it: Edit it in place, Ask the agent about it (it changes the draft
   with its tools), Delete it. In the textareas Ctrl+Enter saves or sends, Esc cancels.
 -->
 <script lang="ts">
@@ -66,6 +67,7 @@
   <div class="head">
     <Mark who={draft.author === "agent" ? "agent" : "you"} />
     <strong>{draft.author === "agent" ? "Agent" : "You"}</strong>
+    {#if draft.replyTo}<span class="muted" data-reply-to={draft.replyTo.thread}>· reply in {draft.replyTo.author}'s thread</span>{/if}
     {#if draft.edited}<span class="muted" data-edited>· edited by you</span>{/if}
     {#if elsewhere && draft.rev}<span class="muted" title="Drafted on commit {draft.rev}; the lines may have moved since">· on {draft.rev.slice(0, 8)}</span>{/if}
     <span class="grow"></span>
@@ -77,6 +79,9 @@
       <IconButton icon="trash" label="Delete draft" size={22} disabled={busy} onclick={() => run(() => actions.remove(draft))} data-draft-delete />
     {/if}
   </div>
+  {#if draft.replyTo}
+    <div class="thread" title="{draft.replyTo.author}: {draft.replyTo.text}"><strong>{draft.replyTo.author}:</strong> {draft.replyTo.text}</div>
+  {/if}
   {#if mode === "edit"}
     <textarea use:focus bind:value={text} rows={Math.min(8, Math.max(2, text.split("\n").length))} onkeydown={(e) => onKey(e, save)} data-draft-text></textarea>
     <div class="buttons">
@@ -108,6 +113,11 @@
   .head strong { font-weight: var(--fw-semibold); }
   .grow { flex: 1; min-width: 0; }
   .muted { color: var(--text-muted); white-space: nowrap; }
+  .thread {
+    margin: 0 var(--sp-4) var(--sp-3); padding-left: var(--sp-3); border-left: 2px solid var(--border); color: var(--text-muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .thread strong { font-weight: var(--fw-semibold); }
   .text { padding: 0 var(--sp-4) var(--sp-3); white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-13); line-height: var(--lh-13); }
   textarea {
     display: block; box-sizing: border-box; width: calc(100% - 2 * var(--sp-4)); margin: 0 var(--sp-4) var(--sp-3); resize: vertical;

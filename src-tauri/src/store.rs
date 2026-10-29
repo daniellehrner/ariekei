@@ -177,6 +177,13 @@ CREATE TABLE agent_worktrees (
 );
 CREATE INDEX agent_worktrees_item ON agent_worktrees(item_id);
 "#,
+    r#"
+-- A draft that answers in an existing review thread: the thread's GraphQL id, and who started
+-- it with what (shown with the draft; the thread is GitHub's).
+ALTER TABLE review_drafts ADD COLUMN reply_to TEXT;
+ALTER TABLE review_drafts ADD COLUMN reply_to_author TEXT;
+ALTER TABLE review_drafts ADD COLUMN reply_to_text TEXT;
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -283,6 +290,17 @@ pub struct ReviewDraft {
     pub author: String,
     /// The user changed the agent's draft.
     pub edited: bool,
+    /// The thread it answers in; its anchor is the thread's lines.
+    pub reply_to: Option<ThreadRef>,
+}
+
+/// An existing review thread on GitHub: its GraphQL id, and who started it with what.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadRef {
+    pub thread: String,
+    pub author: String,
+    pub text: String,
 }
 
 /// A worktree an item's agent made itself (`agent_worktrees`).
@@ -936,7 +954,8 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT id, path, from_line, to_line, code, rev, text, author, edited
+                "SELECT id, path, from_line, to_line, code, rev, text, author, edited,
+                        reply_to, reply_to_author, reply_to_text
                  FROM review_drafts WHERE item_id = ?1 ORDER BY id",
             )
             .map_err(err)?;
@@ -953,6 +972,14 @@ impl Store {
                 text: r.get(6)?,
                 author: r.get(7)?,
                 edited: r.get(8)?,
+                reply_to: match r.get::<_, Option<String>>(9)? {
+                    Some(thread) => Some(ThreadRef {
+                        thread,
+                        author: r.get::<_, Option<String>>(10)?.unwrap_or_default(),
+                        text: r.get::<_, Option<String>>(11)?.unwrap_or_default(),
+                    }),
+                    None => None,
+                },
             })
         })
         .map_err(err)?
@@ -960,17 +987,20 @@ impl Store {
         .map_err(err)
     }
 
+    /// A new draft of item `id`; `reply_to`: it answers in that thread.
     pub fn add_draft(
         &self,
         id: i64,
         at: &DraftAnchor,
         text: &str,
         author: &str,
+        reply_to: Option<&ThreadRef>,
     ) -> Result<i64, String> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO review_drafts (item_id, path, from_line, to_line, code, rev, text, author)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO review_drafts (item_id, path, from_line, to_line, code, rev, text, author,
+                                        reply_to, reply_to_author, reply_to_text)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 id,
                 at.path,
@@ -979,7 +1009,10 @@ impl Store {
                 at.code,
                 at.rev,
                 text,
-                author
+                author,
+                reply_to.map(|r| &r.thread),
+                reply_to.map(|r| &r.author),
+                reply_to.map(|r| &r.text),
             ],
         )
         .map_err(err)?;
@@ -1502,8 +1535,10 @@ mod tests {
             code: "x\ny".into(),
             rev: Some("abc".into()),
         };
-        let mine = store.add_draft(id, &at(3), "Why?", "user").unwrap();
-        let agents = store.add_draft(id, &at(9), "Off by one", "agent").unwrap();
+        let mine = store.add_draft(id, &at(3), "Why?", "user", None).unwrap();
+        let agents = store
+            .add_draft(id, &at(9), "Off by one", "agent", None)
+            .unwrap();
 
         // Another item's drafts are out of reach.
         assert!(!store.edit_draft(other, agents, "x", true).unwrap());
@@ -1539,6 +1574,23 @@ mod tests {
                 (mine, 3, "Why this?", "user", false),
                 (agents, 12, "Off by one, I think", "agent", true)
             ]
+        );
+
+        assert!(drafts.iter().all(|d| d.reply_to.is_none()));
+
+        // A reply keeps its thread.
+        let thread = ThreadRef {
+            thread: "PRRT_1".into(),
+            author: "bob".into(),
+            text: "Why?".into(),
+        };
+        let reply = store
+            .add_draft(id, &at(3), "Because", "agent", Some(&thread))
+            .unwrap();
+        let drafts = store.drafts(id).unwrap();
+        assert_eq!(
+            (drafts[2].id, drafts[2].reply_to.as_ref()),
+            (reply, Some(&thread))
         );
 
         assert_eq!(store.delete_drafts(id, &[mine]).unwrap(), 1);

@@ -17,7 +17,8 @@ A minimal terminal agent that reports through the hooks of `--settings` like Cla
   background Bash call does (a child of the agent), and finishes the turn;
 - "Exit with code N" crashes: exits with N at once, without SessionEnd;
 - with Ariekei's MCP server (`--mcp-config`), "Draft a review comment on P line N: T" drafts
-  one with its `add_review_comment` tool, and the Review tab's message about review comment #N
+  one with its `add_review_comment` tool, "Reply in thread ID: T" drafts a reply in that thread
+  (`reply_to_review_thread`), and the Review tab's message about review comment (or reply) #N
   with "say 'T'" in its prompt changes the draft to T (`update_review_comment`);
 - a line containing "ask" asks permission for a Bash command and waits;
 - `/clear` ends the conversation (SessionEnd, reason "clear") and goes on in a new one, with a
@@ -256,10 +257,15 @@ def turn(text, say, hook, keys, mcp=None):
     busy(0.8)  # a turn takes a moment, as the real one does
     drafting = re.search(r"draft a review comment on (\S+) line (\d+): (.+)", text, re.I)
     # The Review tab's message about one draft (lib/reviewComments.ts draftMessage).
-    redraft = re.search(r"About review comment #(\d+) .*?say '([^']+)'", text)
+    redraft = re.search(r"About (?:review comment|reply) #(\d+) .*?say '([^']+)'", text)
     if mcp and drafting:
         path, line, body = drafting.groups()
         say("⏺ " + tool(mcp, hook, "add_review_comment", {"path": path, "line": int(line), "body": body}))
+        hook("Stop")
+        return
+    replying = re.search(r"reply in thread (\S+): (.+)", text, re.I)
+    if mcp and replying:
+        say("⏺ " + tool(mcp, hook, "reply_to_review_thread", {"thread": replying.group(1), "body": replying.group(2)}))
         hook("Stop")
         return
     if mcp and redraft:

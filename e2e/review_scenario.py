@@ -14,7 +14,7 @@ marked and their thread first, an item opening on the tab it was left on (also o
 before leaving it), a conversation GitHub fails to give (shown as last given, with a bar), no
 approving your own PR, and the agent (e2e/fake_claude.py) drafting review comments with
 Ariekei's tools: shown in the diff below their lines with yours, edited, redrafted on request,
-and submitted with the review.
+a reply in another reviewer's thread, and submitted with the review.
 
 Run it with `python3 e2e/run.py <test-app> review` (see run.py), which sets the environment.
 """
@@ -97,7 +97,7 @@ json.dump({"viewer": "me", "prs": [
      "body_html": "<p>Adds <strong>y</strong>. See <a href=\"https://example.com/spec\">the spec</a>.</p>"
                   "<script>window.__pwned = 1</script><img src=\"x\" onerror=\"window.__pwned = 2\">",
      "comments": [{"author": "carol", "html": "<p>Nice idea.</p>"}],
-     "threads": [{"id": "T1", "path": "a.txt", "line": 10, "comment_id": 101, "author": "bob", "html": "<p>Why this change?</p>",
+     "threads": [{"id": "T1", "path": "a.txt", "line": 10, "comment_id": 101, "author": "bob", "body": "Why this change?", "html": "<p>Why this change?</p>",
                   "diff_hunk": "@@ -9,2 +9,2 @@\n line9\n-line10\n+line10 changed"}]},
     {"number": 44, "title": "Add z", "author": "dave", "head_ref": "feature/z", "head_sha": sha44, "base_ref": "main", "requested": True},
     # One PR for each of the other sections; their branches are not needed.
@@ -681,13 +681,29 @@ try:
     eventually("the agent redrafts it", lambda: s.js(f"return document.querySelector(\"{agents} [data-draft-body]\")?.textContent ?? ''"),
                lambda v: v == "Is line10 the right name here?", timeout=60)
     s.screenshot(os.path.join(shots, "r6-agent-drafts.png"))
+    # It answers in Bob's thread on line 10: a reply, shown at the thread's line.
+    tab(s, "Terminal")
+    eventually("the agent is done redrafting", lambda: s.js("return document.querySelector('[data-agent-status]')?.dataset.agentStatus"),
+               lambda v: v != "working", timeout=30)
+    to_agent(s, "Reply in thread T1: The old name read better, I agree.")
+    eventually("the agent drafts the reply", screen, lambda v: "a reply in bob's thread" in v, timeout=60)
+    tab(s, "Review")
+    reply = ".diff [data-draft]:has([data-reply-to='T1'])"
+    eventually("the agent's reply shows at its thread's line", lambda: s.js(f"return document.querySelector(\"{reply}\")?.innerText.replace(/\\s+/g, ' ') ?? ''"),
+               lambda v: "reply in bob's thread" in v and "Why this change?" in v and "The old name read better" in v, timeout=60)
     dom_click(s, "[data-open-submit]")
     s.wait_js("return !!document.querySelector('[data-preview]')", timeout=10)
-    print("[drafts] submit preview:", s.js("return document.querySelector('[data-preview]').textContent.trim()"))
+    preview = s.js("return document.querySelector('[data-preview]').textContent.trim()")
+    print("[drafts] submit preview:", preview)
+    check("the preview counts the reply", "1 as reply in its thread" in preview, preview)
     dom_click(s, "[data-send-review]")
     eventually("both go to GitHub as line comments",
                lambda: sorted((c["path"], c["line"], c["body"]) for c in [w for w in writes() if w.get("post", "").endswith("/pulls/43/reviews")][-1]["body"]["comments"]),
                lambda v: v == [("a.txt", 9, "Is line 9 still needed?"), ("a.txt", 10, "Is line10 the right name here?")], timeout=20)
+    eventually("the reply goes into Bob's thread, in the review", lambda: [(w["vars"]["thread"], w["vars"]["body"], w["vars"]["review"]) for w in writes()
+                                                                          if w.get("graphql") == "addPullRequestReviewThreadReply"],
+               lambda v: v == [("T1", "The old name read better, I agree.", "PRR_7")], timeout=10)
+    check("then the review is submitted", writes()[-1].get("post") == "repos/owner/proj/pulls/43/reviews/7/events", writes()[-1])
     eventually("submitted drafts are gone", lambda: s.js("return document.querySelectorAll('[data-draft]').length"), lambda v: v == 0, timeout=10)
 finally:
     s.quit()

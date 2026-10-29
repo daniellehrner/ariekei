@@ -6,7 +6,7 @@
 
 Serves the PRs described in $FAKE_GH_DIR/data.json and appends every write (REST POSTs and
 GraphQL mutations) to $FAKE_GH_DIR/writes.jsonl, so a test can check what would have been
-sent to GitHub. Supports only the calls Ariekei makes.
+sent to GitHub (a DELETE too). Supports only the calls Ariekei makes.
 
 data.json: {"viewer": "me", "upstream": <path of the "GitHub" git repo, optional>,
             "default_branch": <name, default main>, "now": <GitHub's clock, RFC 3339, optional>,
@@ -168,6 +168,9 @@ def resolve(owner, name):
 def graphql(fields):
     query = fields.get("query", "")
     if query.lstrip().startswith("mutation"):
+        threads = {t["id"] for pr in DATA["prs"] for t in pr.get("threads", [])}
+        if "thread" in fields and fields["thread"] not in threads:
+            return {"data": None, "errors": [{"type": "NOT_FOUND", "message": f"Could not resolve to a node with the global id of '{fields['thread']}'"}]}
         record({"graphql": query.split("(")[1].split("{")[-1].strip() if "{" in query else query, "vars": {k: v for k, v in fields.items() if k != "query"}})
         return {"data": {}}
     in_q = re.search(r"repo:([^/\s]+)/(\S+)", fields.get("q", ""))
@@ -318,7 +321,14 @@ def main(argv):
             save()
             print(json.dumps({"number": number, "html_url": f"https://github.com/owner/proj/pull/{number}"}))
             return 0
+        # A review: one made without an event is pending until .../reviews/<id>/events.
+        if path.endswith("/reviews"):
+            print(json.dumps({"id": 7, "node_id": "PRR_7", "html_url": f"https://github.com/{path}/7"}))
+            return 0
         print(json.dumps({"html_url": f"https://github.com/{path}"}))
+        return 0
+    if argv[0] == "api" and argv[1:3] == ["--method", "DELETE"]:
+        record({"delete": argv[3]})
         return 0
     slug = re.fullmatch(r"repos/([^/]+)/([^/]+)", argv[1]) if argv[0] == "api" else None
     if slug and argv[2:] == ["--jq", ".full_name"]:
