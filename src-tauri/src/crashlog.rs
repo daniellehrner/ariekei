@@ -166,10 +166,12 @@ mod signals {
     }
 
     /// Ends the process with `signal`'s default action, as it would have without Ariekei's
-    /// handler: unblocked (a handler runs with its signal blocked) and raised again, and should
-    /// it still be alive, exit status 128 + signal.
+    /// handler: unblocked (a handler runs with its signal blocked) and raised again; should that
+    /// not end it (macOS, raised in its own handler), sent to the process, which another thread
+    /// takes; and should it still be alive a second later, exit status 128 + signal.
     ///
-    /// SAFETY: only async-signal-safe calls (signal, sigprocmask, raise, _exit).
+    /// SAFETY: only async-signal-safe calls (signal, sigprocmask, raise, kill, nanosleep,
+    /// _exit).
     unsafe fn die(signal: libc::c_int) -> ! {
         unsafe {
             libc::signal(signal, libc::SIG_DFL);
@@ -179,6 +181,15 @@ mod signals {
             libc::sigprocmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
             // To this thread: delivered before raise returns, now that it is unblocked.
             libc::raise(signal);
+            libc::kill(libc::getpid(), signal);
+            // The thread that takes it may be a moment.
+            let wait = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 100_000_000,
+            };
+            for _ in 0..10 {
+                libc::nanosleep(&wait, std::ptr::null_mut());
+            }
             libc::_exit(128 + signal)
         }
     }
@@ -248,8 +259,9 @@ mod tests {
             .env("ARIEKEI_TEST_CRASH", how)
             .output()
             .unwrap();
+        // With how it ended, for the failure message.
         (
-            String::from_utf8_lossy(&out.stderr).into_owned(),
+            format!("{}\n[{}]", String::from_utf8_lossy(&out.stderr), out.status),
             out.status.signal(),
         )
     }
@@ -289,16 +301,16 @@ mod tests {
     fn fatal_signals_are_named_and_still_end_it() {
         let (stderr, signal) = crash("fault");
         assert!(stderr.contains("Ariekei: fatal signal SIGSEGV"), "{stderr}");
-        assert_eq!(signal, Some(libc::SIGSEGV));
+        assert_eq!(signal, Some(libc::SIGSEGV), "{stderr}");
         let (stderr, signal) = crash("sent");
         assert!(stderr.contains("Ariekei: fatal signal SIGSEGV"), "{stderr}");
-        assert_eq!(signal, Some(libc::SIGSEGV));
+        assert_eq!(signal, Some(libc::SIGSEGV), "{stderr}");
         // Rust's own handler still names a stack overflow.
         let (stderr, signal) = crash("overflow");
         assert!(stderr.contains("has overflowed its stack"), "{stderr}");
-        assert_eq!(signal, Some(libc::SIGABRT));
+        assert_eq!(signal, Some(libc::SIGABRT), "{stderr}");
         let (stderr, signal) = crash("term");
         assert!(stderr.contains("Ariekei: ended by SIGTERM"), "{stderr}");
-        assert_eq!(signal, Some(libc::SIGTERM));
+        assert_eq!(signal, Some(libc::SIGTERM), "{stderr}");
     }
 }
