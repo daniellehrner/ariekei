@@ -804,9 +804,13 @@ activity, a grey bar for lifecycle news.
   started from a terminal, it is in that terminal. It names a crash signal ("fatal signal
   SIGSEGV"), a signal that asked it to end ("ended by SIGTERM"), a panic with its backtrace, an
   `exit()` it did not ask for (e.g. the desktop session's display went away), or "quitting"
-  with the reason. A run that ended without exiting cleanly is reported when Ariekei starts
-  again; if its last lines name nothing, it was killed with SIGKILL (e.g. a Force Quit). Your
-  agents' conversations resume when you open their items again.
+  with the reason. A signal another process sent names that process ("sent by pid 1234
+  (kill)"). On Linux, Ariekei runs under a small watcher process (`ariekei-watch`), whose last
+  line says how it ended, even when nothing else could: "Ariekei watcher: Ariekei (pid …) was
+  ended by signal 9 (SIGKILL…)" (the kernel out of memory, systemd-oomd, a Force Quit, a
+  `kill -9`), another signal, or "exited with status …". A run that ended without exiting
+  cleanly is also reported when Ariekei starts again. Your agents' conversations resume when you
+  open their items again.
 - **A window turned grey**: its page (WebKit runs it in a process of its own) ended, e.g. over
   WebKit's memory limit. Ariekei logs why ("the page of window … ended") and loads the page
   again by itself; the agents keep running and their terminals reattach. If it ends again
