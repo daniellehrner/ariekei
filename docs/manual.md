@@ -812,8 +812,10 @@ activity, a grey bar for lifecycle news.
   cleanly is also reported when Ariekei starts again. Your agents' conversations resume when you
   open their items again.
 - **A window turned grey**: its page (WebKit runs it in a process of its own) ended, e.g. over
-  WebKit's memory limit. Ariekei logs why ("the page of window … ended") and loads the page
-  again by itself; the agents keep running and their terminals reattach. If it ends again
+  WebKit's memory limit. Ariekei logs why ("the page of window … ended") and, on Linux 6.15 or
+  later, how its process ended ("the page process (pid …) was ended by signal 9 (SIGKILL…)",
+  another signal, or "exited with status …"), and loads the page again by itself; the agents
+  keep running and their terminals reattach. If it ends again
   within a minute, it is left grey: restart Ariekei (on Linux).
 
 - **The agent lists review comments in its answer instead of drafting them into the Review

@@ -351,33 +351,35 @@ mod watcher {
                 std::process::exit(1);
             }
         }
-        let (how, code) = ended(status);
+        let (how, code) = super::ended(status);
         eprintln!("Ariekei watcher: Ariekei (pid {ariekei}) {how}");
         std::process::exit(code)
     }
+}
 
-    /// How a process with wait status `status` ended, and the exit status that says it.
-    fn ended(status: libc::c_int) -> (String, i32) {
-        if libc::WIFSIGNALED(status) {
-            let signal = libc::WTERMSIG(status);
-            let what = if signal == libc::SIGKILL {
-                "SIGKILL: the kernel out of memory (journalctl -k), systemd-oomd, a Force Quit \
-                 or a kill -9"
-                    .to_owned()
-            } else {
-                // SAFETY: strsignal returns a valid C string; one thread here.
-                unsafe { std::ffi::CStr::from_ptr(libc::strsignal(signal)) }
-                    .to_string_lossy()
-                    .into_owned()
-            };
-            (
-                format!("was ended by signal {signal} ({what})"),
-                128 + signal,
-            )
+/// How a process with wait status `status` ended, and the exit status that says it.
+#[cfg(target_os = "linux")]
+pub fn ended(status: libc::c_int) -> (String, i32) {
+    if libc::WIFSIGNALED(status) {
+        let signal = libc::WTERMSIG(status);
+        let what = if signal == libc::SIGKILL {
+            "SIGKILL: the kernel out of memory (journalctl -k), systemd-oomd, a Force Quit or a \
+             kill -9"
+                .to_owned()
         } else {
-            let code = libc::WEXITSTATUS(status);
-            (format!("exited with status {code}"), code)
-        }
+            // SAFETY: strsignal returns a valid C string; glibc's is thread-safe since 2.32
+            // (a known signal's description is a constant).
+            unsafe { std::ffi::CStr::from_ptr(libc::strsignal(signal)) }
+                .to_string_lossy()
+                .into_owned()
+        };
+        (
+            format!("was ended by signal {signal} ({what})"),
+            128 + signal,
+        )
+    } else {
+        let code = libc::WEXITSTATUS(status);
+        (format!("exited with status {code}"), code)
     }
 }
 
