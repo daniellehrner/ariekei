@@ -421,22 +421,24 @@
   {#if moved}
     <div class="banner">
       <Banner tone="bad" icon="branch" data-moved>
-        <span><code>{moved.folder}</code> is on {#if moved.now}<code>{moved.now}</code>{:else}a detached HEAD{/if} now, not on
-          <code>{moved.branch}</code>. Ariekei sends the agent nothing until you switch it back{#if moved.follow} or continue on
-          <code>{moved.now}</code>{/if}; what you type in its terminal still reaches it.</span>
+        <!-- Branch names can be long: the text names each once, cut to fit, and the buttons
+             name none, so the banner stays a line or two. -->
+        <span>Now on {#if moved.now}<code title={moved.now}>{moved.now}</code>{:else}a detached HEAD{/if}, not on
+          <code title={moved.branch}>{moved.branch}</code>: Ariekei sends the agent nothing until that changes. Typing in its
+          terminal still reaches it.</span>
         {#snippet action()}
           {@const m = moved!}
           {#if m.follow}
             <Button size="sm" loading={fixing === "follow"} disabled={!!fixing} onclick={() => fix("follow", () => api.followBranch(m.id))}
               title={row.kind === "pr" ? `Work on ${m.now} from now on; the PR on GitHub changes when you push it there` : `Make ${m.now} the ${row.kind}'s branch`}
-              data-follow-branch>Continue on {m.now}</Button>
+              data-follow-branch>Continue on it</Button>
           {/if}
           {#if m.now === ""}
             <Button size="sm" loading={fixing === "move"} disabled={!!fixing} onclick={() => fix("move", () => api.moveBranchHere(m.id))}
-              title="Put {m.branch} on the checked out commit, e.g. a newer version of the PR" data-move-branch>Move {m.branch} here</Button>
+              title="Put {m.branch} on the checked out commit, e.g. a newer version of the PR" data-move-branch>Move branch here</Button>
           {/if}
           <Button size="sm" variant="primary" loading={fixing === "switch"} disabled={!!fixing} onclick={() => fix("switch", () => api.switchBack(m.id))}
-            data-switch-back>Switch back to {m.branch}</Button>
+            title="Check out {m.branch} in {m.folder} again" data-switch-back>Switch back</Button>
         {/snippet}
       </Banner>
     </div>
@@ -604,6 +606,9 @@
   /* The lifecycle note is one line. */
   .note { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .banner { flex: none; margin: var(--sp-4) var(--sp-7) 0; }
+  .banner :global([data-moved] code) {
+    display: inline-block; max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
+  }
 
   .tabs {
     flex: none; display: flex; align-items: flex-end; gap: var(--sp-1); height: var(--h-tabbar); box-sizing: border-box;

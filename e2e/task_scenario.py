@@ -483,7 +483,7 @@ try:
     moved = s.text(s.wait(".item [data-moved]", timeout=30))
     inert = s.js("return !!document.querySelector('.terminal[inert]')")
     print("[own checkout] switched to main:", moved.strip(), "| terminal inert:", inert)
-    contains("the item says where the checkout went", moved, "proj is on main now, not on feature-y")
+    contains("the item says where the checkout went", moved, "Now on main, not on feature-y")
     check("the agent's terminal still takes input", not inert)
     check("not detached: nothing to move", not s.find(".item [data-move-branch]"))
     check("nor the default branch to continue on", not s.find(".item [data-follow-branch]"))

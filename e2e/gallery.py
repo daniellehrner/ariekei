@@ -21,8 +21,8 @@ D-Bus; to choose the theme, point D-Bus nowhere and set it in a GTK settings fil
 Screens: connect, empty (nothing selected yet), overview, menu, repo-remove (its confirm), comments, collapsed, waiting, terminal, review,
 scope-menu, selection, drafts, submit, code-menu, ask-agent, shortcuts, review-hidden, notice-arriving,
 notices, inbox (every section, one item starred), browse, new-task (on a fork's branch),
-change-end (n past the last change), task (a task with the PR its agent opened), quit (asked
-before quitting stops agents' work).
+change-end (n past the last change), task (a task with the PR its agent opened), moved (its
+worktree on another branch), quit (asked before quitting stops agents' work).
 """
 
 import json
@@ -284,7 +284,7 @@ try:
             s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }))")
             click(s, "[data-toggle='side']")
             shot(s, "review-hidden")
-    if need("task"):
+    if need("task", "moved"):
         # A task whose agent opened a PR: the task's Overview, and the PR an item of its own in
         # My PRs.
         s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, bubbles: true }))")
@@ -306,6 +306,15 @@ try:
         tab(s, "Overview")
         s.wait(".overview .notes", timeout=30)
         shot(s, "task")
+        if need("moved"):
+            # Its worktree switched to a branch with a long name (as the agent combining PRs).
+            git(wt, "checkout", "-q", "-b", "perf-combined-11754-11759-11808-11529-11812")
+            s.js("window.dispatchEvent(new Event('focus'))")
+            s.wait(".item [data-moved]", timeout=30)
+            shot(s, "moved")
+            git(wt, "checkout", "-q", "peers-drop-after-restart")
+            s.js("window.dispatchEvent(new Event('focus'))")
+            s.wait_js("return !document.querySelector('.item [data-moved]')", timeout=30)
     if need("notice-arriving", "notices"):
         # One notice of each kind, as the backend sends them (notify.rs).
         s.js("""const rows = (await window.__TAURI_INTERNALS__.invoke('inbox')).filter((r) => r.kind !== 'task');
