@@ -10,9 +10,12 @@ tasks and cleanup: [lifecycle.md](lifecycle.md). The review view in detail:
   `upstream`, else any GitHub remote) and uses your `gh` login.
 - **Inbox:** your PRs and issues, polled from GitHub every 60 s (↻ refreshes now), in sections by
   your role (see [design.md](design.md#the-inbox)), and within a section by what needs you:
-  agent waiting for permission → finished but cleanup blocked → CI failing → new
-  reviews/comments since you last opened the item → agent working → the rest by last update.
-  Each row shows CI, draft, review decision, unresolved threads and agent status.
+  agent waiting for permission → finished but cleanup blocked → waiting for your reply → CI
+  failing → new reviews/comments since you last opened the item → agent working → the rest by
+  last update. Each row shows CI, draft, review decision, what waits for your reply, unresolved
+  threads and agent status. "Waiting for your reply" stays until you reply or resolve: an
+  unresolved thread where someone else (not a bot) had the last word, on your PR or in a thread
+  you took part in, and on your PR what others asked in its conversation after your last word.
   Polling is cheap on GitHub's GraphQL budget (5000 points an hour, shared with `gh` and the
   agents): it asks which PRs exist and when each last changed (1 point per query) and fetches
   details only for PRs that changed, are new, or have checks running; every tenth poll and ↻

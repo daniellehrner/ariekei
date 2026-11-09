@@ -178,6 +178,7 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             failing_checks: vec![],
             review_decision: None,
             unresolved_threads: 0,
+            awaiting_reply: 0,
             new_activity: false,
             agent,
             ready_for_review: false,
@@ -213,6 +214,7 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             failing_checks: vec![],
             review_decision: None,
             unresolved_threads: 0,
+            awaiting_reply: 0,
             new_activity: issue.latest_activity.unwrap_or_default() > seen,
             agent,
             ready_for_review: false,
@@ -248,6 +250,7 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             failing_checks: pr.failing_checks.clone(),
             review_decision: pr.review_decision.clone(),
             unresolved_threads: pr.unresolved_threads,
+            awaiting_reply: pr.awaiting_reply,
             new_activity: pr.latest_activity.clone().unwrap_or_default() > seen,
             agent,
             ready_for_review: false,
@@ -1063,7 +1066,7 @@ pub fn conversation(state: &AppState, id: i64) -> Result<github::Conversation, S
     let conv = if item.kind == "issue" {
         github::issue_conversation(&repo.owner, &repo.name, item.number).map(|(c, _)| c)?
     } else {
-        github::conversation(&repo.owner, &repo.name, item.number)?
+        github::conversation(&repo.owner, &repo.name, item.number, &repo.viewer)?
     };
     // Kept for the next time the item opens (`cached_conversation`).
     match serde_json::to_value(&conv) {

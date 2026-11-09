@@ -9,6 +9,12 @@ export const latestAt = (t: Thread) => t.comments.reduce((at, c) => (c.createdAt
 /** Threads with the latest comments first: a reply to an old thread is not lost among the others. */
 export const byLatest = (threads: Thread[]) => [...threads].sort((a, b) => latestAt(b).localeCompare(latestAt(a)));
 
+/** Threads that wait for the user's reply first, then the others; in each, the latest first. */
+export const replyFirst = (threads: Thread[]) => {
+  const latest = byLatest(threads);
+  return [...latest.filter((t) => t.awaitsReply), ...latest.filter((t) => !t.awaitsReply)];
+};
+
 /** Someone else wrote it after `since`, how far the user had seen the item when they opened it
  *  (null: nothing to tell new from old; "0": seen with no activity, so all of it is new). */
 export const isNew = (c: { author: string; at: string }, since: string | null, viewer: string) =>

@@ -6,7 +6,7 @@
   import Icon from "./controls/Icon.svelte";
   import Pill from "./controls/Pill.svelte";
   import { api, type Conversation, type GhComment, type Thread } from "./lib/api";
-  import { byLatest, isNew, threadHasNew } from "./lib/conversation";
+  import { byLatest, isNew, replyFirst, threadHasNew } from "./lib/conversation";
   import { hunkTail } from "./lib/hunk";
   import { externalLinks, sanitize } from "./lib/html";
 
@@ -55,16 +55,18 @@
   // Conversation comments and reviews (with text or a decision), oldest first.
   const timeline = $derived.by(() => {
     const items = [
-      ...conv.comments.map((c) => ({ kind: "comment" as const, at: c.createdAt, author: c.author, html: c.bodyHtml, state: "" })),
+      ...conv.comments.map((c) => ({ kind: "comment" as const, at: c.createdAt, author: c.author, html: c.bodyHtml, state: "", owed: !!c.awaitsReply })),
       ...conv.reviews
         .filter((r) => r.bodyHtml.trim() || r.state === "APPROVED" || r.state === "CHANGES_REQUESTED")
-        .map((r) => ({ kind: "review" as const, at: r.submittedAt, author: r.author, html: r.bodyHtml, state: r.state })),
+        .map((r) => ({ kind: "review" as const, at: r.submittedAt, author: r.author, html: r.bodyHtml, state: r.state, owed: !!r.awaitsReply })),
     ];
     return items.sort((a, b) => a.at.localeCompare(b.at));
   });
 
   const fresh = (c: GhComment) => isNew({ author: c.author, at: c.createdAt }, since, viewer);
-  const unresolved = $derived(byLatest(conv.threads.filter((t) => !t.resolved)));
+  // Those waiting for the user's reply first.
+  const unresolved = $derived(replyFirst(conv.threads.filter((t) => !t.resolved)));
+  const owed = $derived(unresolved.filter((t) => t.awaitsReply).length);
   const resolved = $derived(byLatest(conv.threads.filter((t) => t.resolved)));
   const withNew = $derived(conv.threads.filter((t) => threadHasNew(t, since, viewer)).length);
 
@@ -108,10 +110,11 @@
 
 {#snippet thread(t: Thread)}
   {@const lines = hunkTail(t.diffHunk, 4)}
-  <section class="thread" data-thread={t.id}>
+  <section class="thread" data-thread={t.id} data-awaits-reply={t.awaitsReply || undefined}>
     <header>
       <Icon name="comment" size={14} />
       <code title={t.path}>{short(t.path)}{t.line ? `:${t.line}` : ""}</code>
+      {#if t.awaitsReply}<Pill size="sm" tone="gh" title="Someone else had the last word: reply, or resolve it">your reply</Pill>{/if}
       {#if t.outdated}<Pill size="sm">outdated</Pill>{/if}
       {#if onshow}<Button variant="quiet" size="sm" icon="chevron-right" onclick={() => onshow(t.path)} data-show-in-review>Show in Review</Button>{/if}
     </header>
@@ -141,7 +144,7 @@
     {#if error}<p class="error">{error}</p>{/if}
 
     {#if conv.threads.length}
-      <h2>Review threads · {unresolved.length} unresolved{withNew ? ` · ${withNew} with new comments` : ""}</h2>
+      <h2>Review threads · {unresolved.length} unresolved{owed ? ` · ${owed} waiting for your reply` : ""}{withNew ? ` · ${withNew} with new comments` : ""}</h2>
       {#each unresolved as t (t.id)}{@render thread(t)}{/each}
       {#each resolved as t (t.id)}
         {@const open = opened.includes(t.id)}
@@ -171,12 +174,13 @@
       <ol class="timeline">
         {#each timeline as item}
           {@const look = item.kind === "review" ? REVIEW_STATE[item.state] : null}
-          <li data-new={isNew(item, since, viewer) || undefined}>
+          <li data-new={isNew(item, since, viewer) || undefined} data-awaits-reply={item.owed || undefined}>
             <div class="said">
               <span class="who">
                 <strong>{item.author}</strong>
                 <span class="muted">{item.kind === "review" ? "reviewed" : "commented"} · {ago(item.at)}</span>
                 {#if look?.[1]}<Pill size="sm" tone={look[1]}>{look[0]}</Pill>{/if}
+                {#if item.owed}<Pill size="sm" tone="gh" title="Asked since your last word on the PR">your reply</Pill>{/if}
                 {#if isNew(item, since, viewer)}<Pill size="sm" tone="gh">new</Pill>{/if}
               </span>
               {#if item.html.trim()}<div class="markdown">{@html sanitize(item.html)}</div>{/if}

@@ -54,6 +54,9 @@ export interface Row {
   failingChecks: string[];
   reviewDecision: string | null;
   unresolvedThreads: number;
+  /** Review threads and conversations where someone waits for the user's reply: it stays
+   *  until they reply or resolve, unlike `newActivity`. */
+  awaitingReply: number;
   newActivity: boolean;
   agent: AgentStatus | null;
   /** The agent finished since the user last opened the item's review. */
@@ -147,6 +150,9 @@ export interface GhComment {
   bodyHtml: string;
   createdAt: string;
   url: string;
+  /** A conversation comment that waits for the user's reply (a thread's comments leave that
+   *  to the thread). Missing in a conversation cached before Ariekei knew. */
+  awaitsReply?: boolean;
 }
 
 export interface Thread {
@@ -157,6 +163,8 @@ export interface Thread {
   outdated: boolean;
   diffHunk: string;
   comments: GhComment[];
+  /** Someone else had the last word and it is the user's turn: their PR, or they took part. */
+  awaitsReply?: boolean;
 }
 
 export interface Conversation {
@@ -175,7 +183,7 @@ export interface Conversation {
   labels: string[];
   requestedReviewers: string[];
   comments: GhComment[];
-  reviews: { author: string; state: string; bodyHtml: string; submittedAt: string }[];
+  reviews: { author: string; state: string; bodyHtml: string; submittedAt: string; awaitsReply?: boolean }[];
   threads: Thread[];
   checks: { name: string; outcome: string; url: string }[];
 }

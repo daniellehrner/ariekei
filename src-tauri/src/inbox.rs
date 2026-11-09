@@ -27,6 +27,9 @@ pub struct Row {
     pub failing_checks: Vec<String>,
     pub review_decision: Option<String>,
     pub unresolved_threads: i64,
+    /// Review threads and conversations where someone waits for the user's reply
+    /// (`github::PrSummary::awaiting_reply`).
+    pub awaiting_reply: i64,
     /// Reviews or comments by others since the user last looked at the item.
     pub new_activity: bool,
     pub agent: Option<AgentStatus>,
@@ -78,6 +81,10 @@ fn attention(row: &Row) -> (u8, Option<&'static str>) {
     if !row.open && row.cleanup_blockers.is_some() {
         return (1, Some("finished, cleanup blocked"));
     }
+    // People waiting for an answer say so before failing CI, which the row shows anyway.
+    if row.awaiting_reply > 0 {
+        return (1, Some("awaiting your reply"));
+    }
     if matches!(row.ci.as_deref(), Some("FAILURE" | "ERROR")) {
         return (1, Some("CI failing"));
     }
@@ -128,6 +135,7 @@ mod tests {
             failing_checks: vec![],
             review_decision: None,
             unresolved_threads: 0,
+            awaiting_reply: 0,
             new_activity: false,
             agent: None,
             ready_for_review: false,
@@ -187,6 +195,12 @@ mod tests {
             ci: Some("FAILURE".into()),
             ..row(6, "2026-01-01")
         };
+        // Someone waits for an answer: that is said before its failing CI (still on the row).
+        let reply = Row {
+            awaiting_reply: 2,
+            ci: Some("FAILURE".into()),
+            ..row(11, "2026-01-02")
+        };
         let needs_you = Row {
             agent: Some(AgentStatus::WaitingForPermission),
             ci: Some("FAILURE".into()),
@@ -209,12 +223,14 @@ mod tests {
         };
 
         let ordered = order(vec![
-            quiet_old, closed, quiet_new, working, activity, ci, needs_you, finished, seen,
+            quiet_old, closed, quiet_new, working, activity, ci, needs_you, finished, seen, reply,
         ]);
         let numbers: Vec<i64> = ordered.iter().map(|r| r.number).collect();
-        assert_eq!(numbers, [7, 6, 5, 9, 3, 2, 10, 1, 8]);
+        assert_eq!(numbers, [7, 11, 6, 5, 9, 3, 2, 10, 1, 8]);
         assert_eq!(ordered[0].attention, Some("agent needs you"));
-        assert_eq!(ordered[3].attention, Some("ready for review"));
-        assert_eq!(ordered[5].attention, None);
+        assert_eq!(ordered[1].attention, Some("awaiting your reply"));
+        assert_eq!(ordered[2].attention, Some("CI failing"));
+        assert_eq!(ordered[4].attention, Some("ready for review"));
+        assert_eq!(ordered[6].attention, None);
     }
 }

@@ -846,6 +846,7 @@ mod tests {
             unresolved_threads: 0,
             latest_activity: None,
             reviews: vec![],
+            awaiting_reply: 0,
         };
         (root, repo, pr)
     }

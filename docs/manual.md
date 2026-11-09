@@ -103,7 +103,8 @@ request you opened stays, too, e.g. after the review request is gone because you
 - A second line: `issue` for an issue, the author (not in My PRs, Approved and Tasks), `from #N`
   for a PR that came from an issue, CI state (✓ passing, ✗ failing, a hollow diamond while it
   runs), `draft`, `closed`, the review decision (in Approved: `ready to merge`, unless it is a
-  draft or CI is failing or still running), the number of
+  draft or CI is failing or still running), a bold violet reply arrow with the number of
+  things [waiting for your reply](#waiting-for-your-reply), the number of
   unresolved review threads, and the **attention reason** on the right. A task says
   `task · <branch>`.
 - On hover or focus: the **star**, and **Remove** (a tray icon) on items you added yourself
@@ -120,8 +121,10 @@ to keep an item at the top of the Inbox under **Starred**. Click it again to uns
 Within a section, items are ordered by their most urgent reason, then by last update:
 
 1. **Agent needs you**: the agent is waiting for your permission.
-2. **Cleanup blocked** (a finished item that cannot be cleaned up without losing work) and
-   **CI failing**.
+2. **Cleanup blocked** (a finished item that cannot be cleaned up without losing work),
+   **Needs reply** (someone waits for your reply) and **CI failing**. When someone waits for
+   your reply on a PR whose CI fails too, the row says **Needs reply**; the red ✗ still shows
+   the CI.
 3. **New activity** (new reviews or comments).
 4. **Ready for review**: the agent finished a turn and you haven't opened the item's Review tab
    since.
@@ -487,6 +490,21 @@ Comments and reviews by others since you last opened the item are labeled `new`,
 counts the threads that have some. With the item open, new ones arrive with each poll; the item
 does not show the violet diamond in the Inbox for what is in front of you.
 
+### Waiting for your reply
+
+What someone on GitHub waits for you to answer is labeled `your reply`. Those threads come
+first, and the heading counts them. The Inbox row counts them too and says **Needs reply**.
+Unlike `new`, opening the item does not clear the label; it stays until you reply or resolve
+the thread:
+
+- An unresolved review thread where someone else had the last word, if it is your PR or you
+  took part in the thread.
+- On your own PR, conversation comments, and reviews with text other than approvals, that
+  someone wrote after your last word anywhere on the PR (a comment, a review, a thread
+  reply). Those count once in the Inbox.
+
+Bots (CI and coverage reports, review bots) never wait for your reply.
+
 Markdown is rendered by GitHub and sanitized; links open in your system browser.
 
 ## 9. Issues: from issue to PR
@@ -744,7 +762,7 @@ Ariekei keeps three sources of state apart by shape and colour:
 |---|---|---|---|
 | The agent | circle | copper | status dot, Terminal tab, waiting strip, **Ask agent…**, **Send to agent** |
 | You | square | blue | draft comments and their marks, the star, the selected item and file, focus, **Ready for review** |
-| GitHub | diamond, outlined pill | violet | new activity, CI and review facts, **Submit to GitHub** |
+| GitHub | diamond, outlined pill | violet | new activity, waiting for your reply (a diamond with a halo), CI and review facts, **Submit to GitHub** |
 | News | bar | grey | lifecycle notices |
 
 Red means broken (CI failing, errors, work that would be lost), amber caution or pending (a

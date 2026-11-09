@@ -15,8 +15,10 @@ data.json: {"viewer": "me", "upstream": <path of the "GitHub" git repo, optional
                      base_ref, state, requested (bool),
                      assigned (bool), reviewed (bool, by the viewer), draft (bool), decision, ci,
                      failing, body_html, comments: [...], threads: [...]}],
-            A comment or a thread's reply ("replies": [{comment_id, author, html}]) with "at"
-            (when it was made) is also activity the poll sees; without, only the conversation.
+            A comment, a thread's first one (its "author", "html") or a thread's reply
+            ("replies": [{comment_id, author, html}]) with "at" (when it was made) is also
+            activity the poll sees; without, only the conversation. (The poll sees who wrote
+            each thread comment either way: it tells whose turn it is.)
             "issues": [{number, title, author, body, assigned (bool), state}]}
 Creating a PR or an issue (POST .../pulls, .../issues) adds it to data.json, so later polls
 see it; a test can set a PR's "state" to MERGED in data.json. A PR or issue with "repo": "<name>" belongs to
@@ -107,17 +109,30 @@ def head_repository(owner):
     return {"name": "proj", "owner": {"login": owner}, "sshUrl": f"git@github.com:{owner}/proj.git", "url": f"https://github.com/{owner}/proj"}
 
 
+def actor(login):
+    """A comment's or review's author, as GraphQL gives it (no bots here)."""
+    return {"login": login, "__typename": "User"}
+
+
+def opened_at(t):
+    """When thread `t`'s first comment was made, as the conversation shows it."""
+    return t.get("at", "2026-10-11T11:00:00Z")
+
+
 def activity(pr):
-    """The PR's comments and threads as the poll sees them: only what has an "at"."""
-    timed = lambda cs: nodes([{"author": {"login": c["author"]}, "createdAt": c["at"]} for c in cs if c.get("at")])
-    return timed(pr.get("comments", [])), nodes([
-        {"isResolved": t.get("resolved", False), "comments": timed(t.get("replies", []))} for t in pr.get("threads", [])])
+    """The PR's comments and threads as the poll sees them: what has an "at" is activity. A
+    thread's comments are all there, those without an "at" with no time (null)."""
+    timed = lambda cs: [{"author": actor(c["author"]), "createdAt": c["at"]} for c in cs if c.get("at")]
+    authored = lambda cs: [{"author": actor(c["author"]), "createdAt": c.get("at")} for c in cs]
+    return nodes(timed(pr.get("comments", []))), nodes([
+        {"isResolved": t.get("resolved", False), "comments": nodes(authored([t] + t.get("replies", [])))}
+        for t in pr.get("threads", [])])
 
 
 def thread_comments(t):
-    first = {"databaseId": t["comment_id"], "author": {"login": t["author"]}, "body": t.get("body", ""), "bodyHTML": t["html"],
-             "createdAt": "2026-10-11T11:00:00Z", "diffHunk": t.get("diff_hunk", ""), "url": ""}
-    return nodes([first] + [{"databaseId": r["comment_id"], "author": {"login": r["author"]}, "body": "", "bodyHTML": r["html"],
+    first = {"databaseId": t["comment_id"], "author": actor(t["author"]), "body": t.get("body", ""), "bodyHTML": t["html"],
+             "createdAt": opened_at(t), "diffHunk": t.get("diff_hunk", ""), "url": ""}
+    return nodes([first] + [{"databaseId": r["comment_id"], "author": actor(r["author"]), "body": "", "bodyHTML": r["html"],
                              "createdAt": r.get("at", "2026-10-11T11:30:00Z"), "diffHunk": "", "url": ""} for r in t.get("replies", [])])
 
 
@@ -139,7 +154,7 @@ def conversation(pr):
     c.update({
         "createdAt": "2026-10-10T09:00:00Z", "body": "", "bodyHTML": pr.get("body_html", ""),
         "labels": nodes([{"name": "review"}]), "reviewRequests": nodes([]),
-        "comments": nodes([{"databaseId": i + 1, "author": {"login": cm["author"]}, "bodyHTML": cm["html"], "createdAt": cm.get("at", "2026-10-11T10:00:00Z"), "url": ""} for i, cm in enumerate(pr.get("comments", []))]),
+        "comments": nodes([{"databaseId": i + 1, "author": actor(cm["author"]), "bodyHTML": cm["html"], "createdAt": cm.get("at", "2026-10-11T10:00:00Z"), "url": ""} for i, cm in enumerate(pr.get("comments", []))]),
         "reviews": nodes([]),
         "reviewThreads": nodes([{
             "id": t["id"], "isResolved": t.get("resolved", False), "isOutdated": False, "path": t["path"], "line": t["line"], "originalLine": t["line"],

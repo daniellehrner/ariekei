@@ -389,6 +389,7 @@
         {@const d = DECISION[row.reviewDecision] ?? [row.reviewDecision.toLowerCase(), ""]}
         <span class={d[1]}>{d[0]}</span>
       {/if}
+      {#if row.awaitingReply}<span class="gh owed"><Icon name="reply" size={12} />{row.awaitingReply} await{row.awaitingReply === 1 ? "s" : ""} your reply</span>{/if}
       {#if row.unresolvedThreads}<span class="gh"><Icon name="comment" size={12} />{row.unresolvedThreads} unresolved</span>{/if}
       {#if isTask && row.branch}<span class="branch" title="Branch"><Icon name="branch" size={12} /><code>{row.branch}</code></span>{/if}
       {#if row.worktree}
@@ -584,6 +585,7 @@
   .bad { color: var(--bad); }
   .warn { color: var(--warn); }
   .gh { color: var(--gh-strong); }
+  .owed { font-weight: var(--fw-semibold); }
   .muted { color: var(--text-muted); }
 
   .waiting {

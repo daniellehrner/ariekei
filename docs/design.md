@@ -12,7 +12,7 @@ told apart in grey-scale and with colour blindness:
 |---|---|---|---|
 | Agent (Claude Code) | circle | `--agent` (copper) | Status dot before an item, Terminal tab, waiting strip, terminal cursor, Ask agent, Send to agent, its draft comments and their gutter marks |
 | You (the reviewer) | square | `--you` (blue, also the focus colour) | Draft comments and their gutter marks, the star, the selected item and file, focus, "Ready for review" |
-| GitHub | diamond, outlined pill | `--gh` (violet) | New activity, Comments badge, CI and review facts, submitting to GitHub |
+| GitHub | diamond, outlined pill | `--gh` (violet) | New activity, waiting for your reply, Comments badge, CI and review facts, submitting to GitHub |
 
 - Red (`--bad`) means broken (CI failing, errors, work that would be lost). It replaces the hue,
   never the shape: an agent error is a red circle, CI failing a red diamond. Amber (`--warn`) is
@@ -55,7 +55,10 @@ told apart in grey-scale and with colour blindness:
 - **Section headers** are light dividers (24 px, `label-caps`, the count in faint mono right
   after the label) and stay at the top while their section scrolls.
 - **Rows** have two lines. The dot slot is empty when there is no agent. Issues say `issue` on
-  line 2; Approved says `ready to merge` (unless a draft or CI holds it up). A task's line 2 is `task · <branch>` or `no PR or issue
+  line 2; Approved says `ready to merge` (unless a draft or CI holds it up). What waits for the
+  user's reply is a bold `--gh-strong` reply arrow with its count, before the unresolved
+  threads; its attention pip is a violet diamond with a halo, as the agent asking is a copper
+  circle with one. It wins the label over CI failing, whose ✗ stays on the row. A task's line 2 is `task · <branch>` or `no PR or issue
   yet`; its PRs and issues hang under it on a 1 px guide line, with their kind icon in the dot
   slot, and more than three fold (except those that want something) under "+N more".
 - **The star** is the user's own mark, filled in `--you`. In rows it is a hover/focus action

@@ -8,6 +8,7 @@ import type { Attention } from "../controls/AttentionPip.svelte";
 const KIND: Record<string, Attention> = {
   "agent needs you": "needs-you",
   "finished, cleanup blocked": "blocked",
+  "awaiting your reply": "reply",
   "CI failing": "ci-failing",
   "new reviews or comments": "activity",
   "ready for review": "review",
@@ -17,6 +18,8 @@ const KIND: Record<string, Attention> = {
 export const ATTENTION_LABEL: Record<Attention, string> = {
   "needs-you": "Agent needs you",
   blocked: "Cleanup blocked",
+  // Someone on GitHub waits for an answer: a review thread or the PR's conversation.
+  reply: "Needs reply",
   "ci-failing": "CI failing",
   activity: "New activity",
   // The agent finished: your turn.
@@ -35,12 +38,13 @@ export function attentionKind(reason: string | null): Attention {
 export type Tab = "overview" | "comments" | "review" | "terminal";
 
 /** The tab that resolves the item's attention reason, if any: the agent needs you → Terminal,
- *  new comments → Comments, ready for review → Review, CI failing / cleanup blocked →
- *  Overview. */
+ *  a reply or new comments → Comments, ready for review → Review, CI failing / cleanup
+ *  blocked → Overview. */
 export function landingTab(reason: string | null, has: { terminal: boolean }): Tab | null {
   switch (attentionKind(reason)) {
     case "needs-you":
       return has.terminal ? "terminal" : null;
+    case "reply":
     case "activity":
       return "comments";
     case "review":

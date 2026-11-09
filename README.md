@@ -12,7 +12,8 @@ How to use it: [docs/manual.md](docs/manual.md) (user manual).
 - **Inbox:** sections **Starred**, **Tasks**, **Assigned** (PRs and issues), **Approved** (your
   PRs ready to merge), **Review requested**, **My PRs**, **Reviewed** (PRs you reviewed) and
   **Open** (what you added); each item is in the first section that fits, and within a section
-  ordered by attention (agent needs you, CI failing, new comments, ready for review, …). Star
+  ordered by attention (agent needs you, needs your reply, CI failing, new comments, ready for
+  review, …). Star
   any item to keep it at the top. **Browse** (Ctrl+K) lists the repo's open PRs and issues with
   GitHub's search syntax and starts work on any of them (Enter) or adds them to Open; what you added can be removed again. Notifications for the same events: in the window while Ariekei is in front
   (click one to open its item), OS notifications otherwise.

@@ -602,6 +602,30 @@ try:
                lambda: bool(s.find(".inbox .row[data-number='43'] svg.new")), lambda v: not v, timeout=20)
     s.screenshot(os.path.join(shots, "r5-new-reply.png"))
 
+    # Alice answers a thread the user started on her PR: it waits for their reply, in the Inbox
+    # (also while the item is open, unlike news) and in Comments, until they have answered.
+    edit_43(lambda pr: pr["threads"].append(
+        {"id": "T3", "path": "b.txt", "line": 1, "comment_id": 104, "author": "me", "html": "<p>Rename it?</p>", "at": "2026-10-12T10:00:00Z",
+         "replies": [{"comment_id": 105, "author": "alice", "html": "<p>To what?</p>", "at": "2026-10-12T11:00:00Z"}]}))
+    poll()
+    owed_43 = lambda: s.js("return document.querySelector(\".inbox .row[data-number='43'] [data-awaiting-reply]\")?.dataset.awaitingReply ?? ''")
+    eventually("the Inbox says #43 waits for the user's reply", owed_43, lambda v: v == "1", timeout=30)
+    equal("and says so first", s.js("return document.querySelector(\".inbox .row[data-number='43'] .attention\")?.textContent"), "Needs reply")
+    eventually("Comments shows the thread that waits first", first, lambda v: v == "T3", timeout=30)
+    equal("only that thread waits", s.js("return [...document.querySelectorAll('.thread[data-awaits-reply]')].map(t => t.dataset.thread)"), ["T3"])
+    check("the heading counts it", "1 waiting for your reply" in s.js("return document.querySelector('.comments h2').textContent"))
+    s.screenshot(os.path.join(shots, "r5-awaits-reply.png"))
+    s.click(s.wait(".thread[data-thread=T3] [data-reply]"))
+    s.type(s.wait(".thread[data-thread=T3] textarea"), "to_y")
+    s.click(s.wait(".thread[data-thread=T3] button", text="Reply on GitHub"))
+    wrote("/comments/104/replies", 0)
+    # GitHub has the reply now (the fake only records it).
+    edit_43(lambda pr: next(t for t in pr["threads"] if t["id"] == "T3")["replies"].append(
+        {"comment_id": 106, "author": "me", "html": "<p>to_y</p>", "at": "2026-10-12T12:00:00Z"}))
+    poll()
+    eventually("answered, it waits no more", owed_43, lambda v: v == "", timeout=30)
+    eventually("nor in Comments", lambda: s.js("return document.querySelectorAll('.thread[data-awaits-reply]').length"), lambda v: v == 0, timeout=30)
+
     # A tab picked right before opening another item is kept too: its save, still waiting,
     # is not dropped, nor written to the other item.
     shown_tab = lambda: s.js("return document.querySelector('.item [aria-selected=true][data-tab]')?.dataset.tab")

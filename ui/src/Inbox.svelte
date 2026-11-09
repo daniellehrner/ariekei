@@ -172,7 +172,7 @@
       <span class="lines">
         <span class="line1">
           <span class="num">{shortName(row)}</span>
-          <span class="title" class:strong={kind === "needs-you" || row.newActivity}>{row.title}</span>
+          <span class="title" class:strong={kind === "needs-you" || kind === "reply" || row.newActivity}>{row.title}</span>
           {#if row.newActivity}
             <svg class="new" width="8" height="8" viewBox="0 0 8 8" role="img" aria-label="New reviews or comments"><path d="M4 0.5L7.5 4 4 7.5 0.5 4z" /></svg>
           {/if}
@@ -183,7 +183,8 @@
           {:else}
             {#if row.kind === "issue"}<span class="faint issue"><Icon name="issue" size={12} />issue</span>{/if}
             {#if ready}<span class="faint">ready to merge</span>{/if}
-            {#if section !== "mine" && section !== "approved" && section !== "tasks"}<span>{row.author}</span>{/if}
+            <!-- The author gives way to the attention label. -->
+            {#if section !== "mine" && section !== "approved" && section !== "tasks"}<span class="shrink">{row.author}</span>{/if}
             {#if row.issueNumber}<span>from #{row.issueNumber}</span>{/if}
             {#if ciState(row.ci)}
               <span class="ci" data-ci={ciState(row.ci)} title="CI: {row.ci?.toLowerCase()}{row.failingChecks.length ? ` (${row.failingChecks.join(', ')})` : ''}">
@@ -193,6 +194,9 @@
             {#if row.isDraft}<span class="faint">draft</span>{/if}
             {#if !row.open}<span class="faint">closed</span>{/if}
             {#if decision && !ready}<span class={decision[1]}>{decision[0]}</span>{/if}
+            {#if row.awaitingReply}
+              <span class="reply" title="{row.awaitingReply} waiting for your reply (review threads, the conversation)" data-awaiting-reply={row.awaitingReply}><Icon name="reply" size={12} />{row.awaitingReply}</span>
+            {/if}
             {#if row.unresolvedThreads}
               <span class="threads" title="Unresolved review threads"><Icon name="comment" size={12} />{row.unresolvedThreads}</span>
             {/if}
@@ -430,7 +434,7 @@
   }
   .line2 > span { flex: none; }
   .line2 .spacer { flex: 1; }
-  /* The attention label wins the room; a task's branch gives way. */
+  /* The attention label wins the room; a task's branch and an author give way. */
   .line2 .attention { flex: none; font-weight: var(--fw-medium); }
   .line2 > .shrink { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .ci { display: inline-flex; }
@@ -439,9 +443,10 @@
   .warn { color: var(--warn); }
   .faint { color: var(--text-faint); }
   .threads { display: inline-flex; align-items: center; gap: var(--sp-1); }
+  .reply { display: inline-flex; align-items: center; gap: var(--sp-1); color: var(--gh-strong); font-weight: var(--fw-semibold); }
   .attention.needs-you { color: var(--agent-strong); }
   .attention.blocked, .attention.ci-failing { color: var(--bad); }
-  .attention.activity { color: var(--gh-strong); }
+  .attention.activity, .attention.reply { color: var(--gh-strong); }
   .attention.review { color: var(--you-strong); }
   .attention.working { color: var(--text-muted); }
   .action-error { margin: 0 var(--sp-4) var(--sp-4); font-size: var(--fs-12); color: var(--bad); }

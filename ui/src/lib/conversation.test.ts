@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Thread } from "./api.ts";
-import { byLatest, isNew, latestAt, threadHasNew } from "./conversation.ts";
+import { byLatest, isNew, latestAt, replyFirst, threadHasNew } from "./conversation.ts";
 
 const thread = (id: string, ...times: string[]): Thread => ({
   id, path: "A.java", line: 1, resolved: false, outdated: false, diffHunk: "",
@@ -17,6 +17,15 @@ test("a reply to an old thread puts it before newer threads", () => {
   const quiet = thread("quiet", "2026-10-10T08:00:00Z");
   assert.equal(latestAt(old), "2026-10-20T06:00:00Z");
   assert.deepEqual(byLatest([quiet, old, newer]).map((t) => t.id), ["old", "newer", "quiet"]);
+});
+
+test("threads waiting for the user's reply come first, the latest first among them", () => {
+  const owed = (t: Thread) => ({ ...t, awaitsReply: true });
+  const quietOwed = owed(thread("quiet-owed", "2026-10-10T08:00:00Z"));
+  const latest = thread("latest", "2026-10-20T06:00:00Z");
+  const newerOwed = owed(thread("newer-owed", "2026-10-19T23:00:00Z"));
+  const older = thread("older", "2026-10-11T08:00:00Z");
+  assert.deepEqual(replyFirst([older, quietOwed, latest, newerOwed]).map((t) => t.id), ["newer-owed", "quiet-owed", "latest", "older"]);
 });
 
 test("new: by someone else, after the user last saw the item", () => {

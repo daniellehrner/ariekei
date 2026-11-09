@@ -10,7 +10,7 @@ function row(fields: Partial<Row>): Row {
   return {
     id: 1, number: 1, kind: "pr", issueNumber: null, cleanupBlockers: null, title: "t", author: "me", role: "other",
     url: "", isDraft: false, open: true, updatedAt: "", ci: null, failingChecks: [], reviewDecision: null,
-    unresolvedThreads: 0, newActivity: false, agent: null, worktree: null, unreviewed: false, attention: null,
+    unresolvedThreads: 0, awaitingReply: 0, newActivity: false, agent: null, worktree: null, unreviewed: false, attention: null,
     notes: null, starred: false, removable: false,
     ...fields,
   };

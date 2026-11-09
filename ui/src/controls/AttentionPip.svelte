@@ -8,6 +8,7 @@
   Most urgent first:
     needs-you   copper circle + halo     the agent asks you
     blocked     red square               your work would be lost (cleanup blocked)
+    reply       violet diamond + halo    GitHub: someone waits for your reply
     ci-failing  red diamond              GitHub: CI is broken
     error       red circle               the agent stopped with an error        ← NEW (was a red square)
     activity    violet diamond           GitHub: new reviews or comments
@@ -17,9 +18,9 @@
 -->
 <script lang="ts" module>
   export type Attention =
-    | "needs-you" | "blocked" | "ci-failing" | "error" | "activity" | "review" | "info" | "working" | "none";
+    | "needs-you" | "blocked" | "reply" | "ci-failing" | "error" | "activity" | "review" | "info" | "working" | "none";
   export const URGENCY: Record<Attention, number> = {
-    "needs-you": 0, blocked: 1, "ci-failing": 1, error: 1, activity: 2, review: 3, info: 4, working: 4, none: 9,
+    "needs-you": 0, blocked: 1, reply: 1, "ci-failing": 1, error: 1, activity: 2, review: 3, info: 4, working: 4, none: 9,
   };
 </script>
 
@@ -35,6 +36,10 @@
     {#if kind === "needs-you"}
       <circle class="halo" cx="7" cy="7" r="6.25" />
       <circle class="fill" cx="7" cy="7" r="3.9" />
+    {:else if kind === "reply"}
+      <!-- As the agent asking you is a circle with a halo, so are people on GitHub: a diamond. -->
+      <path class="halo" d="M7 0.75L13.25 7 7 13.25 0.75 7z" />
+      <path class="fill" d="M7 3.25L10.75 7 7 10.75 3.25 7z" />
     {:else if kind === "working"}
       <circle class="ring" cx="7" cy="7" r="3.9" />
     {:else if kind === "error"}
@@ -52,10 +57,11 @@
 <style>
   .pip { flex: none; display: block; }
   .halo { fill: none; stroke: var(--agent); stroke-opacity: 0.4; stroke-width: 1.5; }
+  .reply .halo { stroke: var(--gh); stroke-linejoin: round; }
   .ring { fill: none; stroke: var(--agent); stroke-width: 1.6; }
   .needs-you .fill { fill: var(--agent); }
   .blocked .fill, .ci-failing .fill, .error .fill { fill: var(--bad); }
-  .activity .fill { fill: var(--gh); }
+  .activity .fill, .reply .fill { fill: var(--gh); }
   .review .fill { fill: var(--you); }
   .bar { fill: var(--info); }
 </style>

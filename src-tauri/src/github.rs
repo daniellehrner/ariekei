@@ -240,18 +240,26 @@ pub struct PrSummary {
     /// Newest review, comment or thread reply by someone other than the viewer.
     pub latest_activity: Option<String>,
     pub reviews: Vec<Review>,
+    /// What waits for the viewer's reply: unresolved review threads where someone else had
+    /// the last word (`thread_awaits_reply`), plus 1 if the conversation of the viewer's own
+    /// PR does (`asks`). Unlike `latest_activity` it stays until they reply or resolve.
+    #[serde(default)]
+    pub awaiting_reply: i64,
 }
 
 fn open_state() -> String {
     "OPEN".into()
 }
 
+// A thread's last 20 comments say whether the viewer took part in it (`awaits_reply`). GitHub
+// charges a connection by the requests it could take, not by their size: `last: 20` costs
+// what `last: 1` does.
 const PR_FIELDS: &str = r#"
   number title url state isDraft updatedAt author { login } headRefName headRefOid baseRefName reviewDecision
   headRepository { name owner { login } sshUrl url }
-  reviews(last: 20) { nodes { author { login } state submittedAt } }
-  comments(last: 20) { nodes { author { login } createdAt } }
-  reviewThreads(first: 100) { nodes { isResolved comments(last: 1) { nodes { author { login } createdAt } } } }
+  reviews(last: 20) { nodes { author { login __typename } state body submittedAt } }
+  comments(last: 20) { nodes { author { login __typename } createdAt } }
+  reviewThreads(first: 100) { nodes { isResolved comments(last: 20) { nodes { author { login __typename } createdAt } } } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 100) { nodes {
     __typename
     ... on CheckRun { name conclusion status detailsUrl databaseId }
@@ -475,6 +483,88 @@ const FAILED: [&str; 6] = [
     "ERROR",
 ];
 
+// --- whose turn it is -----------------------------------------------------------------
+//
+// Bots' words ask nobody anything (CI and coverage reports, review bots), and nor do those of
+// deleted accounts: only people's count.
+
+/// Who wrote comment or review `n`, if a person did.
+fn person(n: &Value) -> Option<&str> {
+    let author = &n["author"];
+    let login = author["login"].as_str().filter(|l| !l.is_empty())?;
+    (author["__typename"] != "Bot" && !login.ends_with("[bot]")).then_some(login)
+}
+
+/// When comment or review `n` was written ("" if it was not: a pending review).
+fn written_at(n: &Value) -> &str {
+    n["createdAt"]
+        .as_str()
+        .or(n["submittedAt"].as_str())
+        .unwrap_or_default()
+}
+
+/// Whether review thread `t` waits for the viewer's reply: it is unresolved, someone else had
+/// the last word, and it is the viewer's business (their PR, or they took part in it).
+fn thread_awaits_reply(t: &Value, viewer: &str, pr_author: &str) -> bool {
+    let people: Vec<&str> = nodes(&t["comments"]).iter().filter_map(person).collect();
+    !viewer.is_empty()
+        && t["isResolved"] == false
+        && people.last().is_some_and(|last| *last != viewer)
+        && (pr_author == viewer || people.contains(&viewer))
+}
+
+/// On the viewer's own PR `pr`: when they last said anything on it (a comment, a review, a
+/// thread comment; "" if never). What others asked after that waits for their reply (`asks`).
+/// None on someone else's PR, whose conversation waits for its author.
+fn answered_at(pr: &Value, viewer: &str) -> Option<String> {
+    if viewer.is_empty() || pr["author"]["login"].as_str() != Some(viewer) {
+        return None;
+    }
+    let threads = nodes(&pr["reviewThreads"])
+        .iter()
+        .flat_map(|t| nodes(&t["comments"]));
+    let said = nodes(&pr["comments"])
+        .iter()
+        .chain(nodes(&pr["reviews"]))
+        .chain(threads)
+        .filter(|n| person(n) == Some(viewer))
+        .map(written_at)
+        .max()
+        .unwrap_or_default();
+    Some(said.to_owned())
+}
+
+/// Whether conversation comment or review `n` asks the viewer something they have not
+/// answered: someone else wrote it after `answered` (see `answered_at`), and, for a review,
+/// it says something and is not an approval (a review's line comments are threads, which
+/// count on their own).
+fn asks(n: &Value, viewer: &str, answered: &str) -> bool {
+    let review_asks = match n["state"].as_str() {
+        None => true,
+        Some(state) => {
+            matches!(state, "CHANGES_REQUESTED" | "COMMENTED")
+                && !n["body"].as_str().unwrap_or_default().trim().is_empty()
+        }
+    };
+    person(n).is_some_and(|who| who != viewer) && written_at(n) > answered && review_asks
+}
+
+/// What waits for the viewer's reply on PR `pr`: see `PrSummary::awaiting_reply`.
+fn awaiting_reply(pr: &Value, viewer: &str) -> i64 {
+    let pr_author = pr["author"]["login"].as_str().unwrap_or_default();
+    let threads = nodes(&pr["reviewThreads"])
+        .iter()
+        .filter(|t| thread_awaits_reply(t, viewer, pr_author))
+        .count();
+    let conversation = answered_at(pr, viewer).is_some_and(|answered| {
+        nodes(&pr["comments"])
+            .iter()
+            .chain(nodes(&pr["reviews"]))
+            .any(|n| asks(n, viewer, &answered))
+    });
+    threads as i64 + i64::from(conversation)
+}
+
 pub fn parse_prs(list: &Value, viewer: &str) -> Vec<PrSummary> {
     let by_other = |n: &Value| n["author"]["login"].as_str().is_some_and(|a| a != viewer);
     list.as_array()
@@ -551,6 +641,7 @@ pub fn parse_prs(list: &Value, viewer: &str) -> Vec<PrSummary> {
                         submitted_at: s(&r["submittedAt"]),
                     })
                     .collect(),
+                awaiting_reply: awaiting_reply(pr, viewer),
             }
         })
         .collect()
@@ -662,7 +753,8 @@ pub fn issue_conversation(
         &[("number", number)],
     )?;
     let issue = v["data"]["repository"]["issue"].clone();
-    Ok((parse_conversation(&issue), issue))
+    // Only PRs say what waits for the viewer's reply (the Inbox counts it for PRs).
+    Ok((parse_conversation(&issue, ""), issue))
 }
 
 pub fn default_branch(owner: &str, name: &str) -> Result<String, String> {
@@ -746,10 +838,10 @@ const CONVERSATION: &str = r#"query($owner: String!, $name: String!, $number: In
     author { login }
     labels(first: 20) { nodes { name color } }
     reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { name } } } }
-    comments(first: 100) { nodes { databaseId author { login } bodyHTML createdAt url } }
-    reviews(last: 50) { nodes { author { login } state body bodyHTML submittedAt } }
+    comments(first: 100) { nodes { databaseId author { login __typename } bodyHTML createdAt url } }
+    reviews(last: 50) { nodes { author { login __typename } state body bodyHTML submittedAt } }
     reviewThreads(first: 100) { nodes { id isResolved isOutdated path line originalLine
-      comments(first: 50) { nodes { databaseId author { login } body bodyHTML createdAt diffHunk url } } } }
+      comments(first: 50) { nodes { databaseId author { login __typename } body bodyHTML createdAt diffHunk url } } } }
     commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 100) { nodes {
       __typename
       ... on CheckRun { name conclusion status detailsUrl databaseId title summary }
@@ -779,6 +871,9 @@ pub struct Comment {
     pub body_html: String,
     pub created_at: String,
     pub url: String,
+    /// A conversation comment that waits for the viewer's reply (`asks`); a thread's comments
+    /// leave that to their thread.
+    pub awaits_reply: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -788,6 +883,8 @@ pub struct ReviewEntry {
     pub state: String,
     pub body_html: String,
     pub submitted_at: String,
+    /// It waits for the viewer's reply (`asks`).
+    pub awaits_reply: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -802,6 +899,8 @@ pub struct ThreadView {
     /// The diff around the commented line, from the thread's first comment.
     pub diff_hunk: String,
     pub comments: Vec<Comment>,
+    /// It waits for the viewer's reply (`thread_awaits_reply`).
+    pub awaits_reply: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -836,8 +935,17 @@ pub struct Conversation {
     pub checks: Vec<Check>,
 }
 
-pub fn conversation(owner: &str, name: &str, number: i64) -> Result<Conversation, String> {
-    Ok(parse_conversation(&conversation_json(owner, name, number)?))
+/// PR `number` as the Comments tab shows it; `viewer` decides what waits for their reply.
+pub fn conversation(
+    owner: &str,
+    name: &str,
+    number: i64,
+    viewer: &str,
+) -> Result<Conversation, String> {
+    Ok(parse_conversation(
+        &conversation_json(owner, name, number)?,
+        viewer,
+    ))
 }
 
 fn comment(c: &Value) -> Comment {
@@ -847,10 +955,16 @@ fn comment(c: &Value) -> Comment {
         body_html: s(&c["bodyHTML"]),
         created_at: s(&c["createdAt"]),
         url: s(&c["url"]),
+        awaits_reply: false,
     }
 }
 
-pub fn parse_conversation(pr: &Value) -> Conversation {
+/// PR (or issue) `pr` as the Comments tab shows it. `viewer` decides what waits for their
+/// reply ("": nothing does).
+pub fn parse_conversation(pr: &Value, viewer: &str) -> Conversation {
+    let pr_author = pr["author"]["login"].as_str().unwrap_or_default();
+    let answered = answered_at(pr, viewer);
+    let asks = |n: &Value| answered.as_deref().is_some_and(|a| asks(n, viewer, a));
     let threads = nodes(&pr["reviewThreads"])
         .iter()
         .map(|t| ThreadView {
@@ -861,6 +975,7 @@ pub fn parse_conversation(pr: &Value) -> Conversation {
             outdated: t["isOutdated"].as_bool().unwrap_or_default(),
             diff_hunk: s(&t["comments"]["nodes"][0]["diffHunk"]),
             comments: nodes(&t["comments"]).iter().map(comment).collect(),
+            awaits_reply: thread_awaits_reply(t, viewer, pr_author),
         })
         .collect();
     let checks = nodes(&pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"])
@@ -908,7 +1023,13 @@ pub fn parse_conversation(pr: &Value) -> Conversation {
                     .map(str::to_owned)
             })
             .collect(),
-        comments: nodes(&pr["comments"]).iter().map(comment).collect(),
+        comments: nodes(&pr["comments"])
+            .iter()
+            .map(|c| Comment {
+                awaits_reply: asks(c),
+                ..comment(c)
+            })
+            .collect(),
         reviews: nodes(&pr["reviews"])
             .iter()
             .map(|r| ReviewEntry {
@@ -916,6 +1037,7 @@ pub fn parse_conversation(pr: &Value) -> Conversation {
                 state: s(&r["state"]),
                 body_html: s(&r["bodyHTML"]),
                 submitted_at: s(&r["submittedAt"]),
+                awaits_reply: asks(r),
             })
             .collect(),
         threads,
@@ -1207,6 +1329,145 @@ mod tests {
         }, {}])
     }
 
+    /// The author of a comment or review: `copilot` is a bot, as GitHub's GraphQL says.
+    fn by(login: &str) -> Value {
+        let kind = if login == "copilot" { "Bot" } else { "User" };
+        json!({ "login": login, "__typename": kind })
+    }
+
+    /// Day `n` of October 2026, as GitHub writes times.
+    fn day(n: u32) -> String {
+        format!("2026-10-{n:02}T00:00:00Z")
+    }
+
+    /// PR by `author` with unresolved `threads` (their comments, oldest first, each by its
+    /// author on that day), conversation `comments` and `reviews` (author, state, body, day).
+    fn pr_with(
+        author: &str,
+        threads: &[&[(&str, u32)]],
+        comments: &[(&str, u32)],
+        reviews: &[(&str, &str, &str, u32)],
+    ) -> Value {
+        json!({
+            "number": 1, "author": by(author),
+            "comments": { "nodes": comments.iter().map(|(a, d)| json!({ "author": by(a), "createdAt": day(*d) })).collect::<Vec<_>>() },
+            "reviews": { "nodes": reviews.iter().map(|(a, state, body, d)| json!({ "author": by(a), "state": state, "body": body, "submittedAt": day(*d) })).collect::<Vec<_>>() },
+            "reviewThreads": { "nodes": threads.iter().map(|cs| json!({ "isResolved": false, "comments": { "nodes":
+                cs.iter().map(|(a, d)| json!({ "author": by(a), "createdAt": day(*d) })).collect::<Vec<_>>() } })).collect::<Vec<_>>() },
+        })
+    }
+
+    /// What waits for `me`'s reply on `pr`, as the Inbox counts it. The Comments tab marks the
+    /// same: the threads one by one, the conversation as one.
+    fn owed(pr: &Value) -> i64 {
+        let count = parse_prs(&json!([pr]), "me")[0].awaiting_reply;
+        let c = parse_conversation(pr, "me");
+        let threads = c.threads.iter().filter(|t| t.awaits_reply).count() as i64;
+        let conversation =
+            c.comments.iter().any(|c| c.awaits_reply) || c.reviews.iter().any(|r| r.awaits_reply);
+        assert_eq!(count, threads + i64::from(conversation), "{pr}");
+        count
+    }
+
+    #[test]
+    fn says_what_waits_for_the_viewers_reply() {
+        let none: &[(&str, u32)] = &[];
+        let no_reviews: &[(&str, &str, &str, u32)] = &[];
+        let threads = |author: &str, threads: &[&[(&str, u32)]]| {
+            owed(&pr_with(author, threads, none, no_reviews))
+        };
+        // On the viewer's PR, each thread where someone else had the last word.
+        assert_eq!(threads("me", &[&[("alice", 1)]]), 1);
+        assert_eq!(threads("me", &[&[("alice", 1), ("me", 2)]]), 0);
+        assert_eq!(
+            threads(
+                "me",
+                &[&[("alice", 1)], &[("bob", 1), ("me", 2), ("bob", 3)]]
+            ),
+            2
+        );
+        // Bots ask nothing, and have no last word.
+        assert_eq!(threads("me", &[&[("copilot", 1)]]), 0);
+        assert_eq!(threads("me", &[&[("dependabot[bot]", 1)]]), 0);
+        assert_eq!(threads("me", &[&[("alice", 1), ("copilot", 2)]]), 1);
+        assert_eq!(
+            threads("me", &[&[("alice", 1), ("me", 2), ("copilot", 3)]]),
+            0
+        );
+        // On someone else's PR: only threads the viewer took part in.
+        assert_eq!(threads("alice", &[&[("me", 1), ("alice", 2)]]), 1);
+        assert_eq!(
+            threads("alice", &[&[("bob", 1), ("me", 2), ("alice", 3)]]),
+            1
+        );
+        assert_eq!(threads("alice", &[&[("bob", 1), ("alice", 2)]]), 0);
+        assert_eq!(threads("alice", &[&[("me", 1)]]), 0);
+        // A resolved thread asks nothing, nor a deleted account.
+        let mut resolved = pr_with("me", &[&[("alice", 1)]], none, no_reviews);
+        resolved["reviewThreads"]["nodes"][0]["isResolved"] = json!(true);
+        assert_eq!(owed(&resolved), 0);
+        let mut ghost = pr_with("me", &[&[("alice", 1)]], none, no_reviews);
+        ghost["reviewThreads"]["nodes"][0]["comments"]["nodes"][0]["author"] = Value::Null;
+        assert_eq!(owed(&ghost), 0);
+        // Nobody knows who the viewer is (yet): nothing waits for them.
+        let pr = pr_with("", &[&[("alice", 1)]], &[("alice", 1)], no_reviews);
+        assert_eq!(parse_prs(&json!([pr]), "")[0].awaiting_reply, 0);
+
+        // The conversation of the viewer's PR: what others said after the viewer's last word.
+        let talk = |author: &str, comments: &[(&str, u32)], reviews: &[(&str, &str, &str, u32)]| {
+            owed(&pr_with(author, &[], comments, reviews))
+        };
+        assert_eq!(talk("me", &[("alice", 1)], no_reviews), 1);
+        assert_eq!(talk("me", &[("alice", 1), ("bob", 2)], no_reviews), 1);
+        assert_eq!(talk("me", &[("alice", 1), ("me", 2)], no_reviews), 0);
+        assert_eq!(talk("me", &[("copilot", 3)], no_reviews), 0);
+        // Not on someone else's PR: that waits for its author.
+        assert_eq!(talk("alice", &[("me", 1), ("bob", 2)], no_reviews), 0);
+        // A review asks if it says something and is no approval.
+        assert_eq!(
+            talk("me", none, &[("alice", "COMMENTED", "Split it?", 1)]),
+            1
+        );
+        assert_eq!(
+            talk("me", none, &[("alice", "CHANGES_REQUESTED", "No.", 1)]),
+            1
+        );
+        assert_eq!(talk("me", none, &[("alice", "APPROVED", "LGTM!", 1)]), 0);
+        // Without a body its line comments are threads, which count on their own.
+        assert_eq!(
+            talk("me", none, &[("alice", "CHANGES_REQUESTED", " ", 1)]),
+            0
+        );
+        assert_eq!(
+            talk("me", none, &[("copilot", "COMMENTED", "Summary", 1)]),
+            0
+        );
+        // Any later word of the viewer answers it: a review of theirs, or a thread reply.
+        assert_eq!(
+            talk(
+                "me",
+                none,
+                &[("alice", "COMMENTED", "Hm", 1), ("me", "COMMENTED", "", 2)]
+            ),
+            0
+        );
+        let reply = pr_with(
+            "me",
+            &[&[("alice", 1), ("me", 2)]],
+            none,
+            &[("alice", "CHANGES_REQUESTED", "See the comments", 1)],
+        );
+        assert_eq!(owed(&reply), 0);
+        // Threads and the conversation add up.
+        let busy = pr_with(
+            "me",
+            &[&[("alice", 1)], &[("bob", 2)]],
+            &[("me", 1), ("bob", 3)],
+            no_reviews,
+        );
+        assert_eq!(owed(&busy), 3);
+    }
+
     #[test]
     fn parses_pr_summary() {
         let prs = parse_prs(&fixture(), "me");
@@ -1258,7 +1519,7 @@ mod tests {
             "commits": { "nodes": [ { "commit": { "statusCheckRollup": { "contexts": { "nodes": [
                 { "__typename": "CheckRun", "name": "build", "conclusion": null, "status": "IN_PROGRESS", "detailsUrl": "D" } ] } } } } ] }
         });
-        let c = parse_conversation(&pr);
+        let c = parse_conversation(&pr, "me");
         assert_eq!(
             (c.author.as_str(), c.is_draft, c.head_sha.as_str()),
             ("alice", true, "abc")
@@ -1530,14 +1791,15 @@ mod live {
             others.first().map(|p| (p.number, &p.author))
         );
         if let Some(o) = others.first() {
-            let c = conversation(&owner, &name, o.number).unwrap();
+            let c = conversation(&owner, &name, o.number, &me).unwrap();
             println!(
-                "conversation #{}: {} chars of description, {} comments, {} reviews, {} threads, {} checks",
+                "conversation #{}: {} chars of description, {} comments, {} reviews, {} threads ({} wait for my reply), {} checks",
                 c.number,
                 c.body_html.len(),
                 c.comments.len(),
                 c.reviews.len(),
                 c.threads.len(),
+                c.threads.iter().filter(|t| t.awaits_reply).count(),
                 c.checks.len()
             );
             let by_number = prs_by_number(&owner, &name, &me, &[o.number]).unwrap();
@@ -1546,12 +1808,13 @@ mod live {
         println!("{} open PRs by {me}", prs.len());
         for p in prs.iter().take(5) {
             println!(
-                "#{} ci={:?} failing={:?} decision={:?} unresolved={} activity={:?} head={}:{}",
+                "#{} ci={:?} failing={:?} decision={:?} unresolved={} awaiting my reply={} activity={:?} head={}:{}",
                 p.number,
                 p.ci,
                 p.failing_checks,
                 p.review_decision,
                 p.unresolved_threads,
+                p.awaiting_reply,
                 p.latest_activity,
                 p.head_owner,
                 p.head_ref

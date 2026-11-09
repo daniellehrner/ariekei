@@ -288,6 +288,6 @@
   .reason { flex: none; font-size: var(--fs-12); font-weight: var(--fw-medium); color: var(--text-muted); }
   .reason.needs-you { color: var(--agent-strong); }
   .reason.blocked, .reason.ci-failing { color: var(--bad); }
-  .reason.activity { color: var(--gh-strong); }
+  .reason.activity, .reason.reply { color: var(--gh-strong); }
   .reason.review { color: var(--you-strong); }
 </style>
