@@ -288,8 +288,11 @@ fn slug(title: &str) -> String {
 }
 
 /// Where pushes of new branches go: the viewer's fork if the clone has a remote for it,
-/// else the base remote.
+/// else the base remote. A private mirror's always go to the mirror.
 pub fn push_remote(repo: &Repo) -> Result<String, String> {
+    if repo.mirror_of.is_some() {
+        return Ok(repo.base_remote.clone());
+    }
     Ok(git::remote_for(&repo.path, &repo.viewer, &repo.name)?
         .unwrap_or_else(|| repo.base_remote.clone()))
 }
@@ -303,10 +306,17 @@ pub fn prepare_issue(
     title: &str,
     default_branch: &str,
 ) -> Result<Prepared, String> {
+    let (branch, folder) = match repo.namespace() {
+        Some(ns) => (
+            branch_name(&format!("{ns}-issue-{number}"), title),
+            format!("{ns}-issue{number}"),
+        ),
+        None => (issue_branch(number, title), format!("issue{number}")),
+    };
     new_branch_worktree(
         repo,
-        issue_branch(number, title),
-        &format!("issue{number}"),
+        branch,
+        &folder,
         default_branch,
         "start working on the issue",
     )
@@ -539,53 +549,65 @@ fn on_local_branch(repo: &Repo, branch: &str, push_to: Option<&str>) -> Result<P
     })
 }
 
-/// Where a PR's head is fetched for reviewing without a worktree.
-pub fn pull_ref(number: i64) -> String {
-    format!("refs/ariekei/pull/{number}/head")
+/// Where a PR's head is fetched for reviewing without a worktree (a private mirror's under
+/// its name: its numbers are not the primary's).
+pub fn pull_ref(repo: &Repo, number: i64) -> String {
+    match repo.namespace() {
+        Some(ns) => format!("refs/ariekei/{ns}/pull/{number}/head"),
+        None => format!("refs/ariekei/pull/{number}/head"),
+    }
 }
 
 /// Fetches GitHub's `refs/pull/<N>/head` (works for PRs from forks too) and the base
-/// branch from `remote` into the clone; returns the head commit.
-pub fn fetch_pr_head(
-    repo: &Path,
-    remote: &str,
-    number: i64,
-    base_ref: &str,
-) -> Result<String, String> {
-    let lock = fetching(repo);
+/// branch from the repo's base remote into the clone; returns the head commit.
+pub fn fetch_pr_head(repo: &Repo, number: i64, base_ref: &str) -> Result<String, String> {
+    let (clone, remote) = (&repo.path, &repo.base_remote);
+    let lock = fetching(clone);
     let _one_at_a_time = hold(&lock);
     git(
-        repo,
+        clone,
         &[
             "fetch",
             "--quiet",
             remote,
-            &format!("+refs/pull/{number}/head:{}", pull_ref(number)),
+            &format!("+refs/pull/{number}/head:{}", pull_ref(repo, number)),
             &format!("+refs/heads/{base_ref}:refs/remotes/{remote}/{base_ref}"),
         ],
     )?;
-    git_str(repo, &["rev-parse", &pull_ref(number)])
+    git_str(clone, &["rev-parse", &pull_ref(repo, number)])
 }
 
 /// Fetches GitHub's `refs/pull/<N>/head` of each PR in `numbers` (merged or closed ones
-/// too) from `remote` into the clone.
-pub fn fetch_pull_heads(repo: &Path, remote: &str, numbers: &[i64]) -> Result<(), String> {
+/// too) from the repo's base remote into the clone.
+pub fn fetch_pull_heads(repo: &Repo, numbers: &[i64]) -> Result<(), String> {
     if numbers.is_empty() {
         return Ok(());
     }
-    let lock = fetching(repo);
+    let lock = fetching(&repo.path);
     let _one_at_a_time = hold(&lock);
     let specs: Vec<String> = numbers
         .iter()
-        .map(|n| format!("+refs/pull/{n}/head:{}", pull_ref(*n)))
+        .map(|n| format!("+refs/pull/{n}/head:{}", pull_ref(repo, *n)))
         .collect();
-    let mut args = vec!["fetch", "--quiet", remote];
+    let mut args = vec!["fetch", "--quiet", repo.base_remote.as_str()];
     args.extend(specs.iter().map(String::as_str));
-    git(repo, &args).map(|_| ())
+    git(&repo.path, &args).map(|_| ())
 }
 
+/// The PR's worktree folder: `<clone>_pr<N>` (`<clone>_<mirror>-pr<N>` for a mirror's).
 pub fn worktree_path(repo: &Repo, number: i64) -> PathBuf {
-    sibling(repo, &format!("pr{number}"))
+    match repo.namespace() {
+        Some(ns) => sibling(repo, &format!("{ns}-pr{number}")),
+        None => sibling(repo, &format!("pr{number}")),
+    }
+}
+
+/// The local branch of a PR when the head's name can't be used: `pr-<N>` (`<mirror>-pr-<N>`).
+fn pr_branch(repo: &Repo, number: i64) -> String {
+    match repo.namespace() {
+        Some(ns) => format!("{ns}-pr-{number}"),
+        None => format!("pr-{number}"),
+    }
 }
 
 /// `<clone>_<suffix>`, next to the main clone.
@@ -617,7 +639,7 @@ pub fn prepare(repo: &Repo, pr: &PrSummary) -> Result<Prepared, String> {
     forget_missing(&repo.path);
     if let Some(w) = find_existing(
         &repo.path,
-        &format!("pr-{}", pr.number),
+        &pr_branch(repo, pr.number),
         &pr.head_ref,
         &tracking,
         Some(&pr.base_ref),
@@ -643,7 +665,7 @@ pub fn prepare(repo: &Repo, pr: &PrSummary) -> Result<Prepared, String> {
         &repo.path,
         &path,
         &pr.head_ref,
-        format!("pr-{}", pr.number),
+        pr_branch(repo, pr.number),
         &tracking,
         &format!("the PR ({tracking})"),
     )?;
@@ -660,8 +682,8 @@ pub fn prepare(repo: &Repo, pr: &PrSummary) -> Result<Prepared, String> {
 /// was deleted): GitHub keeps the PR's commits (`refs/pull/<N>/head`), so they are checked
 /// out on a local branch `pr-<N>`, which has nowhere to be pushed to. Safe to call again.
 fn prepare_without_head_repo(repo: &Repo, pr: &PrSummary) -> Result<Prepared, String> {
-    let head = fetch_pr_head(&repo.path, &repo.base_remote, pr.number, &pr.base_ref)?;
-    let branch = format!("pr-{}", pr.number);
+    let head = fetch_pr_head(repo, pr.number, &pr.base_ref)?;
+    let branch = pr_branch(repo, pr.number);
     let note = Some(format!(
         "The PR's fork was deleted, so its branch is gone: the worktree has the PR's commits on a \
          local branch {branch}, and nothing can be pushed to the PR."
@@ -824,6 +846,7 @@ mod tests {
             name: "proj".into(),
             base_remote: "origin".into(),
             viewer: "me".into(),
+            mirror_of: None,
         };
         let pr = PrSummary {
             number: 42,
@@ -960,7 +983,7 @@ mod tests {
         );
         git(&upstream, &["update-ref", "refs/pull/7/head", "feature/x"]).unwrap();
 
-        let head = fetch_pr_head(&repo.path, "origin", 7, "main").unwrap();
+        let head = fetch_pr_head(&repo, 7, "main").unwrap();
         assert_eq!(
             head,
             git_str(&upstream, &["rev-parse", "feature/x"]).unwrap()
@@ -979,7 +1002,7 @@ mod tests {
         // Fetches running at once in the same clone all succeed (they take turns).
         std::thread::scope(|scope| {
             let fetches: Vec<_> = (0..6)
-                .map(|_| scope.spawn(|| fetch_pr_head(&repo.path, "origin", 7, "main")))
+                .map(|_| scope.spawn(|| fetch_pr_head(&repo, 7, "main")))
                 .collect();
             for f in fetches {
                 assert_eq!(f.join().unwrap().as_deref(), Ok(head.as_str()));

@@ -39,6 +39,7 @@ SCENARIOS = {
     "windows": {"ARIEKEI_POLL_SECS": "3"},
     "lifecycle": {"ARIEKEI_POLL_SECS": "3"},
     "task": {"ARIEKEI_POLL_SECS": "3"},
+    "mirror": {"ARIEKEI_POLL_SECS": "3"},
     "agent": {"ARIEKEI_NO_POLL": "1", "ARIEKEI_IDLE_SECS": "5", "ARIEKEI_QUIET_SECS": "5"},
 }
 

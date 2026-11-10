@@ -17,15 +17,18 @@
   import Pill from "./controls/Pill.svelte";
   import Segmented from "./controls/Segmented.svelte";
   import Spinner from "./controls/Spinner.svelte";
-  import { api, type SearchHit } from "./lib/api";
+  import { api, type RepoView, type SearchHit } from "./lib/api";
   import { browser } from "./lib/layout.svelte";
   import { modal } from "./lib/modal";
 
   let {
+    repo,
     onselect,
     onstart,
     onchanged,
   }: {
+    /** The window's repo; with private mirrors, Browse searches one of them or it. */
+    repo: RepoView;
     onselect: (id: number) => void;
     /** Open item `id` and start working on it. */
     onstart: (id: number) => void;
@@ -37,6 +40,16 @@
     { value: "pr" as const, label: "Pull requests" },
     { value: "issue" as const, label: "Issues" },
   ];
+  // Which repository it browses: the repo or one of its private mirrors (an id).
+  let target = $state("");
+  const repos = $derived(
+    repo.mirrors.length ? [repo, ...repo.mirrors].map((r) => ({ value: String(r.id), label: r.name })) : [],
+  );
+  $effect(() => {
+    if (!repos.some((o) => o.value === target)) target = String(repo.id);
+  });
+  // null for the repo itself.
+  const targetId = $derived(target && Number(target) !== repo.id ? Number(target) : null);
   // GitHub's search returns at most this many.
   const PAGE = 50;
 
@@ -61,6 +74,7 @@
   $effect(() => {
     const kind = browser.kind;
     const text = browser.text.trim();
+    const where = targetId;
     const n = ++asked;
     // The first search (and one after an error) runs at once.
     const delay = untrack(() => (hits.length && !error ? 350 : 0));
@@ -68,7 +82,7 @@
     loading = true;
     timer = setTimeout(async () => {
       try {
-        const found = await api.searchItems(kind, text);
+        const found = await api.searchItems(kind, text, where);
         if (n !== asked) return;
         hits = found;
         error = null;
@@ -84,7 +98,7 @@
   async function add(hit: SearchHit) {
     busy = [...busy, hit.number];
     try {
-      hit.itemId = await api.trackItem(hit.kind, hit.number);
+      hit.itemId = await api.trackItem(hit.kind, hit.number, targetId);
       hit.removable = true;
       onchanged();
     } catch (e) {
@@ -162,6 +176,7 @@
     <div class="head">
       <strong>Browse</strong>
       <Segmented options={KINDS} bind:value={browser.kind} label="What to browse" data-browse-kind />
+      {#if repos.length}<Segmented options={repos} bind:value={target} label="Repository to browse" data-browse-repo />{/if}
       <span class="grow"></span>
       <IconButton icon="x" label="Close (Esc)" size={26} onclick={() => (browser.open = false)} />
     </div>

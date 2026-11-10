@@ -132,19 +132,24 @@ pub fn scan(state: &AppState, id: i64, command: Option<&str>) -> Result<(), Stri
     let since = state.agent_worktrees.baseline(&repo.path)?;
     let listed = present(&repo.path)?;
     forget_gone(state, &repo, &listed)?;
-    let items: HashSet<PathBuf> = state
-        .store
-        .items(repo.id)?
-        .iter()
-        .filter_map(|i| i.worktree_path.as_deref().map(canon))
-        .collect();
+    // The items' own worktrees, of every repo in the clone (a private mirror's too).
+    let mut items: HashSet<PathBuf> = HashSet::new();
+    for r in state.store.clone_repos(repo.id)? {
+        items.extend(
+            state
+                .store
+                .items(r.id)?
+                .iter()
+                .filter_map(|i| i.worktree_path.as_deref().map(canon)),
+        );
+    }
     let own = item.worktree_path.as_deref().map(canon);
-    let mut known = state.agent_worktrees.known.lock().unwrap();
-    let Some(known) = known.get_mut(&canon(&repo.path)) else {
+    let mut guard = state.agent_worktrees.known.lock().unwrap();
+    let Some(known) = guard.get_mut(&canon(&repo.path)) else {
         return Ok(());
     };
     known.paths.retain(|p| listed.iter().any(|w| &w.path == p));
-    let mut found = false;
+    let mut found = vec![];
     for w in &listed {
         if known.paths.contains(&w.path)
             || items.contains(&w.path)
@@ -160,11 +165,23 @@ pub fn scan(state: &AppState, id: i64, command: Option<&str>) -> Result<(), Stri
             .store
             .add_agent_worktree(id, &w.path, w.branch.as_deref(), branch_created)?;
         known.paths.insert(w.path.clone());
-        found = true;
+        found.push(w);
     }
-    if found {
-        state.events.worktrees_changed(id);
+    drop(guard);
+    if found.is_empty() {
+        return Ok(());
     }
+    // A private mirror's work stays on it, in the worktrees its agent makes too.
+    if repo.mirror_of.is_some() {
+        for w in &found {
+            if let Err(e) =
+                crate::workitem::keep_private(&repo, &item, &w.path, w.branch.as_deref())
+            {
+                tracing::warn!("{}: {e}", w.path.display());
+            }
+        }
+    }
+    state.events.worktrees_changed(id);
     Ok(())
 }
 
@@ -228,12 +245,17 @@ fn forget_gone(state: &AppState, repo: &Repo, listed: &[git::Worktree]) -> Resul
 fn live(state: &AppState, repo: &Repo, id: i64) -> Result<Vec<AgentWorktree>, String> {
     let listed = present(&repo.path)?;
     forget_gone(state, repo, &listed)?;
-    let items: HashSet<PathBuf> = state
-        .store
-        .items(repo.id)?
-        .iter()
-        .filter_map(|i| i.worktree_path.as_deref().map(canon))
-        .collect();
+    // The items' own worktrees, of every repo in the clone (a private mirror's too).
+    let mut items: HashSet<PathBuf> = HashSet::new();
+    for r in state.store.clone_repos(repo.id)? {
+        items.extend(
+            state
+                .store
+                .items(r.id)?
+                .iter()
+                .filter_map(|i| i.worktree_path.as_deref().map(canon)),
+        );
+    }
     Ok(state
         .store
         .agent_worktrees(repo.id, Some(id))?

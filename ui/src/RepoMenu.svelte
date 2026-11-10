@@ -6,23 +6,28 @@
   import IconButton from "./controls/IconButton.svelte";
   import InlineConfirm from "./controls/InlineConfirm.svelte";
   import Kbd from "./controls/Kbd.svelte";
-  import { api, type Repo, type RepoEntry } from "./lib/api";
+  import Button from "./controls/Button.svelte";
+  import { api, type Repo, type RepoEntry, type RepoView } from "./lib/api";
   import { shortPath } from "./lib/paths";
 
   // The repo name in the Inbox header: switch this window to another connected repo, open
   // one in a new window, remove one from Ariekei, or connect another. A repo shown in another
-  // window is focused there instead. Arrow keys move, Enter picks, Esc closes.
+  // window is focused there instead. Arrow keys move, Enter picks, Esc closes. This window's
+  // repo also gets its private mirrors here (added, listed, removed).
   let {
     repo,
     onswitch,
     onconnect,
     onremoved,
+    onmirrors,
   }: {
-    repo: Repo;
+    repo: RepoView;
     onswitch: (repo: Repo) => void;
     onconnect: () => void;
     /** This window's repo was removed: it shows the Connect screen. */
     onremoved: () => void;
+    /** A private mirror of this window's repo was added or removed. */
+    onmirrors: () => void;
   } = $props();
 
   let open = $state(false);
@@ -57,13 +62,52 @@
     }
   }
 
+  // --- private mirrors of this window's repo ---
+  let addingMirror = $state(false);
+  let mirrorName = $state("");
+  let mirrorBusy = $state(false);
+  let mirrorNote: string | null = $state(null);
+  let removingMirror: number | null = $state(null);
+
+  async function addMirror(e: SubmitEvent) {
+    e.preventDefault();
+    if (!mirrorName.trim() || mirrorBusy) return;
+    mirrorBusy = true;
+    error = mirrorNote = null;
+    try {
+      const added = await api.addMirror(mirrorName.trim());
+      mirrorName = "";
+      addingMirror = false;
+      mirrorNote = added.note;
+      entries = await api.repos();
+      onmirrors();
+    } catch (err) {
+      error = String(err);
+    } finally {
+      mirrorBusy = false;
+    }
+  }
+
+  async function removeMirror(m: Repo) {
+    removingMirror = null;
+    try {
+      await api.removeMirror(m.id);
+      entries = await api.repos();
+      onmirrors();
+    } catch (err) {
+      error = `Could not remove ${m.owner}/${m.name}: ${err}`;
+    }
+  }
+
   async function toggle(e: MouseEvent) {
     // Opened from the keyboard (Enter/Space: no pointer), the first entry gets the focus.
     const fromKeyboard = e.detail === 0;
     open = !open;
     removing = null;
+    removingMirror = null;
+    addingMirror = false;
     if (!open) return;
-    error = null;
+    error = mirrorNote = null;
     try {
       entries = await api.repos();
     } catch (e) {
@@ -114,6 +158,8 @@
     } else if (e.key === "Escape") {
       e.preventDefault();
       if (removing) removing = null;
+      else if (removingMirror !== null) removingMirror = null;
+      else if (addingMirror) addingMirror = false;
       else close();
     }
   }
@@ -163,8 +209,47 @@
             <InlineConfirm text="Remove {e.owner}/{e.name}?" confirm="Remove" onconfirm={() => remove(e)} oncancel={() => (removing = null)} data-confirm-remove />
           </div>
         {/if}
+        {#each e.mirrors as m (m.id)}
+          <div class="mirror" data-mirror={m.id}>
+            <Icon name="lock" size={14} />
+            <span class="name" title="A private mirror of {e.owner}/{e.name}: its issues and PRs are in {e.owner}/{e.name}'s Inbox, and their work is pushed only to it ({m.baseRemote})">{m.owner}/{m.name}</span>
+            <span class="path">private mirror</span>
+            {#if e.here}
+              <span class="remove">
+                <IconButton icon="inbox-remove" label="Remove the mirror {m.owner}/{m.name}" title="Remove the mirror" tabindex={-1}
+                  onclick={() => (removingMirror = m.id)} data-remove-mirror={m.id} />
+              </span>
+            {/if}
+          </div>
+          {#if removingMirror === m.id}
+            <div class="removing">
+              <p>Its items leave the Inbox. The remote, the pre-push hook and the worktrees stay.</p>
+              <InlineConfirm text="Remove {m.owner}/{m.name}?" confirm="Remove" onconfirm={() => removeMirror(m)} oncancel={() => (removingMirror = null)} />
+            </div>
+          {/if}
+        {/each}
       {/each}
+      {#if mirrorNote}<p class="note" data-mirror-note>{mirrorNote}</p>{/if}
       <hr />
+      {#if addingMirror}
+        <form class="add-mirror" onsubmit={addMirror} data-mirror-form>
+          <p>
+            Another GitHub repository in this clone, e.g. a private copy for security fixes. Its issues and PRs are listed in
+            this Inbox, tagged, and their branches push only to it.
+          </p>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input class="mono" bind:value={mirrorName} placeholder="owner/name" autofocus disabled={mirrorBusy}
+            onkeydown={(ev) => ev.key !== "Escape" && ev.stopPropagation()} data-mirror-name />
+          <div class="form-actions">
+            <Button size="sm" variant="quiet" type="button" onclick={() => (addingMirror = false)} disabled={mirrorBusy}>Cancel</Button>
+            <Button size="sm" variant="primary" type="submit" loading={mirrorBusy} disabled={!mirrorName.trim()}>Add mirror</Button>
+          </div>
+        </form>
+      {:else}
+        <button class="action" role="menuitem" onclick={() => ((addingMirror = true), (error = null))} data-add-mirror>
+          <Icon name="lock" />Add a private mirror of {repo.owner}/{repo.name}…
+        </button>
+      {/if}
       <button class="action" role="menuitem" onclick={() => run(async () => onconnect())} data-connect-another>
         <Icon name="plus" />Connect another repository…
       </button>
@@ -230,4 +315,19 @@
   .action:focus-visible { outline-offset: -2px; }
   .grow { flex: 1; }
   .error { color: var(--bad); font-size: var(--fs-12); margin: var(--sp-2) var(--sp-4); }
+  .mirror {
+    display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) var(--sp-4) var(--sp-2) calc(16px + var(--sp-4) * 2);
+    color: var(--text-muted); font-size: var(--fs-12);
+  }
+  .mirror .name { color: var(--text); font-weight: var(--fw-medium); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mirror .path { flex: 1; }
+  .mirror:hover .remove, .mirror:focus-within .remove { opacity: 1; }
+  .note { margin: var(--sp-2) var(--sp-4); font-size: var(--fs-12); color: var(--warn); }
+  .add-mirror { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); }
+  .add-mirror p { margin: 0; font-size: var(--fs-12); color: var(--text-muted); }
+  .add-mirror input {
+    height: 28px; padding: 0 var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-md);
+    background: var(--surface-0); color: var(--text); font-family: var(--font-mono); font-size: var(--fs-12);
+  }
+  .add-mirror .form-actions { display: flex; justify-content: flex-end; gap: var(--sp-3); }
 </style>

@@ -514,7 +514,8 @@ Markdown is rendered by GitHub and sanitized; links open in your system browser.
    Comments show the issue.
 2. **Start working** creates the branch `issue-<N>-<words of the title>` from the default
    branch (as GitHub has it now, also when it was renamed), in `../<clone>_issue<N>`. A plain `git push` creates the branch on your fork (a
-   remote pointing at `<you>/<repo>`), or on the base remote when you have no fork.
+   remote pointing at `<you>/<repo>`), or on the base remote when you have no fork. An issue
+   of a [private mirror](#a-private-mirror) pushes only to the mirror.
 3. The agent gets the issue as context and waits for you. The Review tab works on the worktree
    before anything is pushed.
 4. Ariekei opens no PR itself. Open one for the pushed branch, or ask the agent to
@@ -526,7 +527,8 @@ Markdown is rendered by GitHub and sanitized; links open in your system browser.
 ## 10. Tasks: work without a PR or issue
 
 A task is work that starts with nothing on GitHub, e.g. investigating a bug. It may end as one
-or more PRs and issues, or be thrown away.
+or more PRs and issues, or be thrown away. With a [private mirror](#a-private-mirror), a task
+belongs to the repository or to the mirror (chosen in the form, or moved later).
 
 ### Creating a task
 
@@ -715,6 +717,43 @@ Click the repository name at the top of the Inbox to open the repository menu:
 
 Every open repository is kept up to date, and the windows come back after a restart.
 
+### A private mirror
+
+Some work must not be public yet, e.g. a security fix that is worked on in a private copy of
+the repository (a plain copy, not a GitHub fork). Add that copy as a **private mirror** of the
+repository, and its issues and PRs are listed in the same Inbox, while their work goes only to
+the copy:
+
+- **Add a private mirror of `<repo>`…** in the repository menu takes `owner/name` or the
+  repository's GitHub URL. It must be private (a public one is refused). Ariekei uses your
+  clone's remote for it, or adds one named after it (`sec-besu`), and installs the pre-push
+  guard (below). The menu lists the mirror under its repository; **Remove** there takes its
+  items out of the Inbox (the remote, the guard and the worktrees stay).
+- Its items are in the Inbox's sections with the others, tagged with a lock and the mirror's
+  name; the work item says **private mirror `<name>`**. Their worktrees and branches carry the
+  name too (`../<clone>_sec-besu-issue274`, `sec-besu-issue-274-…`), so numbers the two
+  repositories share never meet.
+- **Browse** and **New task** get a choice between the repository and its mirrors. A task of
+  the mirror starts from the mirror's default branch.
+- **Pushing.** A mirror's branches push to the mirror (`branch.<name>.pushRemote`, which wins
+  over `remote.pushDefault`, e.g. one that names your public fork), so a plain `git push` goes
+  there. The **pre-push guard**, a `pre-push` hook Ariekei installs in the clone, refuses to
+  push a mirror's branch, or anything from a mirror's worktree, anywhere else, whoever pushes:
+  you, your IDE or the agent. After the disclosure, `git push --no-verify` gets past it. If
+  the clone has a pre-push hook of its own, it is left alone: Ariekei saves its guard next to
+  it as `ariekei-mirror-guard` and says so, for your hook to call.
+- **The agent.** A mirror item's agent runs with `GH_REPO` set to the mirror, so its `gh pr
+  create` and `gh issue create` go there, and it is told, at every start, to keep the work
+  there. Its shell commands that would write elsewhere with `gh` (`-R` or a URL of another
+  repository, `gh repo create`, a gist), or get around the guard (`--no-verify`, another
+  hooks path), are refused, and it is told why. Reading the public repository stays allowed.
+  This check is best effort; the guard and `GH_REPO` do not depend on it.
+- **Moving a task.** Work that turns out to be a security matter can move: **Move to
+  `<mirror>`** on a task of the repository makes it the mirror's. Its branch and worktree (and
+  the worktrees its agent made) are set up as above, and its agent starts again (resuming its
+  conversation) with the mirror's setup. If the branch is already on another remote, Ariekei
+  says so: moving does not take it back from there.
+
 ## 14. Keyboard shortcuts
 
 Press **?** to see them in the app. On macOS, use Cmd instead of Ctrl.
@@ -791,9 +830,13 @@ activity, a grey bar for lifecycle news.
   `claude-mcp.json`, written at each start); and `running`, the mark of a run that has not
   exited yet (see Troubleshooting).
 - Worktrees are created next to your clone (`../<clone>_pr<N>`, `_issue<N>`, and for a task
-  `_<its branch>`).
+  `_<its branch>`; a private mirror's `_<mirror>-pr<N>`, `_<mirror>-issue<N>`).
 - Branches and Ariekei's refs live in your clone: `refs/ariekei/pull/<N>/head` holds the PR
-  head fetched for read-only review.
+  head fetched for read-only review (`refs/ariekei/<mirror>/pull/<N>/head` for a mirror's).
+- With a [private mirror](#a-private-mirror): the pre-push guard is the clone's
+  `.git/hooks/pre-push` (or under `core.hooksPath`); a mirror's branches have
+  `branch.<name>.ariekeiMirror` set, and its worktrees an `ariekei-mirror` file in their git
+  dir, each naming the repository their pushes may go to.
 - Agent conversations are Claude Code's own sessions.
 
 ## 17. Troubleshooting and limits

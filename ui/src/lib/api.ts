@@ -16,12 +16,25 @@ export interface Repo {
   name: string;
   baseRemote: string;
   viewer: string;
+  /** A private mirror: the repo (same clone) whose Inbox lists it. */
+  mirrorOf: number | null;
+}
+
+/** A connected repo with its private mirrors, whose items its Inbox lists too. */
+export interface RepoView extends Repo {
+  mirrors: Repo[];
 }
 
 /** A connected repo, and whether this window or another one shows it. */
-export interface RepoEntry extends Repo {
+export interface RepoEntry extends RepoView {
   here: boolean;
   elsewhere: boolean;
+}
+
+/** A private mirror just added, and what the user should know about it, if anything. */
+export interface AddedMirror {
+  repo: Repo;
+  note: string | null;
 }
 
 /** `here` false: another window already shows the repo and got the focus instead. */
@@ -57,6 +70,8 @@ export interface Row {
   /** Review threads and conversations where someone waits for the user's reply: it stays
    *  until they reply or resolve, unlike `newActivity`. */
   awaitingReply: number;
+  /** The private mirror the item is of (its name, e.g. "sec-besu"); null for the repo's own. */
+  mirror: string | null;
   newActivity: boolean;
   agent: AgentStatus | null;
   /** The agent finished since the user last opened the item's review. */
@@ -216,7 +231,7 @@ export interface Running {
 }
 
 export const api = {
-  repo: () => invoke<Repo | null>("repo"),
+  repo: () => invoke<RepoView | null>("repo"),
   repos: () => invoke<RepoEntry[]>("repos"),
   connectRepo: (path: string) => invoke<Shown>("connect_repo", { path }),
   switchRepo: (id: number) => invoke<Shown>("switch_repo", { id }),
@@ -224,6 +239,12 @@ export const api = {
   repoLeftovers: (id: number) => invoke<string[]>("repo_leftovers", { id }),
   /** Forgets repo `id` (its items, stars, drafts); nothing on disk is touched. */
   removeRepo: (id: number) => invoke<void>("remove_repo", { id }),
+  /** Adds a private mirror (`owner/name` or its URL) to this window's repo. */
+  addMirror: (name: string) => invoke<AddedMirror>("add_mirror", { name }),
+  /** Removes private mirror `id`: its items go; nothing on disk is touched. */
+  removeMirror: (id: number) => invoke<void>("remove_mirror", { id }),
+  /** Moves task `id` to private mirror `to` of its repo; returns a warning, if any. */
+  moveTask: (id: number, to: number) => invoke<string | null>("move_task", { id, to }),
   /** Quits although agents' work stops (the user confirmed `confirm-quit`). */
   quitApp: () => invoke<void>("quit_app"),
   /** A new window for repo `id`, or an empty one (Connect screen) for null. */
@@ -267,11 +288,15 @@ export const api = {
     invoke<ReviewFile[]>("review_files", { id, from, to, ignoreWs }),
   reviewFile: (id: number, from: string, to: string | null, path: string, ignoreWs: boolean) =>
     invoke<FileDiff>("review_file", { id, from, to, path, ignoreWs }),
-  searchItems: (kind: "pr" | "issue", text: string) => invoke<SearchHit[]>("search_items", { kind, text }),
-  trackItem: (kind: "pr" | "issue", number: number) => invoke<number>("track_item", { kind, number }),
+  /** `repo`: this window's repo (null) or one of its private mirrors. */
+  searchItems: (kind: "pr" | "issue", text: string, repo: number | null = null) =>
+    invoke<SearchHit[]>("search_items", { kind, text, repo }),
+  trackItem: (kind: "pr" | "issue", number: number, repo: number | null = null) =>
+    invoke<number>("track_item", { kind, number, repo }),
   untrack: (id: number) => invoke<void>("untrack", { id }),
   setStarred: (id: number, starred: boolean) => invoke<void>("set_starred", { id, starred }),
-  createTask: (title: string, notes: string, branch: string) => invoke<number>("create_task", { title, notes, branch }),
+  createTask: (title: string, notes: string, branch: string, repo: number | null = null) =>
+    invoke<number>("create_task", { title, notes, branch, repo }),
   conversation: (id: number) => invoke<Conversation>("pr_conversation", { id }),
   /** The conversation as it was last loaded: shown while `conversation` loads. */
   cachedConversation: (id: number) => invoke<Conversation | null>("cached_conversation", { id }),

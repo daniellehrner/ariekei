@@ -21,20 +21,21 @@
   import Spinner from "./controls/Spinner.svelte";
   import StarToggle from "./controls/StarToggle.svelte";
   import { agents } from "./lib/agent.svelte";
-  import { api, shortName, type Conversation, type Row } from "./lib/api";
+  import { api, shortName, type Conversation, type Repo, type RepoView, type Row } from "./lib/api";
   import { openingTab, type Tab } from "./lib/attention";
   import { newestLoad } from "./lib/latest";
   import { openOn } from "./lib/layout.svelte";
 
   let {
     row,
-    repoId,
+    repo,
     viewer,
     onchanged,
     onopen,
   }: {
     row: Row;
-    repoId: number;
+    /** The window's repo, with its private mirrors (whose items it lists too). */
+    repo: RepoView;
     /** The user's GitHub login. */
     viewer: string;
     onchanged: () => void;
@@ -178,7 +179,7 @@
   onMount(() => {
     // Every window hears every repo's polls; only this repo's matter here.
     const unlisten = listen<number>("inbox-changed", (e) => {
-      if (e.payload !== repoId) return;
+      if (e.payload !== repo.id && !repo.mirrors.some((m) => m.id === e.payload)) return;
       loadConversation(id);
       polls++;
     });
@@ -313,6 +314,21 @@
     onchanged();
   }
 
+  // A task of the repo moves to one of its private mirrors: its work goes only there from now.
+  let moving = $state<Repo | null>(null);
+  async function moveTo(mirror: Repo) {
+    moving = null;
+    try {
+      const warning = await api.moveTask(id, mirror.id);
+      notice = `Moved to ${mirror.owner}/${mirror.name}: its branch pushes only there, and its agent starts again with that.`;
+      // Stays until dismissed: the branch may be public already.
+      if (warning) error = warning;
+      onchanged();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   // From a review thread to its file in the Review tab.
   function showInReview(path: string) {
     if (!ui) return;
@@ -354,7 +370,19 @@
               ? "Create the task's worktree again and open Claude Code in it"
               : "Create (or reuse) a worktree for the PR's branch and open Claude Code in it with the PR as context"} data-start>Start working</Button>
         {/if}
-        {#if isTask && !confirmDone}
+        {#if isTask && !row.mirror && !confirmDone && !losses}
+          {#each repo.mirrors as m (m.id)}
+            {#if moving?.id === m.id}
+              <InlineConfirm text="Move to {m.owner}/{m.name}?" confirm="Move" tone="neutral"
+                onconfirm={() => moveTo(m)} oncancel={() => (moving = null)} data-confirm-move />
+            {:else if !moving}
+              <Button variant="quiet" icon="lock" onclick={() => (moving = m)}
+                title="Make it work of the private mirror {m.owner}/{m.name}: its branch then pushes only there (a pre-push hook refuses anywhere else), and its agent is restarted with gh set to it"
+                data-move-task={m.id}>Move to {m.name}</Button>
+            {/if}
+          {/each}
+        {/if}
+        {#if isTask && !confirmDone && !moving}
           {#if losses}
             <InlineConfirm text="Discard this task{losses.length ? ' and lose its work' : ''}?" confirm="Discard"
               onconfirm={discard} oncancel={() => (losses = null)} data-confirm-discard />
@@ -380,6 +408,11 @@
     </div>
     <div class="meta" data-meta>
       <span>{KIND_LABEL[row.kind]}</span>
+      {#if row.mirror}
+        <span class="mirror" title="Its work is pushed only to the private mirror {row.mirror}, and its agent's gh goes there" data-mirror-meta>
+          <Icon name="lock" size={12} />private mirror {row.mirror}
+        </span>
+      {/if}
       {#if row.issueNumber}<span>from issue #{row.issueNumber}</span>{/if}
       {#if !isTask}<span>by {row.author}</span>{/if}
       {#if ciLabel}
@@ -578,6 +611,7 @@
     padding: 0; border: 0; border-radius: var(--r-sm); background: none; color: inherit; font: inherit; cursor: copy;
   }
   .meta > .path:hover { color: var(--text); }
+  .meta > span.mirror { color: var(--warn); font-weight: var(--fw-medium); }
   .meta > span.agent { flex: none; max-width: 45%; margin-left: auto; color: var(--agent-strong); }
   .meta .t, .meta code { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .meta code { font-size: var(--fs-code-inline); }

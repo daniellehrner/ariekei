@@ -198,6 +198,23 @@ pub fn repo_slug(owner: &str, name: &str) -> Result<(String, String), String> {
         .ok_or_else(|| format!("GitHub names {owner}/{name} {full_name:?}"))
 }
 
+/// GitHub's name for `owner/name` (`owner/name` as it is spelled there) and whether the
+/// repository is private.
+pub fn repo_privacy(owner: &str, name: &str) -> Result<(String, bool), String> {
+    let out = gh(&[
+        "api",
+        &format!("repos/{owner}/{name}"),
+        "--jq",
+        "[.full_name, .private] | @tsv",
+    ])?;
+    let out = String::from_utf8_lossy(&out);
+    let (full_name, private) = out
+        .trim()
+        .split_once('\t')
+        .ok_or_else(|| format!("GitHub says {out:?} about {owner}/{name}"))?;
+    Ok((full_name.to_owned(), private == "true"))
+}
+
 pub fn viewer() -> Result<String, String> {
     let out = gh(&["api", "user", "--jq", ".login"])?;
     Ok(String::from_utf8_lossy(&out).trim().to_owned())

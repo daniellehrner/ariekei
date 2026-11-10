@@ -32,7 +32,9 @@ How to use it: [docs/manual.md](docs/manual.md) (user manual).
 - **Repos and windows:** the repo name in the Inbox header switches the window to another
   connected repo, opens one in a new window, or connects another. Each repo is shown in one
   window at a time; every open repo is kept current, and the windows come back after a
-  restart.
+  restart. A **private mirror** (e.g. a private copy for security fixes) is listed in its
+  repo's Inbox, tagged; its work pushes and opens PRs only there (`pushRemote`, a pre-push
+  guard in the clone, `GH_REPO` and a check of the agent's `gh` commands).
 - **Tasks:** start work with no PR or issue yet (Ctrl+N or + in the Inbox, e.g. to investigate a bug). The
   task gets a new branch named after its title, or an existing one such as `owner:branch` on a
   fork (the fork's remote is added if the clone has none, and `git push` goes back there), plus a

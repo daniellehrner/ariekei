@@ -15,18 +15,28 @@
   import Kbd from "./controls/Kbd.svelte";
   import { homeDir } from "@tauri-apps/api/path";
   import { listenToAgents } from "./lib/agent.svelte";
-  import { api, shortName, type Repo, type Row } from "./lib/api";
+  import { api, shortName, type Repo, type RepoView, type Row } from "./lib/api";
   import { ATTENTION_LABEL, attentionKind } from "./lib/attention";
   import { isTyping } from "./lib/keys";
   import { browser, layout, openOn, shortcuts } from "./lib/layout.svelte";
   import { setHome } from "./lib/paths";
 
-  let repo: Repo | null | undefined = $state(undefined);
+  let repo: RepoView | null | undefined = $state(undefined);
   let rows: Row[] = $state([]);
   // The first Inbox load of the repo finished.
   let loaded = $state(false);
   let selected: number | null = $state(null);
   let pollError: string | null = $state(null);
+  // The last poll of each private mirror of the repo that failed (by its id).
+  let mirrorErrors: Record<number, string> = $state({});
+  // What the Inbox says could not be refreshed: the repo's error, else a mirror's.
+  const shownError = $derived(
+    pollError ??
+      Object.entries(mirrorErrors)
+        .map(([id, message]) => `${repo?.mirrors.find((m) => m.id === Number(id))?.name ?? "a mirror"}: ${message}`)
+        .at(0) ??
+      null,
+  );
   // The Connect screen over a connected repo (to add another one).
   let connecting = $state(false);
   // The Inbox can collapse to a thin strip, leaving the screen to the work item. Below
@@ -130,10 +140,20 @@
     }, 150);
   }
 
+  // The repo again, with its private mirrors (one was added or removed).
+  async function reloadRepo() {
+    const shown = repo?.id;
+    const view = await api.repo();
+    if (view && view.id === shown) repo = view;
+    mirrorErrors = {};
+    reload();
+  }
+
   // This window now shows `r` (at launch, after connecting, or switched from the repo menu).
-  async function show(r: Repo) {
+  async function show(r: Repo | RepoView) {
     connecting = false;
-    repo = r;
+    repo = "mirrors" in r ? r : { ...r, mirrors: [] };
+    if (!("mirrors" in r)) reloadRepo();
     // The backend sets the window's title; this is the page's (as WebDriver sees it).
     document.title = `${r.owner}/${r.name} — Ariekei`;
     rows = [];
@@ -141,6 +161,7 @@
     browser.open = false;
     selected = null;
     pollError = null;
+    mirrorErrors = {};
     refreshing = false;
     selected = await api.selectedItem();
     reload();
@@ -187,15 +208,20 @@
     homeDir().then(setHome, () => {});
     const unlisten = [
       // Polls of every window's repo arrive in every window.
+      // The repo's private mirrors are polled after it; their items are in its Inbox too.
       listen<number>("inbox-changed", (e) => {
-        if (e.payload !== repo?.id) return;
-        pollError = null;
+        if (!repo) return;
+        if (e.payload === repo.id) pollError = null;
+        else if (repo.mirrors.some((m) => m.id === e.payload)) delete mirrorErrors[e.payload];
+        else return;
         refreshing = false;
         reload();
       }),
       listen<{ repo: number; message: string }>("inbox-error", (e) => {
-        if (e.payload.repo !== repo?.id) return;
-        pollError = e.payload.message;
+        if (!repo) return;
+        if (e.payload.repo === repo.id) pollError = e.payload.message;
+        else if (repo.mirrors.some((m) => m.id === e.payload.repo)) mirrorErrors[e.payload.repo] = e.payload.message;
+        else return;
         refreshing = false;
       }),
       // Agent status feeds the Inbox's ordering.
@@ -220,10 +246,10 @@
 {:else if repo}
   {#key repo.id}
   <div class="app">
-    <Inbox {repo} {rows} {loaded} {selected} error={pollError} {collapsed} ontoggle={toggleInbox} onselect={select} onrefresh={refresh} {refreshing} onadded={reload}
-      onswitch={show} onconnect={() => (connecting = true)} onremoved={removed} bind:creating={creatingTask} />
+    <Inbox {repo} {rows} {loaded} {selected} error={shownError} {collapsed} ontoggle={toggleInbox} onselect={select} onrefresh={refresh} {refreshing} onadded={reload}
+      onswitch={show} onconnect={() => (connecting = true)} onremoved={removed} onmirrors={reloadRepo} bind:creating={creatingTask} />
     {#if current}
-      <WorkItem row={current} repoId={repo.id} viewer={repo.viewer} onchanged={reload} onopen={select} />
+      <WorkItem row={current} {repo} viewer={repo.viewer} onchanged={reload} onopen={select} />
     {:else}
       <!-- What wants the user, most urgent first: the first five, to open from here. -->
       {@const wanting = rows
@@ -262,7 +288,7 @@
     {/if}
   </div>
   {#if browser.open}
-    <Browse onselect={select} onstart={startWorking} onchanged={reload} />
+    <Browse {repo} onselect={select} onstart={startWorking} onchanged={reload} />
   {/if}
   {/key}
 {/if}

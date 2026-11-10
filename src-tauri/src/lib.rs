@@ -17,6 +17,7 @@ mod inbox;
 mod instance;
 mod lifecycle;
 mod mcp;
+mod mirror;
 mod notify;
 mod poller;
 mod procs;
@@ -111,10 +112,30 @@ fn pty_size(cols: u16, rows: u16) -> PtySize {
 
 // --- repo and inbox ---
 
+/// A connected repo with its private mirrors (listed in its Inbox).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RepoView {
+    #[serde(flatten)]
+    repo: store::Repo,
+    mirrors: Vec<store::Repo>,
+}
+
+impl RepoView {
+    fn of(state: &AppState, repo: store::Repo) -> Result<Self, String> {
+        Ok(Self {
+            mirrors: state.store.mirrors(repo.id)?,
+            repo,
+        })
+    }
+}
+
 /// The repo this window shows.
 #[tauri::command]
-fn repo(state: State<'_, AppState>, window: tauri::Window) -> Res<Option<store::Repo>> {
-    windows::repo_of(&state, window.label())
+fn repo(state: State<'_, AppState>, window: tauri::Window) -> Res<Option<RepoView>> {
+    windows::repo_of(&state, window.label())?
+        .map(|repo| RepoView::of(&state, repo))
+        .transpose()
 }
 
 /// A connected repo, and where it is shown.
@@ -122,28 +143,65 @@ fn repo(state: State<'_, AppState>, window: tauri::Window) -> Res<Option<store::
 #[serde(rename_all = "camelCase")]
 struct RepoEntry {
     #[serde(flatten)]
-    repo: store::Repo,
+    repo: RepoView,
     /// Shown in the asking window.
     here: bool,
     /// Shown in another window.
     elsewhere: bool,
 }
 
+/// The connected repos (a private mirror with its repo, not as one of its own).
 #[tauri::command]
 fn repos(state: State<'_, AppState>, window: tauri::Window) -> Res<Vec<RepoEntry>> {
-    Ok(state
+    state
         .store
         .repos()?
         .into_iter()
+        .filter(|repo| repo.mirror_of.is_none())
         .map(|repo| {
             let shown_in = state.windows.window_of(repo.id);
-            RepoEntry {
+            Ok(RepoEntry {
                 here: shown_in.as_deref() == Some(window.label()),
                 elsewhere: shown_in.is_some_and(|l| l != window.label()),
-                repo,
-            }
+                repo: RepoView::of(&state, repo)?,
+            })
         })
-        .collect())
+        .collect()
+}
+
+/// Adds a private mirror (`name`: `owner/name` or its URL) to the repo this window shows.
+#[tauri::command]
+async fn add_mirror(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    name: String,
+) -> Res<workitem::AddedMirror> {
+    let label = window.label().to_owned();
+    blocking(app, move |s| {
+        workitem::add_mirror(s, windows::repo_of(s, &label)?, &name)
+    })
+    .await
+}
+
+/// Removes private mirror `id` of the repo this window shows (`lifecycle::remove_repo`).
+#[tauri::command]
+async fn remove_mirror(app: tauri::AppHandle, window: tauri::Window, id: i64) -> Res<()> {
+    let label = window.label().to_owned();
+    blocking(app, move |s| {
+        let mirror = windows::repo_or_mirror(s, &label, Some(id))?.ok_or("no repository")?;
+        let primary = mirror.mirror_of.ok_or("that is not a mirror")?;
+        lifecycle::remove_repo(s, id)?;
+        s.events.inbox_changed(primary);
+        Ok(())
+    })
+    .await
+}
+
+/// Moves task `id` to the private mirror `to` of its repo (`workitem::move_task`); returns a
+/// warning, if any.
+#[tauri::command]
+async fn move_task(app: tauri::AppHandle, id: i64, to: i64) -> Res<Option<String>> {
+    blocking(app, move |s| workitem::move_task(s, id, to)).await
 }
 
 /// What showing a repo did: `here` false means another window already shows it and got
@@ -224,6 +282,11 @@ async fn open_item(app: tauri::AppHandle, id: i64) -> Res<()> {
         .store
         .repo(item.repo_id)?
         .ok_or("unknown repository")?;
+    // A private mirror's item is in its repo's window.
+    let repo = match repo.mirror_of {
+        Some(primary) => state.store.repo(primary)?.ok_or("unknown repository")?,
+        None => repo,
+    };
     // A window opened for it selects the item from this setting; an open one is told.
     state
         .store
@@ -296,9 +359,17 @@ fn selected_item(state: State<'_, AppState>, window: tauri::Window) -> Res<Optio
         Some(v) => Some(v),
         None => state.store.setting("selected_item")?,
     };
+    // An item of the repo or of one of its private mirrors (listed in its Inbox).
+    let listed = |repo_id: i64| {
+        repo_id == repo
+            || state
+                .store
+                .repo(repo_id)
+                .is_ok_and(|r| r.is_some_and(|r| r.mirror_of == Some(repo)))
+    };
     Ok(saved
         .and_then(|v| v.parse().ok())
-        .filter(|id| state.store.item(*id).is_ok_and(|i| i.repo_id == repo)))
+        .filter(|id| state.store.item(*id).is_ok_and(|i| listed(i.repo_id))))
 }
 
 #[tauri::command]
@@ -404,10 +475,11 @@ async fn search_items(
     window: tauri::Window,
     kind: String,
     text: String,
+    repo: Option<i64>,
 ) -> Res<Vec<workitem::SearchHit>> {
     let label = window.label().to_owned();
     blocking(app, move |s| {
-        workitem::search(s, windows::repo_of(s, &label)?, &kind, &text)
+        workitem::search(s, windows::repo_or_mirror(s, &label, repo)?, &kind, &text)
     })
     .await
 }
@@ -419,10 +491,11 @@ async fn track_item(
     window: tauri::Window,
     kind: String,
     number: i64,
+    repo: Option<i64>,
 ) -> Res<i64> {
     let label = window.label().to_owned();
     blocking(app, move |s| {
-        workitem::track(s, windows::repo_of(s, &label)?, &kind, number)
+        workitem::track(s, windows::repo_or_mirror(s, &label, repo)?, &kind, number)
     })
     .await
 }
@@ -447,10 +520,17 @@ async fn create_task(
     title: String,
     notes: String,
     branch: String,
+    repo: Option<i64>,
 ) -> Res<i64> {
     let label = window.label().to_owned();
     blocking(app, move |s| {
-        workitem::create_task(s, windows::repo_of(s, &label)?, &title, &notes, &branch)
+        workitem::create_task(
+            s,
+            windows::repo_or_mirror(s, &label, repo)?,
+            &title,
+            &notes,
+            &branch,
+        )
     })
     .await
 }
@@ -739,8 +819,12 @@ pub fn run() {
             crashlog::started(&data_dir);
 
             let handle = app.handle().clone();
-            let hook_server =
-                hooks::HookServer::start(&data_dir, move |e| hooks::dispatch(&handle, e))?;
+            let deciding = app.handle().clone();
+            let hook_server = hooks::HookServer::start_deciding(
+                &data_dir,
+                move |e| hooks::decide(&deciding, e),
+                move |e| hooks::dispatch(&handle, e),
+            )?;
             // Not fatal: the agents work without Ariekei's tools.
             let handle = app.handle().clone();
             let mcp_server = mcp::McpServer::start(
@@ -838,6 +922,9 @@ pub fn run() {
             switch_repo,
             repo_leftovers,
             remove_repo,
+            add_mirror,
+            remove_mirror,
+            move_task,
             quit_app,
             open_window,
             open_item,

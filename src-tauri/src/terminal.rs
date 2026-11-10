@@ -66,6 +66,8 @@ pub struct SessionPlan {
     pub resume: bool,
     /// Appended to the system prompt (the work item's context), if any.
     pub context_file: Option<PathBuf>,
+    /// Set in the agent's environment (e.g. `GH_REPO` for a private mirror's item).
+    pub env: Vec<(String, String)>,
 }
 
 #[derive(Default)]
@@ -409,7 +411,7 @@ impl TerminalManager {
         cmd.cwd(cwd);
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
-        for (k, v) in &launch.env {
+        for (k, v) in launch.env.iter().chain(&plan.env) {
             cmd.env(k, v);
         }
         for var in PARENT_SESSION_ENV {
@@ -681,6 +683,7 @@ mod tests {
             session_id: "id-1".into(),
             resume: false,
             context_file: Some("/ctx.md".into()),
+            env: vec![],
         };
         let fresh = claude_args(&launch(), &plan);
         assert_eq!(

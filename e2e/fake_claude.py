@@ -154,13 +154,14 @@ def interactive(argv):
         return os.path.join(store, f"{conv['session']}.jsonl")
 
     def hook(name, **fields):
+        """Posts the event; returns Ariekei's answer ({} for none)."""
         body = json.dumps({"hook_event_name": name, "session_id": conv["session"], "cwd": os.getcwd(),
                            "transcript_path": jsonl(), **fields}).encode()
         try:
             req = urllib.request.Request(url, body, {"Content-Type": "application/json", **headers})
-            urllib.request.urlopen(req, timeout=5).read()
-        except OSError:
-            pass  # the app is gone or not listening; the TUI goes on
+            return json.loads(urllib.request.urlopen(req, timeout=5).read() or b"{}")
+        except (OSError, ValueError):
+            return {}  # the app is gone or not listening; the TUI goes on
 
     def say(text):
         out(text + "\n")
@@ -273,13 +274,18 @@ def turn(text, say, hook, keys, mcp=None):
         hook("Stop")
         return
     task = re.search(r"word (\S+) to (\S+?),? then commit with the message '([^']+)'", text)
-    create = re.search(r"open (a pull request|an issue) titled '([^']+)'", text, re.I)
+    create = re.search(r"open (a pull request|an issue) titled '([^']+)'(?: on (\S+/\S+))?", text, re.I)
     if create:
-        pr, title = create.group(1).lower() == "a pull request", create.group(2)
-        command = f"gh {'pr' if pr else 'issue'} create --title '{title}' --body ''"
-        hook("PreToolUse", tool_name="Bash", tool_input={"command": command})
+        pr, title, on = create.group(1).lower() == "a pull request", create.group(2), create.group(3)
+        command = f"gh {'pr' if pr else 'issue'} create --title '{title}' --body ''" + (f" -R {on}" if on else "")
+        answer = hook("PreToolUse", tool_name="Bash", tool_input={"command": command}).get("hookSpecificOutput", {})
+        if answer.get("permissionDecision") == "deny":
+            say(f"⏺ Bash({command})\n  ⎿  {answer.get('permissionDecisionReason', 'Refused')}")
+            hook("Stop")
+            return
+        # Where gh puts it: -R, else GH_REPO, else the clone's origin.
         origin = subprocess.run(["git", "config", "remote.origin.url"], capture_output=True, text=True).stdout  # not rewritten by insteadOf
-        slug = re.search(r"github\.com[:/](.+?)(?:\.git)?$", origin.strip()).group(1)
+        slug = on or os.environ.get("GH_REPO") or re.search(r"github\.com[:/](.+?)(?:\.git)?$", origin.strip()).group(1)
         body = {"title": title, "body": ""}
         if pr:
             branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True).stdout.strip()

@@ -114,6 +114,116 @@ pub fn connect(state: &AppState, path: &str) -> Result<Repo, String> {
     Ok(repo)
 }
 
+/// A private mirror just added, and what the user should know about it (e.g. that the
+/// clone's own pre-push hook was left as it was, so the guard is not installed).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AddedMirror {
+    pub repo: Repo,
+    pub note: Option<String>,
+}
+
+/// Adds the private GitHub repository `input` (`owner/name` or its URL) as a mirror of
+/// `primary`: its items are listed with the primary's, and their work goes only to it (see
+/// `mirror`). Uses the clone's remote for it, adding one if there is none, and installs the
+/// pre-push guard. A public repository is refused.
+pub fn add_mirror(
+    state: &AppState,
+    primary: Option<Repo>,
+    input: &str,
+) -> Result<AddedMirror, String> {
+    let primary = primary.ok_or("no repository connected")?;
+    if primary.mirror_of.is_some() {
+        return Err("a mirror has no mirrors of its own".into());
+    }
+    let (owner, name) = crate::mirror::parse(input)?;
+    let (full_name, private) = github::repo_privacy(&owner, &name).map_err(|e| {
+        format!(
+            "could not look up {owner}/{name} on GitHub (does it exist, and may you see it?): {e}"
+        )
+    })?;
+    let (owner, name) = full_name
+        .split_once('/')
+        .map(|(o, n)| (o.to_owned(), n.to_owned()))
+        .unwrap_or((owner, name));
+    if owner.eq_ignore_ascii_case(&primary.owner) && name.eq_ignore_ascii_case(&primary.name) {
+        return Err(format!("{owner}/{name} is this repository itself"));
+    }
+    if !private {
+        return Err(format!(
+            "{owner}/{name} is public: a mirror must be private (its work is kept off {})",
+            primary.slug()
+        ));
+    }
+    let remote = crate::mirror::remote(&primary, &owner, &name)?;
+    let note = crate::mirror::install_guard(&primary.path)?;
+    let repo = state
+        .store
+        .add_mirror(&primary, &owner, &name, &remote, &primary.viewer)?;
+    state.events.inbox_changed(primary.id);
+    Ok(AddedMirror { repo, note })
+}
+
+/// Moves task `id` to the private mirror `to` of its repository: from now on its work goes
+/// only there (its branch and worktree are set up for that, and those its agent made), and
+/// its agent is restarted (resuming its conversation) with the mirror's setup. Not while the
+/// agent is in a turn. Returns a warning when the branch is on another repository already.
+pub fn move_task(state: &AppState, id: i64, to: i64) -> Result<Option<String>, String> {
+    let (item, repo) = item_repo(state, id)?;
+    let mirror = state.store.repo(to)?.ok_or("unknown repository")?;
+    if !item.is_task() {
+        return Err("only a task can be moved to a mirror".into());
+    }
+    if mirror.mirror_of != Some(repo.id) {
+        return Err(format!(
+            "{} is not a mirror of {}",
+            mirror.slug(),
+            repo.slug()
+        ));
+    }
+    if crate::lifecycle::busy(state, id) {
+        return Err("its agent is in the middle of a turn; let it finish first".into());
+    }
+    state.store.move_task(id, mirror.id)?;
+    let item = state.store.item(id)?;
+    let mut warning = None;
+    if let Some(dir) = item.worktree_path.as_deref().filter(|p| p.exists()) {
+        let branch = item.branch.as_deref();
+        if let Some(b) = branch {
+            let elsewhere: Vec<String> = git::git_str(
+                &repo.path,
+                &[
+                    "for-each-ref",
+                    "--format=%(refname:short)",
+                    &format!("refs/remotes/*/{b}"),
+                ],
+            )
+            .unwrap_or_default()
+            .lines()
+            .filter(|r| !r.starts_with(&format!("{}/", mirror.base_remote)))
+            .map(str::to_owned)
+            .collect();
+            if !elsewhere.is_empty() {
+                warning = Some(format!(
+                    "{b} is on {} already: moving the task does not take it back from there.",
+                    elsewhere.join(", ")
+                ));
+            }
+        }
+        keep_private(&mirror, &item, dir, branch)?;
+    }
+    for w in state.store.agent_worktrees(mirror.id, Some(id))? {
+        if w.path.exists()
+            && let Err(e) = keep_private(&mirror, &item, &w.path, w.branch.as_deref())
+        {
+            tracing::warn!("{}: {e}", w.path.display());
+        }
+    }
+    // Its agent starts again with GH_REPO and the mirror's note (`session_plan`).
+    state.terminals.close(&id.to_string());
+    state.events.inbox_changed(repo.id);
+    Ok(warning)
+}
+
 /// Clears worktree paths that no longer exist (e.g. removed outside Ariekei).
 pub fn reconcile(state: &AppState) -> Result<(), String> {
     for item in state
@@ -145,13 +255,18 @@ pub fn inbox(state: &AppState, repo: Option<Repo>) -> Result<Vec<Row>, String> {
     let Some(repo) = repo else {
         return Ok(vec![]);
     };
-    let rows = state
-        .store
-        .items(repo.id)?
-        .into_iter()
-        .filter(listed)
-        .filter_map(|item| row(state, &repo, item))
-        .collect();
+    // Its private mirrors' items are listed with its own.
+    let mut rows = vec![];
+    for repo in std::iter::once(repo.clone()).chain(state.store.mirrors(repo.id)?) {
+        rows.extend(
+            state
+                .store
+                .items(repo.id)?
+                .into_iter()
+                .filter(listed)
+                .filter_map(|item| row(state, &repo, item)),
+        );
+    }
     Ok(inbox::order(rows))
 }
 
@@ -179,6 +294,7 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             review_decision: None,
             unresolved_threads: 0,
             awaiting_reply: 0,
+            mirror: repo.namespace().map(str::to_owned),
             new_activity: false,
             agent,
             ready_for_review: false,
@@ -215,6 +331,7 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             review_decision: None,
             unresolved_threads: 0,
             awaiting_reply: 0,
+            mirror: repo.namespace().map(str::to_owned),
             new_activity: issue.latest_activity.unwrap_or_default() > seen,
             agent,
             ready_for_review: false,
@@ -251,6 +368,7 @@ fn row(state: &AppState, repo: &Repo, item: WorkItem) -> Option<Row> {
             review_decision: pr.review_decision.clone(),
             unresolved_threads: pr.unresolved_threads,
             awaiting_reply: pr.awaiting_reply,
+            mirror: repo.namespace().map(str::to_owned),
             new_activity: pr.latest_activity.clone().unwrap_or_default() > seen,
             agent,
             ready_for_review: false,
@@ -366,6 +484,9 @@ pub fn prepare(state: &AppState, id: i64) -> Result<Prepared, String> {
     } else {
         worktree::prepare(&repo, &summary(&item)?)?
     };
+    if repo.mirror_of.is_some() {
+        keep_private(&repo, &item, &prepared.path, Some(&prepared.branch))?;
+    }
     state.store.set_worktree(
         id,
         Some(&prepared.path),
@@ -384,6 +505,15 @@ pub fn prepare(state: &AppState, id: i64) -> Result<Prepared, String> {
 /// branch (`moved_to`): a start sends the agent no work, and the user may want to talk to it.
 pub fn session_plan(state: &AppState, data_dir: &Path, id: i64) -> Result<SessionPlan, String> {
     let (mut item, repo) = item_repo(state, id)?;
+    // A private mirror's agent: gh goes to the mirror, and it is told to keep the work there.
+    let private = repo.mirror_of.map(|primary| {
+        let primary = state.store.repo(primary).ok().flatten();
+        crate::mirror::note(&repo, primary.as_ref())
+    });
+    let env = match repo.mirror_of {
+        Some(_) => vec![("GH_REPO".to_owned(), repo.slug())],
+        None => vec![],
+    };
     // Hooks may never have said that it was prompted (hooks turned off, or another Ariekei's
     // settings file): a transcript on disk says so. Claude Code refuses to start a new
     // conversation under the id of one it saved.
@@ -399,7 +529,13 @@ pub fn session_plan(state: &AppState, data_dir: &Path, id: i64) -> Result<Sessio
         return Ok(SessionPlan {
             session_id,
             resume: true,
-            context_file: None,
+            // A resumed conversation has its context; a mirror's note is given every time
+            // (the item may have been moved to the mirror since).
+            context_file: private
+                .as_ref()
+                .map(|note| write_private_note(data_dir, &repo, note))
+                .transpose()?,
+            env,
         });
     }
     // Never prompted: reuse its id (nothing was saved under it), else start fresh.
@@ -415,21 +551,58 @@ pub fn session_plan(state: &AppState, data_dir: &Path, id: i64) -> Result<Sessio
     } else {
         write_context(data_dir, &repo, &item)
     };
-    let context_file = match written {
-        Ok(file) => Some(file),
-        Err(e) => {
+    let context_file = match (written, &private) {
+        (Ok(file), None) => Some(file),
+        (Ok(file), Some(note)) => {
+            let md = std::fs::read_to_string(&file).map_err(|e| e.to_string())?;
+            std::fs::write(&file, format!("{md}\n{note}")).map_err(|e| e.to_string())?;
+            Some(file)
+        }
+        (Err(e), private) => {
             tracing::warn!(
                 "{}: starting the agent without context: {e}",
                 item.short_name()
             );
-            None
+            private
+                .as_ref()
+                .map(|note| write_private_note(data_dir, &repo, note))
+                .transpose()?
         }
     };
     Ok(SessionPlan {
         session_id,
         resume: false,
         context_file,
+        env,
     })
+}
+
+/// A private mirror's note for its agents (`mirror::note`), as a context file of its own.
+fn write_private_note(data_dir: &Path, repo: &Repo, note: &str) -> Result<PathBuf, String> {
+    let dir = data_dir.join("context");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let file = dir.join(format!("{}-{}-private.md", repo.owner, repo.name));
+    std::fs::write(&file, note).map_err(|e| e.to_string())?;
+    Ok(file)
+}
+
+/// Sets up the checkout `dir` of a private mirror's item and its `branch` so that its work is
+/// pushed only to the mirror (a PR's to its head repository), and makes sure the clone has
+/// the pre-push guard (`mirror`).
+pub(crate) fn keep_private(
+    repo: &Repo,
+    item: &WorkItem,
+    dir: &Path,
+    branch: Option<&str>,
+) -> Result<(), String> {
+    if let Some(note) = crate::mirror::install_guard(&repo.path)? {
+        tracing::warn!("{}: {note}", repo.slug());
+    }
+    let allowed = match summary(item).ok().filter(|_| item.kind == "pr") {
+        Some(pr) if !pr.head_repo.is_empty() => format!("{}/{}", pr.head_owner, pr.head_repo),
+        _ => repo.slug(),
+    };
+    crate::mirror::mark(repo, dir, branch, &allowed)
 }
 
 /// The user wrote the PR (else they review someone else's).
@@ -858,10 +1031,10 @@ pub fn update_branch(state: &AppState, id: i64, rewrite: bool) -> Result<bool, S
     let dir = worktree_of(&item)?;
     let branch = item.branch.clone().unwrap_or_default();
     let pr = summary(&item)?;
-    let head = worktree::fetch_pr_head(&repo.path, &repo.base_remote, item.number, &pr.base_ref)?;
+    let head = worktree::fetch_pr_head(&repo, item.number, &pr.base_ref)?;
     let tip = format!("refs/heads/{branch}");
     // By the ref, not the commit: the branch's reflog then says it came from GitHub.
-    let pulled = worktree::pull_ref(item.number);
+    let pulled = worktree::pull_ref(&repo, item.number);
     if git::is_ancestor(&dir, &head, &tip) {
         return Ok(true);
     }
@@ -1142,7 +1315,7 @@ fn review(state: &AppState, id: i64) -> Result<Review, String> {
     let dir = review_dir(&item, &repo);
     let head = match &worktree {
         Some(w) => git::head(w)?,
-        None => git::git_str(&dir, &["rev-parse", &pull_ref(item.number)])
+        None => git::git_str(&dir, &["rev-parse", &pull_ref(&repo, item.number)])
             .map_err(|_| "the PR head is not fetched yet".to_owned())?,
     };
     let tracking = format!("{}/{}", repo.base_remote, base_ref);
@@ -1198,7 +1371,7 @@ pub fn review_fetch(state: &AppState, id: i64, force: bool) -> Result<bool, Stri
         .get(&key)
         .is_some_and(|at| at.elapsed() < BASE_FETCH_EVERY);
     let at = |r: &str| git::git_str(&repo.path, &["rev-parse", "--verify", "--quiet", r]).ok();
-    let head = (!worktree).then(|| pull_ref(item.number));
+    let head = (!worktree).then(|| pull_ref(&repo, item.number));
     let tracking = format!("refs/remotes/{}/{base}", repo.base_remote);
     let before = (head.as_deref().and_then(at), at(&tracking));
     let new_head = match &head {
@@ -1211,7 +1384,7 @@ pub fn review_fetch(state: &AppState, id: i64, force: bool) -> Result<bool, Stri
     if worktree {
         worktree::fetch(&repo.path, &repo.base_remote, &base)?;
     } else {
-        worktree::fetch_pr_head(&repo.path, &repo.base_remote, item.number, &base)?;
+        worktree::fetch_pr_head(&repo, item.number, &base)?;
     }
     FETCHED
         .lock()

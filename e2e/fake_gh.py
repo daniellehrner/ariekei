@@ -11,6 +11,8 @@ sent to GitHub (a DELETE too). Supports only the calls Ariekei makes.
 data.json: {"viewer": "me", "upstream": <path of the "GitHub" git repo, optional>,
             "default_branch": <name, default main>, "now": <GitHub's clock, RFC 3339, optional>,
             "full_name": <where owner/proj is now on GitHub, e.g. after a rename; null: deleted>,
+            "private": [<names of private repos of owner, e.g. a mirror "proj-sec">],
+            "public": [<names of other public repos of owner>],
             "prs": [{number, title, author, head_ref, head_owner (a fork; default owner), head_sha,
                      base_ref, state, requested (bool),
                      assigned (bool), reviewed (bool, by the viewer), draft (bool), decision, ci,
@@ -64,7 +66,7 @@ def head_sha(pr):
 
 def issue_summary(i):
     return {
-        "number": i["number"], "title": i["title"], "url": f"https://github.com/owner/proj/issues/{i['number']}",
+        "number": i["number"], "title": i["title"], "url": f"https://github.com/owner/{i.get('repo', 'proj')}/issues/{i['number']}",
         "state": i.get("state", "OPEN"), "updatedAt": "2026-10-13T09:00:00Z", "author": {"login": i["author"]},
         "labels": nodes([{"name": "bug"}]), "comments": {"totalCount": 0, "nodes": []},
         "createdAt": "2026-10-12T09:00:00Z", "body": i.get("body", ""), "bodyHTML": f"<p>{i.get('body', '')}</p>",
@@ -104,9 +106,9 @@ def updated_at(pr):
     return f"2026-10-13T{10 + minutes // 60:02d}:{minutes % 60:02d}:00Z"
 
 
-def head_repository(owner):
+def head_repository(owner, name="proj"):
     """The PR's head repository: the base repo, or a fork of it ("head_owner")."""
-    return {"name": "proj", "owner": {"login": owner}, "sshUrl": f"git@github.com:{owner}/proj.git", "url": f"https://github.com/{owner}/proj"}
+    return {"name": name, "owner": {"login": owner}, "sshUrl": f"git@github.com:{owner}/{name}.git", "url": f"https://github.com/{owner}/{name}"}
 
 
 def actor(login):
@@ -139,11 +141,11 @@ def thread_comments(t):
 def summary(pr):
     comments, threads = activity(pr)
     return {
-        "number": pr["number"], "title": pr["title"], "url": f"https://github.com/owner/proj/pull/{pr['number']}",
+        "number": pr["number"], "title": pr["title"], "url": f"https://github.com/owner/{pr.get('repo', 'proj')}/pull/{pr['number']}",
         "state": pr.get("state", "OPEN"), "isDraft": pr.get("draft", False), "updatedAt": updated_at(pr),
         "author": {"login": pr["author"]}, "headRefName": pr["head_ref"], "headRefOid": head_sha(pr),
         "baseRefName": pr["base_ref"], "reviewDecision": pr.get("decision", "REVIEW_REQUIRED"),
-        "headRepository": head_repository(pr.get("head_owner", "owner")),
+        "headRepository": head_repository(pr.get("head_owner", "owner"), pr.get("repo", "proj")),
         "reviews": nodes([]), "comments": comments, "reviewThreads": threads,
         "commits": checks(pr),
     }
@@ -325,16 +327,19 @@ def main(argv):
         record({"post": path, "body": body})
         # PRs and issues share their numbers, as on GitHub.
         number = max([i["number"] for i in DATA["prs"] + DATA.get("issues", [])] + [99]) + 1
+        in_repo = re.match(r"/?repos/[^/]+/([^/]+)/", path)
+        name = in_repo.group(1) if in_repo else "proj"
+        filed = {} if name == "proj" else {"repo": name}
         if path.endswith("/issues"):
-            DATA.setdefault("issues", []).append({"number": number, "title": body["title"], "author": ME, "body": body.get("body", "")})
+            DATA.setdefault("issues", []).append({"number": number, "title": body["title"], "author": ME, "body": body.get("body", ""), **filed})
             save()
-            print(json.dumps({"number": number, "html_url": f"https://github.com/owner/proj/issues/{number}"}))
+            print(json.dumps({"number": number, "html_url": f"https://github.com/owner/{name}/issues/{number}"}))
             return 0
         if path.endswith("/pulls"):
             DATA["prs"].append({"number": number, "title": body["title"], "author": ME, "head_ref": body["head"].split(":")[-1],
-                                "base_ref": body["base"], "state": "OPEN", "body_html": body.get("body", "")})
+                                "base_ref": body["base"], "state": "OPEN", "body_html": body.get("body", ""), **filed})
             save()
-            print(json.dumps({"number": number, "html_url": f"https://github.com/owner/proj/pull/{number}"}))
+            print(json.dumps({"number": number, "html_url": f"https://github.com/owner/{name}/pull/{number}"}))
             return 0
         # A review: one made without an event is pending until .../reviews/<id>/events.
         if path.endswith("/reviews"):
@@ -356,6 +361,14 @@ def main(argv):
             return 0
         print("gh: Not Found (HTTP 404)", file=sys.stderr)
         return 1
+    if slug and argv[2:] == ["--jq", "[.full_name, .private] | @tsv"]:
+        owner, name = slug.groups()
+        private = DATA.get("private", [])
+        if owner != "owner" or name not in ["proj"] + private + DATA.get("public", []):
+            print("gh: Not Found (HTTP 404)", file=sys.stderr)
+            return 1
+        print(f"owner/{name}\t{'true' if name in private else 'false'}")
+        return 0
     if argv[0] == "api" and "/actions/jobs/" in argv[1]:
         return 0
     print(f"fake gh: unsupported call {argv}", file=sys.stderr)

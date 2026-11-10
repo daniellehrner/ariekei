@@ -13,7 +13,8 @@
   import StarToggle from "./controls/StarToggle.svelte";
   import StatusDot from "./controls/StatusDot.svelte";
   import { ATTENTION_LABEL, attentionKind } from "./lib/attention";
-  import { api, shortName, type Repo, type Row } from "./lib/api";
+  import Segmented from "./controls/Segmented.svelte";
+  import { api, shortName, type Repo, type RepoView, type Row } from "./lib/api";
   import { SECTIONS, bySection, readyToMerge } from "./lib/inboxSections";
   import { browser } from "./lib/layout.svelte";
 
@@ -32,9 +33,10 @@
     onswitch,
     onconnect,
     onremoved,
+    onmirrors,
     creating = $bindable(false),
   }: {
-    repo: Repo;
+    repo: RepoView;
     rows: Row[];
     /// The first Inbox load finished (until then: a skeleton).
     loaded: boolean;
@@ -54,6 +56,8 @@
     onconnect: () => void;
     /// This window's repo was removed from Ariekei.
     onremoved: () => void;
+    /// A private mirror of the repo was added or removed.
+    onmirrors: () => void;
     /// The New task form is open (Ctrl+N opens it too, see App).
     creating?: boolean;
   } = $props();
@@ -116,6 +120,14 @@
   let taskNotes = $state("");
   // An existing branch to work on (e.g. owner:branch on a fork); empty for a new one.
   let taskBranch = $state("");
+  // Where the task's work goes: the repo, or one of its private mirrors (a repo id).
+  let taskRepo = $state("");
+  const taskRepos = $derived(
+    repo.mirrors.length ? [repo, ...repo.mirrors].map((r) => ({ value: String(r.id), label: r.name })) : [],
+  );
+  $effect(() => {
+    if (!taskRepos.some((o) => o.value === taskRepo)) taskRepo = String(repo.id);
+  });
   let starting = $state(false);
   let taskError: string | null = $state(null);
   let newTaskButton: HTMLElement | undefined = $state();
@@ -138,7 +150,8 @@
     starting = true;
     taskError = null;
     try {
-      const id = await api.createTask(taskTitle, taskNotes, taskBranch);
+      const target = taskRepos.length && taskRepo ? Number(taskRepo) : null;
+      const id = await api.createTask(taskTitle, taskNotes, taskBranch, target === repo.id ? null : target);
       closeForm();
       taskTitle = taskNotes = taskBranch = "";
       if (folded.includes("tasks")) fold("tasks");
@@ -178,6 +191,9 @@
           {/if}
         </span>
         <span class="line2">
+          {#if row.mirror}
+            <span class="mirror" title="Of the private mirror {row.mirror}: its work is pushed only there" data-mirror-tag={row.mirror}><Icon name="lock" size={12} />{row.mirror}</span>
+          {/if}
           {#if row.kind === "task"}
             <span class="faint shrink" title={row.branch ?? undefined}>task{row.branch ? ` · ${row.branch}` : ""}</span>
           {:else}
@@ -230,7 +246,7 @@
 {:else}
 <aside class="inbox" aria-label="Inbox">
   <header>
-    <RepoMenu {repo} {onswitch} {onconnect} {onremoved} />
+    <RepoMenu {repo} {onswitch} {onconnect} {onremoved} {onmirrors} />
     <span class="new-task-button" bind:this={newTaskButton}>
       <IconButton icon="plus" label="New task — work with no PR or issue yet (Ctrl+N)" size={28} onclick={newTask}
         pressed={creating} aria-expanded={creating} data-new-task />
@@ -254,6 +270,12 @@
         <span class="form-title">New task</span>
         <Kbd key="Esc" />
       </div>
+      {#if taskRepos.length}
+        <div class="task-repo">
+          <span class="field-label">Repository</span>
+          <Segmented options={taskRepos} bind:value={taskRepo} label="Repository of the task" data-task-repo />
+        </div>
+      {/if}
       <label>
         <span class="field-label">Title</span>
         <!-- svelte-ignore a11y_autofocus -->
@@ -443,6 +465,8 @@
   .warn { color: var(--warn); }
   .faint { color: var(--text-faint); }
   .threads { display: inline-flex; align-items: center; gap: var(--sp-1); }
+  .mirror { display: inline-flex; align-items: center; gap: var(--sp-1); color: var(--warn); font-weight: var(--fw-medium); }
+  .task-repo { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); }
   .reply { display: inline-flex; align-items: center; gap: var(--sp-1); color: var(--gh-strong); font-weight: var(--fw-semibold); }
   .attention.needs-you { color: var(--agent-strong); }
   .attention.blocked, .attention.ci-failing { color: var(--bad); }

@@ -54,8 +54,10 @@ told apart in grey-scale and with colour blindness:
   are items like any other. Empty sections are left out; an empty Inbox says how to fill it.
 - **Section headers** are light dividers (24 px, `label-caps`, the count in faint mono right
   after the label) and stay at the top while their section scrolls.
-- **Rows** have two lines. The dot slot is empty when there is no agent. Issues say `issue` on
-  line 2; Approved says `ready to merge` (unless a draft or CI holds it up). What waits for the
+- **Rows** have two lines. The dot slot is empty when there is no agent. A private mirror's
+  items start line 2 with a lock and the mirror's name in `--warn` (work that must stay
+  private, not an alarm); the work item's meta line says `private mirror <name>` the same way.
+  Issues say `issue` on line 2; Approved says `ready to merge` (unless a draft or CI holds it up). What waits for the
   user's reply is a bold `--gh-strong` reply arrow with its count, before the unresolved
   threads; its attention pip is a violet diamond with a halo, as the agent asking is a copper
   circle with one. It wins the label over CI failing, whose ✗ stays on the row. A task's line 2 is `task · <branch>` or `no PR or issue

@@ -136,10 +136,34 @@ pub fn repo_of(state: &AppState, label: &str) -> Result<Option<Repo>, String> {
     }
 }
 
+/// The repo window `label` acts on: `repo` when given (the repo it shows or one of that
+/// repo's private mirrors, whose items it lists too), else the one it shows.
+pub fn repo_or_mirror(
+    state: &AppState,
+    label: &str,
+    repo: Option<i64>,
+) -> Result<Option<Repo>, String> {
+    let shown = repo_of(state, label)?;
+    let Some(id) = repo else {
+        return Ok(shown);
+    };
+    let target = state.store.repo(id)?.ok_or("unknown repository")?;
+    match shown {
+        Some(s) if s.id == target.id || target.mirror_of == Some(s.id) => Ok(Some(target)),
+        _ => Err("that repository is not shown in this window".into()),
+    }
+}
+
 /// Shows `repo` in window `label`, unless another window already shows it: then that one
 /// is focused (and `label` closed if it was still empty). Returns whether `label` shows it.
 pub fn show(app: &AppHandle, label: &str, repo: &Repo) -> Result<bool, String> {
     let state = app.state::<AppState>();
+    // A private mirror is shown with its repo.
+    let primary = match repo.mirror_of {
+        Some(id) => Some(state.store.repo(id)?.ok_or("unknown repository")?),
+        None => None,
+    };
+    let repo = primary.as_ref().unwrap_or(repo);
     if let Some(other) = state.windows.window_of(repo.id).filter(|o| o != label) {
         focus(app, &other);
         if state.windows.repo_of(label).is_none()
@@ -183,6 +207,12 @@ fn focus(app: &AppHandle, label: &str) {
 /// window that already shows it.
 pub fn open(app: &AppHandle, repo: Option<&Repo>) -> Result<(), String> {
     let state = app.state::<AppState>();
+    // A private mirror is shown with its repo.
+    let primary = match repo.and_then(|r| r.mirror_of) {
+        Some(id) => Some(state.store.repo(id)?.ok_or("unknown repository")?),
+        None => None,
+    };
+    let repo = primary.as_ref().or(repo);
     if let Some(other) = repo.and_then(|r| state.windows.window_of(r.id)) {
         focus(app, &other);
         return Ok(());

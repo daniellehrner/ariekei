@@ -257,8 +257,19 @@ pub struct HookServer {
 impl HookServer {
     /// Binds a localhost port, writes the hooks settings file into `data_dir` and serves
     /// hook requests on a background thread. Each event goes to `on_event`.
+    #[cfg(test)]
     pub fn start(
         data_dir: &Path,
+        on_event: impl Fn(HookEvent) + Send + 'static,
+    ) -> std::io::Result<Self> {
+        Self::start_deciding(data_dir, |_| None, on_event)
+    }
+
+    /// `start`, where `decide` answers each event first: the JSON body Claude Code gets
+    /// (e.g. a PreToolUse refusal), or None for no decision (`{}`).
+    pub fn start_deciding(
+        data_dir: &Path,
+        decide: impl Fn(&HookEvent) -> Option<serde_json::Value> + Send + 'static,
         on_event: impl Fn(HookEvent) + Send + 'static,
     ) -> std::io::Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
@@ -273,8 +284,15 @@ impl HookServer {
         std::thread::Builder::new()
             .name("hook-server".into())
             .spawn(move || {
+                // A bug in deciding must not end the server: then there is no decision.
+                let decide = |e: &HookEvent| {
+                    catch_unwind(AssertUnwindSafe(|| decide(e))).unwrap_or_else(|_| {
+                        tracing::error!("deciding on a {} hook event failed", e.hook_event_name);
+                        None
+                    })
+                };
                 for stream in listener.incoming().flatten() {
-                    match handle(stream, &path) {
+                    match handle(stream, &path, &decide) {
                         // A bug in handling one event must not end the server, and with it
                         // every agent's status.
                         Ok(Some(event)) => {
@@ -365,20 +383,59 @@ pub(crate) fn respond(
 
 /// Reads one HTTP request, answers it right away, and returns the parsed event.
 /// Requests for any other path (wrong token) are rejected with 404.
-fn handle(stream: TcpStream, expected_path: &str) -> std::io::Result<Option<HookEvent>> {
+fn handle(
+    stream: TcpStream,
+    expected_path: &str,
+    decide: &dyn Fn(&HookEvent) -> Option<serde_json::Value>,
+) -> std::io::Result<Option<HookEvent>> {
     let request = read_request(&stream)?;
     let accepted = request.method == "POST" && request.path == expected_path;
     if !accepted {
         respond(&stream, "404 Not Found", None)?;
         return Ok(None);
     }
-    respond(&stream, "200 OK", Some(b"{}"))?;
-    Ok(serde_json::from_slice(&request.body)
+    let event = serde_json::from_slice(&request.body)
         .ok()
         .map(|event| HookEvent {
             terminal: request.terminal,
             ..event
-        }))
+        });
+    let answer = event.as_ref().and_then(decide);
+    let body = answer.map_or_else(|| b"{}".to_vec(), |a| a.to_string().into_bytes());
+    respond(&stream, "200 OK", Some(&body))?;
+    Ok(event)
+}
+
+/// What Claude Code gets for a PreToolUse event (`HookServer::start_deciding`): a refusal of a
+/// shell command of a private mirror's agent that would take its work elsewhere
+/// (`mirror::refusal`), with the reason, which the agent sees.
+pub fn decide(app: &AppHandle, event: &HookEvent) -> Option<serde_json::Value> {
+    if event.hook_event_name != "PreToolUse" || event.tool_name.as_deref() != Some("Bash") {
+        return None;
+    }
+    let state = app.try_state::<crate::AppState>()?;
+    let command = event.tool_input.as_ref()?["command"].as_str()?;
+    let key = state
+        .terminals
+        .key_for(event.terminal.as_deref(), &event.session_id)?;
+    let id: i64 = key.parse().ok()?;
+    let item = state.store.item(id).ok()?;
+    let repo = state.store.repo(item.repo_id).ok()??;
+    repo.mirror_of?;
+    let reason = crate::mirror::refusal(command, &repo.slug())?;
+    tracing::info!("{}: refused `{command}`: {reason}", item.short_name());
+    Some(refusal_answer(&reason))
+}
+
+/// Claude Code's PreToolUse answer that refuses the tool call, telling the agent why.
+fn refusal_answer(reason: &str) -> serde_json::Value {
+    serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    })
 }
 
 /// Routes a hook event to its work item and updates the item's status. What a task's agent
@@ -651,6 +708,56 @@ mod tests {
             rx.try_recv().is_err(),
             "the rejected request must not produce an event"
         );
+    }
+
+    #[test]
+    fn a_decision_is_the_answer_to_its_event() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let server = HookServer::start_deciding(
+            dir.path(),
+            |e| {
+                let command = e.tool_input.as_ref()?["command"].as_str()?;
+                crate::mirror::refusal(command, "o/sec").map(|r| refusal_answer(&r))
+            },
+            move |e| tx.send(e).unwrap(),
+        )
+        .unwrap();
+        let settings: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&server.settings_path).unwrap()).unwrap();
+        let url = settings["hooks"]["PreToolUse"][0]["hooks"][0]["url"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let (port, path) = url
+            .trim_start_matches("http://127.0.0.1:")
+            .split_once('/')
+            .unwrap();
+        let (port, path) = (port.parse().unwrap(), format!("/{path}"));
+        let call = |command: &str| {
+            let body = serde_json::json!({
+                "hook_event_name": "PreToolUse", "session_id": "s", "tool_name": "Bash",
+                "tool_input": { "command": command },
+            });
+            let answer = post(port, &path, &body.to_string());
+            let json = answer.split("\r\n\r\n").nth(1).unwrap().to_owned();
+            serde_json::from_str::<serde_json::Value>(&json).unwrap()
+        };
+        let refused = call("gh pr create -R o/proj");
+        assert_eq!(
+            refused["hookSpecificOutput"]["permissionDecision"], "deny",
+            "{refused}"
+        );
+        assert!(
+            refused["hookSpecificOutput"]["permissionDecisionReason"]
+                .as_str()
+                .unwrap()
+                .contains("o/sec")
+        );
+        assert_eq!(call("gh pr create"), serde_json::json!({}));
+        // Decided or not, the event is handled as ever.
+        assert!(rx.recv_timeout(Duration::from_secs(5)).is_ok());
+        assert!(rx.recv_timeout(Duration::from_secs(5)).is_ok());
     }
 
     #[test]

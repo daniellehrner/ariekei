@@ -105,10 +105,18 @@ fn run(app: AppHandle, wake: Receiver<()>) {
         let full = asked || count.is_multiple_of(FULL_EVERY);
         count = count.wrapping_add(1);
         let mut wait = interval();
-        for id in state.windows.open_repos() {
-            let Ok(Some(repo)) = state.store.repo(id) else {
-                continue;
-            };
+        // The repos shown, each followed by its private mirrors (listed in its Inbox).
+        let repos = state.windows.open_repos().into_iter().flat_map(|id| {
+            let mirrors = state.store.mirrors(id).unwrap_or_default();
+            state
+                .store
+                .repo(id)
+                .ok()
+                .flatten()
+                .into_iter()
+                .chain(mirrors)
+        });
+        for repo in repos.collect::<Vec<_>>() {
             match poll_following_moves(&state, &repo, full) {
                 Ok(()) => state.events.inbox_changed(repo.id),
                 Err(error) => {

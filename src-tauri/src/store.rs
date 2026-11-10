@@ -184,6 +184,29 @@ ALTER TABLE review_drafts ADD COLUMN reply_to TEXT;
 ALTER TABLE review_drafts ADD COLUMN reply_to_author TEXT;
 ALTER TABLE review_drafts ADD COLUMN reply_to_text TEXT;
 "#,
+    r#"
+-- A private mirror: another GitHub repository in the same clone (e.g. a private copy used for
+-- security fixes), shown in its primary's Inbox; its work never goes to the primary. A clone
+-- has one primary row and any number of mirrors, so `path` is unique among primaries only.
+-- (Rebuilt: SQLite cannot drop the old UNIQUE. Migrations run with foreign keys off.)
+CREATE TABLE repos_new (
+    id INTEGER PRIMARY KEY,
+    path TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    name TEXT NOT NULL,
+    -- The git remote that points at owner/name (PR bases live there).
+    base_remote TEXT NOT NULL,
+    viewer TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    mirror_of INTEGER REFERENCES repos(id) ON DELETE CASCADE
+);
+INSERT INTO repos_new (id, path, owner, name, base_remote, viewer, created_at)
+    SELECT id, path, owner, name, base_remote, viewer, created_at FROM repos;
+DROP TABLE repos;
+ALTER TABLE repos_new RENAME TO repos;
+CREATE UNIQUE INDEX repos_path ON repos(path) WHERE mirror_of IS NULL;
+CREATE UNIQUE INDEX repos_mirror ON repos(mirror_of, owner, name) WHERE mirror_of IS NOT NULL;
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -195,6 +218,21 @@ pub struct Repo {
     pub name: String,
     pub base_remote: String,
     pub viewer: String,
+    /// A private mirror: the repo (same clone) whose Inbox shows it. Its work stays on it.
+    pub mirror_of: Option<i64>,
+}
+
+impl Repo {
+    /// `owner/name`.
+    pub fn slug(&self) -> String {
+        format!("{}/{}", self.owner, self.name)
+    }
+
+    /// What a mirror's items put in front of their branch and folder names, so they never
+    /// meet the primary's (the numbers of both start at 1): its name. None for a primary.
+    pub fn namespace(&self) -> Option<&str> {
+        self.mirror_of.map(|_| self.name.as_str())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -416,7 +454,10 @@ impl Store {
     }
 
     fn init(mut conn: Connection) -> Result<Self, String> {
-        conn.pragma_update(None, "foreign_keys", true)
+        // Foreign keys go on after the migrations: a table rebuilt by one (create, copy, drop,
+        // rename) would otherwise take the rows that reference it along when it is dropped.
+        // The check after them finds any reference a migration broke.
+        conn.pragma_update(None, "foreign_keys", false)
             .map_err(err)?;
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(err)?;
@@ -430,6 +471,15 @@ impl Store {
                 .map_err(err)?;
             tx.commit().map_err(err)?;
         }
+        let broken: Option<String> = conn
+            .query_row("PRAGMA foreign_key_check", [], |r| r.get(0))
+            .optional()
+            .map_err(err)?;
+        if let Some(table) = broken {
+            return Err(format!("the database has broken references in {table}"));
+        }
+        conn.pragma_update(None, "foreign_keys", true)
+            .map_err(err)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -448,13 +498,14 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO repos (path, owner, name, base_remote, viewer) VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT (path) DO UPDATE SET owner = ?2, name = ?3, base_remote = ?4, viewer = ?5",
+             ON CONFLICT (path) WHERE mirror_of IS NULL
+             DO UPDATE SET owner = ?2, name = ?3, base_remote = ?4, viewer = ?5",
             params![path_str(path), owner, name, base_remote, viewer],
         )
         .map_err(err)?;
         let id = conn
             .query_row(
-                "SELECT id FROM repos WHERE path = ?1",
+                "SELECT id FROM repos WHERE path = ?1 AND mirror_of IS NULL",
                 [path_str(path)],
                 |r| r.get(0),
             )
@@ -466,13 +517,90 @@ impl Store {
             name: name.into(),
             base_remote: base_remote.into(),
             viewer: viewer.into(),
+            mirror_of: None,
         })
+    }
+
+    /// Adds `owner/name` as a private mirror of `primary`, in its clone (again: updates the
+    /// remote and viewer).
+    pub fn add_mirror(
+        &self,
+        primary: &Repo,
+        owner: &str,
+        name: &str,
+        base_remote: &str,
+        viewer: &str,
+    ) -> Result<Repo, String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO repos (path, owner, name, base_remote, viewer, mirror_of)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT (mirror_of, owner, name) WHERE mirror_of IS NOT NULL
+             DO UPDATE SET base_remote = ?4, viewer = ?5",
+            params![
+                path_str(&primary.path),
+                owner,
+                name,
+                base_remote,
+                viewer,
+                primary.id
+            ],
+        )
+        .map_err(err)?;
+        let id = conn
+            .query_row(
+                "SELECT id FROM repos WHERE mirror_of = ?1 AND owner = ?2 AND name = ?3",
+                params![primary.id, owner, name],
+                |r| r.get(0),
+            )
+            .map_err(err)?;
+        Ok(Repo {
+            id,
+            path: primary.path.clone(),
+            owner: owner.into(),
+            name: name.into(),
+            base_remote: base_remote.into(),
+            viewer: viewer.into(),
+            mirror_of: Some(primary.id),
+        })
+    }
+
+    /// The private mirrors of repo `id`, by name.
+    pub fn mirrors(&self, id: i64) -> Result<Vec<Repo>, String> {
+        self.repo_ids(
+            "SELECT id FROM repos WHERE mirror_of = ?1 ORDER BY owner, name",
+            id,
+        )
+    }
+
+    /// Every repo in the clone of repo `id` (its primary and the mirrors), primary first.
+    pub fn clone_repos(&self, id: i64) -> Result<Vec<Repo>, String> {
+        self.repo_ids(
+            "SELECT r.id FROM repos r, repos me
+             WHERE me.id = ?1 AND r.path = me.path
+             ORDER BY r.mirror_of IS NOT NULL, r.owner, r.name",
+            id,
+        )
+    }
+
+    fn repo_ids(&self, sql: &str, id: i64) -> Result<Vec<Repo>, String> {
+        let ids: Vec<i64> = {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = conn.prepare(sql).map_err(err)?;
+            stmt.query_map([id], |r| r.get(0))
+                .map_err(err)?
+                .collect::<Result<_, _>>()
+                .map_err(err)?
+        };
+        ids.into_iter()
+            .filter_map(|id| self.repo(id).transpose())
+            .collect()
     }
 
     pub fn repo(&self, id: i64) -> Result<Option<Repo>, String> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT id, path, owner, name, base_remote, viewer FROM repos WHERE id = ?1",
+            "SELECT id, path, owner, name, base_remote, viewer, mirror_of FROM repos WHERE id = ?1",
             [id],
             |r| {
                 Ok(Repo {
@@ -482,6 +610,7 @@ impl Store {
                     name: r.get(3)?,
                     base_remote: r.get(4)?,
                     viewer: r.get(5)?,
+                    mirror_of: r.get(6)?,
                 })
             },
         )
@@ -771,9 +900,11 @@ impl Store {
         taken: impl Fn(i64) -> bool,
     ) -> Result<i64, String> {
         let conn = self.conn.lock().unwrap();
+        // Numbered across the clone: a mirror's tasks are listed with its primary's.
         let mut number: i64 = conn
             .query_row(
-                "SELECT COALESCE(MIN(number), 0) - 1 FROM work_items WHERE repo_id = ?1 AND number < 0",
+                "SELECT COALESCE(MIN(w.number), 0) - 1 FROM work_items w JOIN repos r ON r.id = w.repo_id
+                 WHERE r.path = (SELECT path FROM repos WHERE id = ?1) AND w.number < 0",
                 [repo_id],
                 |r| r.get(0),
             )
@@ -791,6 +922,12 @@ impl Store {
         )
         .map_err(err)?;
         Ok(conn.last_insert_rowid())
+    }
+
+    /// Task `id` belongs to repo `repo_id` (in the same clone) from now on. Its number stays:
+    /// task numbers are shared across a clone.
+    pub fn move_task(&self, id: i64, repo_id: i64) -> Result<(), String> {
+        self.update(id, "repo_id = ?2", repo_id)
     }
 
     /// Keeps how PR or issue `id` came about, unless it knows already.
@@ -1180,6 +1317,63 @@ mod tests {
             (again.id, again.base_remote.as_str()),
             (repo.id, "upstream")
         );
+    }
+
+    #[test]
+    fn a_mirror_shares_its_primarys_clone_and_task_numbers() {
+        let (store, repo) = store_with_repo();
+        let mirror = store
+            .add_mirror(&repo, "besu-eth", "sec-besu", "sec-besu", "me")
+            .unwrap();
+        assert_eq!(
+            (mirror.path.as_path(), mirror.mirror_of, mirror.namespace()),
+            (repo.path.as_path(), Some(repo.id), Some("sec-besu"))
+        );
+        assert_eq!(repo.namespace(), None);
+        // Adding it again updates it; reconnecting the clone keeps the primary.
+        let again = store
+            .add_mirror(&repo, "besu-eth", "sec-besu", "sec", "me")
+            .unwrap();
+        assert_eq!((again.id, again.base_remote.as_str()), (mirror.id, "sec"));
+        let primary = store
+            .add_repo(&repo.path, "besu-eth", "besu", "origin", "me")
+            .unwrap();
+        assert_eq!(primary.id, repo.id);
+        assert_eq!(
+            store.mirrors(repo.id).unwrap(),
+            std::slice::from_ref(&again)
+        );
+        assert_eq!(
+            store.clone_repos(again.id).unwrap(),
+            [repo.clone(), again.clone()]
+        );
+
+        // T1 in the primary, T2 in the mirror, T3 again in the primary.
+        let task = |repo: &Repo| {
+            let id = store
+                .create_task(repo.id, "t", "", None, |_| false)
+                .unwrap();
+            store.item(id).unwrap()
+        };
+        assert_eq!(
+            [task(&repo).number, task(&again).number, task(&repo).number],
+            [-1, -2, -3]
+        );
+        let t1 = store.items(repo.id).unwrap()[0].id;
+        store.move_task(t1, again.id).unwrap();
+        assert_eq!(
+            (
+                store.item(t1).unwrap().repo_id,
+                store.item(t1).unwrap().number
+            ),
+            (again.id, -1)
+        );
+
+        // Foreign keys hold after the migrations: removing the primary takes its mirror and
+        // their items along.
+        store.delete_repo(repo.id).unwrap();
+        assert_eq!(store.repo(again.id).unwrap(), None);
+        assert_eq!(store.items(again.id).unwrap(), []);
     }
 
     #[test]

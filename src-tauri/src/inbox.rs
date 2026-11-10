@@ -30,6 +30,8 @@ pub struct Row {
     /// Review threads and conversations where someone waits for the user's reply
     /// (`github::PrSummary::awaiting_reply`).
     pub awaiting_reply: i64,
+    /// The private mirror the item is of (its name, e.g. `sec-besu`); None for the repo's own.
+    pub mirror: Option<String>,
     /// Reviews or comments by others since the user last looked at the item.
     pub new_activity: bool,
     pub agent: Option<AgentStatus>,
@@ -136,6 +138,7 @@ mod tests {
             review_decision: None,
             unresolved_threads: 0,
             awaiting_reply: 0,
+            mirror: None,
             new_activity: false,
             agent: None,
             ready_for_review: false,

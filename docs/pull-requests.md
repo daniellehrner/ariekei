@@ -7,7 +7,10 @@ tasks and cleanup: [lifecycle.md](lifecycle.md). The review view in detail:
 ## What it does
 
 - **Connect a repo:** point Ariekei at a local clone. It finds the GitHub remote (`origin`, else
-  `upstream`, else any GitHub remote) and uses your `gh` login.
+  `upstream`, else any GitHub remote) and uses your `gh` login. A second, private GitHub repo in
+  the same clone (a copy for security fixes) can be added as a **private mirror**: a `repos` row
+  of its own (`mirror_of` the primary), polled after it and listed in its Inbox, whose items'
+  branches push only to it (see the manual's "A private mirror").
 - **Inbox:** your PRs and issues, polled from GitHub every 60 s (↻ refreshes now), in sections by
   your role (see [design.md](design.md#the-inbox)), and within a section by what needs you:
   agent waiting for permission → finished but cleanup blocked → waiting for your reply → CI

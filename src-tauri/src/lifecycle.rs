@@ -57,7 +57,7 @@ pub fn blockers(repo: &Repo, item: &WorkItem, prs: &[i64]) -> Vec<String> {
 
 /// Fetches GitHub's copies of the heads of `prs` (see `blockers`); `whose`: for the log.
 pub(crate) fn fetch_heads(repo: &Repo, prs: &[i64], whose: &str) {
-    if let Err(e) = worktree::fetch_pull_heads(&repo.path, &repo.base_remote, prs) {
+    if let Err(e) = worktree::fetch_pull_heads(repo, prs) {
         tracing::warn!("{whose}: could not fetch its PR heads: {e}");
     }
 }
@@ -141,7 +141,12 @@ pub fn not_on_github(
         .unwrap_or_default();
     let mut args = vec!["log", "--format=%h %s"];
     args.extend(tips);
-    args.extend(["--not", "--remotes", "--glob=refs/ariekei/pull/*"]);
+    args.extend([
+        "--not",
+        "--remotes",
+        "--glob=refs/ariekei/pull/*",
+        "--glob=refs/ariekei/*/pull/*",
+    ]);
     args.extend(fetched.iter().map(String::as_str));
     args.extend(kept);
     let log = git::git_str(dir, &args)?;
@@ -315,7 +320,7 @@ fn remove(
         removed.push("the Claude session transcript".to_owned());
     }
     if !item.is_task() {
-        let name = worktree::pull_ref(item.number);
+        let name = worktree::pull_ref(repo, item.number);
         if git::commit_exists(&repo.path, &name)
             && git(&repo.path, &["update-ref", "-d", &name]).is_ok()
         {
@@ -374,28 +379,45 @@ fn remove_contexts(state: &AppState, repo: &Repo, item: &WorkItem) {
     }
 }
 
-/// The worktrees Ariekei made for repo `id` that removing it from Ariekei leaves on disk.
+/// Repo `id` and its private mirrors, which go with it.
+fn with_mirrors(state: &AppState, id: i64) -> Result<Vec<Repo>, String> {
+    let repo = state.store.repo(id)?.ok_or("unknown repository")?;
+    let mirrors = state.store.mirrors(id)?;
+    Ok(std::iter::once(repo).chain(mirrors).collect())
+}
+
+/// The worktrees Ariekei made for repo `id` (and its mirrors) that removing it from Ariekei
+/// leaves on disk.
 pub fn repo_leftovers(state: &AppState, id: i64) -> Result<Vec<String>, String> {
-    Ok(state
-        .store
-        .items(id)?
-        .into_iter()
-        .filter(|item| item.worktree_created)
-        .filter_map(|item| item.worktree_path.filter(|p| p.exists()))
-        .map(|p| p.display().to_string())
-        .collect())
+    let mut left = vec![];
+    for repo in with_mirrors(state, id)? {
+        left.extend(
+            state
+                .store
+                .items(repo.id)?
+                .into_iter()
+                .filter(|item| item.worktree_created)
+                .filter_map(|item| item.worktree_path.filter(|p| p.exists()))
+                .map(|p| p.display().to_string()),
+        );
+    }
+    Ok(left)
 }
 
 /// Forgets repo `id`: its work items, stars, review drafts and context files, after ending
 /// its idle agents. Nothing on disk is touched: the clone, its worktrees and branches, and
 /// the agents' Claude Code sessions stay. Refused while one of its agents is in a turn.
 pub fn remove_repo(state: &AppState, id: i64) -> Result<(), String> {
-    let repo = state.store.repo(id)?.ok_or("unknown repository")?;
-    let items = state.store.items(id)?;
+    // Its private mirrors go with it (the store deletes them too).
+    let repos = with_mirrors(state, id)?;
+    let mut items = vec![];
+    for repo in &repos {
+        items.extend(state.store.items(repo.id)?.into_iter().map(|i| (repo, i)));
+    }
     let busy: Vec<String> = items
         .iter()
-        .filter(|item| busy(state, item.id))
-        .map(|item| item.title().to_owned())
+        .filter(|(_, item)| busy(state, item.id))
+        .map(|(_, item)| item.title().to_owned())
         .collect();
     if !busy.is_empty() {
         return Err(format!(
@@ -403,9 +425,17 @@ pub fn remove_repo(state: &AppState, id: i64) -> Result<(), String> {
             busy.join(", ")
         ));
     }
-    for item in &items {
+    for (repo, item) in &items {
         state.terminals.close(&item.id.to_string());
-        remove_contexts(state, &repo, item);
+        remove_contexts(state, repo, item);
+    }
+    for repo in repos.iter().filter(|r| r.mirror_of.is_some()) {
+        let _ = std::fs::remove_file(
+            state
+                .data_dir
+                .join("context")
+                .join(format!("{}-{}-private.md", repo.owner, repo.name)),
+        );
     }
     state.store.delete_repo(id)
 }
@@ -714,6 +744,7 @@ mod tests {
             name: "c".into(),
             base_remote: "origin".into(),
             viewer: "me".into(),
+            mirror_of: None,
         };
         let it = item(&clone);
 
@@ -766,6 +797,7 @@ mod tests {
             name: "c".into(),
             base_remote: "origin".into(),
             viewer: "me".into(),
+            mirror_of: None,
         };
         let it = item(&clone);
 
@@ -819,6 +851,7 @@ mod tests {
             name: "c".into(),
             base_remote: "origin".into(),
             viewer: "me".into(),
+            mirror_of: None,
         };
         // The user pushes a fix to the PR; its author force-pushes over it.
         std::fs::write(clone.join("fix.txt"), "x").unwrap();
