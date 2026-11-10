@@ -164,8 +164,10 @@
     }
   }
 
+  // By where the click was when it happened: a click in the menu may have replaced what it
+  // hit (Add a private mirror… becomes its form) before the click gets here.
   function onWindowClick(e: MouseEvent) {
-    if (open && wrap && !wrap.contains(e.target as Node)) open = false;
+    if (open && wrap && !e.composedPath().includes(wrap)) open = false;
   }
 </script>
 
