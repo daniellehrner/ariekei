@@ -183,8 +183,8 @@ pub fn move_task(state: &AppState, id: i64, to: i64) -> Result<Option<String>, S
     if crate::lifecycle::busy(state, id) {
         return Err("its agent is in the middle of a turn; let it finish first".into());
     }
-    state.store.move_task(id, mirror.id)?;
-    let item = state.store.item(id)?;
+    // Its work is set up to go only to the mirror first, and only then is it the mirror's: never
+    // listed as the mirror's while its branch would still push elsewhere.
     let mut warning = None;
     if let Some(dir) = item.worktree_path.as_deref().filter(|p| p.exists()) {
         let branch = item.branch.as_deref();
@@ -211,13 +211,14 @@ pub fn move_task(state: &AppState, id: i64, to: i64) -> Result<Option<String>, S
         }
         keep_private(&mirror, &item, dir, branch)?;
     }
-    for w in state.store.agent_worktrees(mirror.id, Some(id))? {
+    for w in state.store.agent_worktrees(repo.id, Some(id))? {
         if w.path.exists()
             && let Err(e) = keep_private(&mirror, &item, &w.path, w.branch.as_deref())
         {
             tracing::warn!("{}: {e}", w.path.display());
         }
     }
+    state.store.move_task(id, mirror.id)?;
     // Its agent starts again with GH_REPO and the mirror's note (`session_plan`).
     state.terminals.close(&id.to_string());
     state.events.inbox_changed(repo.id);
