@@ -140,7 +140,9 @@ def run(app, names, display):
         )
         if display:
             env.pop("WAYLAND_DISPLAY", None)
-        args = [sys.executable, "-I", os.path.join(HERE, f"{name}_scenario.py"), app, work]
+        # -I ignores PYTHONIOENCODING: UTF-8 mode, so that what a scenario prints (an agent's
+        # "⎿", say) does not fail on a Windows console's code page.
+        args = [sys.executable, "-I", "-X", "utf8", os.path.join(HERE, f"{name}_scenario.py"), app, work]
         if name == "agent":
             args.append(data)
         print(f"\n=== {name}", flush=True)
