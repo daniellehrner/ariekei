@@ -868,10 +868,17 @@ activity, a grey bar for lifecycle news.
   with the reason. A signal another process sent names that process ("sent by pid 1234
   (kill)"). On Linux, Ariekei runs under a small watcher process (`ariekei-watch`), whose last
   line says how it ended, even when nothing else could: "Ariekei watcher: Ariekei (pid …) was
-  ended by signal 9 (SIGKILL…)" (the kernel out of memory, systemd-oomd, a Force Quit, a
-  `kill -9`), another signal, or "exited with status …". A run that ended without exiting
-  cleanly is also reported when Ariekei starts again. Your agents' conversations resume when you
-  open their items again.
+  ended by signal 9 (SIGKILL…)" (the kernel out of memory or over a real-time limit,
+  systemd-oomd, a Force Quit, a `kill -9`), another signal, or "exited with status …". A run
+  that ended without exiting cleanly is also reported when Ariekei starts again. Your agents'
+  conversations resume when you open their items again.
+
+  The real-time limit: WebKitGTK before 2.54 runs some of its threads in real time, and Linux
+  kills a process whose real-time thread runs too long (200 ms) without pausing. WebKit avoids
+  that by being warned at 80 % of the limit and taking its threads out of real time. Started
+  from the desktop, Ariekei inherits a limit without that warning, so it sets the limit as
+  WebKit would, also for its WebKit processes, and logs when WebKit was warned ("a real-time
+  thread of … ran 160 ms without blocking").
 - **A window turned grey**: its page (WebKit runs it in a process of its own) ended, e.g. over
   WebKit's memory limit. Ariekei logs why ("the page of window … ended") and, on Linux 6.15 or
   later, how its process ended ("the page process (pid …) was ended by signal 9 (SIGKILL…)",

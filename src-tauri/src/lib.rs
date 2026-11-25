@@ -784,6 +784,7 @@ pub fn run() {
         )
         .init();
     crashlog::install();
+    webview::guard_realtime();
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())

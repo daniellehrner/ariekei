@@ -363,8 +363,8 @@ pub fn ended(status: libc::c_int) -> (String, i32) {
     if libc::WIFSIGNALED(status) {
         let signal = libc::WTERMSIG(status);
         let what = if signal == libc::SIGKILL {
-            "SIGKILL: the kernel out of memory (journalctl -k), systemd-oomd, a Force Quit or a \
-             kill -9"
+            "SIGKILL: the kernel out of memory (journalctl -k) or over a real-time limit, \
+             systemd-oomd, a Force Quit or a kill -9"
                 .to_owned()
         } else {
             // SAFETY: strsignal returns a valid C string; glibc's is thread-safe since 2.32
