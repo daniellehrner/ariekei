@@ -391,8 +391,9 @@ try:
     add_comment(s, 10, 10, "Name this better.")
     eventually("adding closes the composer", lambda: bool(s.find("[data-composer]")), lambda v: not v, timeout=5)
     add_comment(s, 1, 1, "Unrelated: the header is stale.")
+    # The draft is listed once it is stored and loaded again (slow on Windows runners).
+    eventually("draft comments", lambda: s.js("return document.querySelectorAll('[data-drafts] li').length"), lambda v: v == 2, timeout=15)
     print("[draft]", s.js("return [...document.querySelectorAll('[data-drafts] li')].map(l => l.innerText.replace(/\\s+/g, ' ').trim())"))
-    equal("draft comments", s.js("return document.querySelectorAll('[data-drafts] li').length"), 2)
     # WebDriver's synthesized clicks miss elements this close to the window's bottom edge
     # under Xvfb (the element at the point is the button itself), so click in the DOM.
     dom_click(s, "[data-open-submit]")
