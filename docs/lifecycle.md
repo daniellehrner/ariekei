@@ -56,7 +56,8 @@ PRs and issues, or be thrown away.
   then deletes it. **Discard** first lists
   what would be lost (uncommitted changes, commits not on GitHub), then removes the worktree
   (`--force`) and branch, the agent session and the task. Refused only while the agent is in the
-  middle of a turn.
+  middle of a turn. Any other item whose cleanup was refused offers Discard in the bar that
+  says why: the same, but the PR or issue is hidden as after Done instead of deleted.
 - **Never cleaned up automatically:** a task may open another PR after the first one merged,
   and cleanup deletes the agent's conversation. End it with Done or Discard.
 - Stored as a work item of kind `task` with a negative number (T1 is -1), so it never collides
@@ -77,7 +78,10 @@ PRs and issues, or be thrown away.
     reflogs (`git::from_remotes`, newest 500 entries each): the upstream's except "update by
     push", and the branch's own "Created from", fast-forward, reset and pull entries naming a
     remote branch. That covers the old version of a PR whose author rebased it, also after
-    `git fetch --prune`; a pushed commit a force-push dropped still blocks;
+    `git fetch --prune`; a pushed commit a force-push dropped still blocks. Nor do a tip's
+    commits block when the branch's upstream or a PR head has their changes by content
+    (`git::has_changes_of`: `git merge-tree` of the tip into it changes nothing), e.g. the same
+    commits rebased and pushed from another checkout, then merged;
   - git refusing to remove the worktree (e.g. locked): recorded like the others. One item's
     failure never stops the poll's other cleanups.
 - Waits while the agent is in the middle of a turn (working, or waiting for permission): not a

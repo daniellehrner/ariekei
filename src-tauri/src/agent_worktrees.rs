@@ -264,11 +264,12 @@ fn live(state: &AppState, repo: &Repo, id: i64) -> Result<Vec<AgentWorktree>, St
         .collect())
 }
 
-/// What removing worktree `w` (and its branch, if the agent made it) would lose.
-fn losses_of(repo: &Repo, w: &AgentWorktree) -> Vec<String> {
+/// What removing worktree `w` (and its branch, if the agent made it) would lose; `prs` as in
+/// `lifecycle::losses`.
+fn losses_of(repo: &Repo, w: &AgentWorktree, prs: &[i64]) -> Vec<String> {
     let branch = w.branch.as_deref();
     let deleted = branch.filter(|b| w.branch_created && git::branch_exists(&repo.path, b));
-    lifecycle::losses(repo, Some(&w.path), branch, deleted)
+    lifecycle::losses(repo, Some(&w.path), branch, deleted, prs)
 }
 
 fn folder(path: &Path) -> String {
@@ -294,7 +295,7 @@ pub fn blockers(
     Ok(worktrees
         .iter()
         .flat_map(|w| {
-            losses_of(repo, w)
+            losses_of(repo, w, prs)
                 .into_iter()
                 .map(|l| format!("The agent's worktree {}: {l}", folder(&w.path)))
         })
@@ -397,10 +398,11 @@ pub fn list(state: &AppState, id: i64) -> Result<Vec<Shown>, String> {
         .store
         .repo(item.repo_id)?
         .ok_or("unknown repository")?;
+    let prs = lifecycle::pull_heads(state, &item)?;
     Ok(live(state, &repo, id)?
         .into_iter()
         .map(|w| Shown {
-            losses: losses_of(&repo, &w),
+            losses: losses_of(&repo, &w, &prs),
             id: w.id,
             path: w.path,
             branch: w.branch,
@@ -430,7 +432,8 @@ pub fn remove_one(state: &AppState, id: i64, worktree: i64, force: bool) -> Resu
     }
     let (repo, w) = find(state, id, worktree)?;
     if !force {
-        let lost = losses_of(&repo, &w);
+        let prs = lifecycle::pull_heads(state, &state.store.item(id)?)?;
+        let lost = losses_of(&repo, &w, &prs);
         if !lost.is_empty() {
             return Err(format!("Removing it would lose: {}", lost.join("; ")));
         }

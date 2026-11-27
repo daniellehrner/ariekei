@@ -52,7 +52,8 @@ How to use it: [docs/manual.md](docs/manual.md) (user manual).
   GitHub's head, and a PR you reviewed pulls the author's fixes by itself. Worktrees an agent
   makes itself are listed on its item, to remove or make a task of. Merged or closed items are
   cleaned up automatically (one you have open asks first), never losing uncommitted or unpushed
-  work, also in the worktrees the agent made.
+  work, also in the worktrees the agent made; where that refuses, Discard cleans up anyway after
+  showing what is lost.
 
 Language-agnostic: the review diff comes from git, any file type is syntax-highlighted, and the
 agent works in any language. Code navigation and debugging are left to your IDE.

@@ -204,6 +204,17 @@ try:
           "| worktree still there:", os.path.isdir(wt))
     blocked = s.js("return [...document.querySelectorAll('[data-blocked] li')].map(l => l.textContent)")
     check("Done refuses while work would be lost", len(blocked) == 2 and os.path.isdir(wt), blocked)
+    # Discard is offered there, for any item: it lists what it would lose and asks first.
+    # (Cancelled: the issue goes on below.)
+    s.click(s.wait("[data-discard-blocked]"))
+    s.wait("[data-losses] li", timeout=30)
+    losses = s.js("return [...document.querySelectorAll('[data-losses] li')].map(l => l.textContent)")
+    confirm = s.text(s.wait("[data-confirm-discard]"))
+    print("[discard] would lose:", losses, "| asks:", " ".join(confirm.split()))
+    check("Discard says what it would lose, and asks", len(losses) == 2 and "Discard" in confirm, losses)
+    s.click(s.wait("[data-confirm-discard] [data-cancel]"))
+    s.wait("[data-blocked]", timeout=10)
+    check("cancelled, nothing is gone", os.path.isdir(wt) and os.path.exists(os.path.join(wt, "notes.txt")))
     os.remove(os.path.join(wt, "notes.txt"))
 
     s.js("document.querySelector('[data-tab=review]').click()")

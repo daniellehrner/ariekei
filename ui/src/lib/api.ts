@@ -332,7 +332,8 @@ export const api = {
   markDone: (id: number) => invoke<Cleanup>("mark_done", { id }),
   keepItem: (id: number) => invoke<void>("keep_item", { id }),
   discardLosses: (id: number) => invoke<string[]>("discard_losses", { id }),
-  discardTask: (id: number) => invoke<Cleanup>("discard_task", { id }),
+  /** Cleans up the item although that loses what `discardLosses` listed (a task is deleted). */
+  discardItem: (id: number) => invoke<Cleanup>("discard_item", { id }),
   // `loaded`: the file as the editor got it; the save is refused if it changed on disk since.
   saveFile: (id: number, path: string, content: string, loaded: string) => invoke<void>("save_file", { id, path, content, loaded }),
   selfRssKib: () => invoke<number | null>("self_rss_kib"),

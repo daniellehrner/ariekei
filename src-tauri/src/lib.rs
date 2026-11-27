@@ -685,15 +685,15 @@ fn keep_item(state: State<'_, AppState>, id: i64) -> Res<()> {
     state.store.set_kept(id, true)
 }
 
-/// What discarding the task would lose (uncommitted changes, commits not on GitHub).
+/// What discarding the item would lose (uncommitted changes, commits not on GitHub).
 #[tauri::command]
 async fn discard_losses(app: tauri::AppHandle, id: i64) -> Res<Vec<String>> {
     blocking(app, move |s| lifecycle::discard_losses(s, id)).await
 }
 
-/// Deletes the task with its worktree and branch, losing what `discard_losses` listed.
+/// Cleans up the item with its worktree and branch, losing what `discard_losses` listed.
 #[tauri::command]
-async fn discard_task(app: tauri::AppHandle, id: i64) -> Res<lifecycle::Cleanup> {
+async fn discard_item(app: tauri::AppHandle, id: i64) -> Res<lifecycle::Cleanup> {
     blocking(app, move |s| lifecycle::discard(s, id)).await
 }
 
@@ -1016,7 +1016,7 @@ pub fn run() {
             mark_done,
             keep_item,
             discard_losses,
-            discard_task,
+            discard_item,
             self_rss_kib,
         ])
         .build(tauri::generate_context!())

@@ -191,6 +191,21 @@ pub fn branch_exists(repo: &Path, branch: &str) -> bool {
     .is_ok()
 }
 
+/// Commit `onto` has the changes `tip` makes since their merge base: merging `tip` into it
+/// changes nothing. So `tip`'s commits are in `onto` by content, if not by hash: rebased, or
+/// with fixups that cancel out. False when the merge conflicts or cannot be made.
+pub fn has_changes_of(cwd: &Path, onto: &str, tip: &str) -> bool {
+    let merged = git_str(
+        cwd,
+        &["merge-tree", "--write-tree", "--no-messages", onto, tip],
+    );
+    let tree = git_str(cwd, &["rev-parse", &format!("{onto}^{{tree}}")]);
+    match (merged, tree) {
+        (Ok(merged), Ok(tree)) => merged.lines().next() == Some(tree.as_str()),
+        _ => false,
+    }
+}
+
 /// Commits a remote had for `branch` once, as the reflogs remember (their newest 500
 /// entries): where its upstream was fetched to, and where the branch was set from a remote
 /// branch (created from it, fast-forwarded or reset to it, pulled) or fetched into. They came

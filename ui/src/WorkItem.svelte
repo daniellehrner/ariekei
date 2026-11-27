@@ -288,8 +288,9 @@
     }
   }
 
-  // Discard (tasks only): delete the task with its worktree and branch, after the user saw
-  // what that loses.
+  // Discard: clean up the item with its worktree and branch even though that loses work, after
+  // the user saw what. A task is deleted; a PR or issue is hidden as after Done. Tasks offer it
+  // in the header, every item where Done was refused.
   let losses = $state<string[] | null>(null);
   async function askDiscard() {
     try {
@@ -302,9 +303,13 @@
     const what = losses;
     losses = null;
     try {
-      const result = await api.discardTask(id);
+      const result = await api.discardItem(id);
       if (result.outcome === "blocked") error = `Not discarded: ${result.blockers.join("; ")}.`;
-      else onchanged();
+      else {
+        blockers = null;
+        if (!isTask) notice = result.removed.length ? `Discarded: ${result.removed.join(", ")}.` : "Discarded.";
+        onchanged();
+      }
     } catch (e) {
       error = String(e);
       losses = what;
@@ -396,9 +401,9 @@
             {/if}
           {/each}
         {/if}
-        {#if isTask && !confirmDone && !moving}
+        {#if (isTask || losses) && !confirmDone && !moving}
           {#if losses}
-            <InlineConfirm text="Discard this task{losses.length ? ' and lose its work' : ''}?" confirm="Discard"
+            <InlineConfirm text="Discard {isTask ? 'this task' : `${shortName(row)}'s local work`}{losses.length ? (isTask ? ' and lose its work' : ' and lose it') : ''}?" confirm="Discard"
               onconfirm={discard} oncancel={() => (losses = null)} data-confirm-discard />
           {:else}
             <!-- Rarer and destructive: it does not compete with Done. -->
@@ -519,18 +524,23 @@
   {#if losses?.length}
     <div class="banner">
       <Banner tone="bad" icon="trash" compact={false} data-losses>
-        <strong>Discarding the task deletes its worktree and branch, and with them:</strong>
+        <strong>Discarding {isTask ? "the task" : shortName(row)} deletes its worktree and branch, and with them:</strong>
         <ul>{#each losses as l}<li>{l}</li>{/each}</ul>
       </Banner>
     </div>
   {/if}
-  {#if shownBlockers}
+  {#if shownBlockers && !losses}
     <div class="banner">
       <Banner tone="bad" icon="blocked" compact={false} data-blocked>
         <strong>{row.open ? "Not cleaned up" : "Finished, but not cleaned up"}, so no work is lost:</strong>
         <ul>{#each shownBlockers as b}<li>{b}</li>{/each}</ul>
-        <span class="muted">Commit and push these, or discard them, then press Done again.</span>
-        {#snippet action()}<IconButton icon="x" label="Dismiss" size={22} onclick={() => (blockersDismissed = true)} />{/snippet}
+        <span class="muted">Commit and push these, then press Done again; or Discard them to clean up anyway.</span>
+        {#snippet action()}
+          <!-- Quiet: it asks with a red confirm that lists what is lost. -->
+          <Button size="sm" variant="quiet" icon="trash" onclick={askDiscard}
+            title="Clean up anyway: delete the worktree and branch with this work (you confirm first)" data-discard-blocked>Discard…</Button>
+          <IconButton icon="x" label="Dismiss" size={22} onclick={() => (blockersDismissed = true)} />
+        {/snippet}
       </Banner>
     </div>
   {/if}

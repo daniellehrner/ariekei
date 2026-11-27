@@ -174,7 +174,8 @@ A work item is a pull request, an issue or a task. Selecting it shows its header
   - **Start working** creates (or reuses) a worktree and starts the agent in it. Shown when
     the item has no worktree yet.
   - **Done** cleans the item up (see [Finishing and cleanup](#11-finishing-and-cleanup)).
-  - **Discard** (tasks only) deletes a task even if work would be lost, after showing what.
+  - **Discard** (on a task, and on any item whose cleanup was refused) cleans it up even if
+    work would be lost, after showing what.
 - Notes like "Created the worktree …" go away by themselves after a few seconds.
 - **Send PR feedback to agent** (on the tab bar, for PRs with an agent) sends the PR's current
   review threads, review summaries and failing checks to the agent as a message.
@@ -689,12 +690,17 @@ finished item says "Cleanup blocked" in the Inbox:
   branch nor in GitHub's copy of the PR head (for a task: of the PRs for its branch), and that Ariekei never
   fetched from GitHub either. So a squash-merged PR whose branch was deleted is safe, and so is
   the old version of a PR you only reviewed whose author rebased it since, even after
-  `git fetch --prune`. A commit of yours that a force-push dropped is not;
+  `git fetch --prune`. So are commits whose changes GitHub has by content: the branch's
+  upstream or the PR head already has what they change (e.g. your commits, rebased and pushed
+  from another checkout, then merged). A commit of yours that a force-push dropped is not;
 - git refusing to remove the worktree (e.g. one you locked with `git worktree lock`);
 - the same in a worktree the item's agent made itself (see
   [Worktrees the agent makes](#worktrees-the-agent-makes)), named in the reason.
 
-Commit and push, or discard the changes, then press **Done** again.
+Commit and push, or discard the changes, then press **Done** again. Or press **Discard…** in
+the bar that lists the reasons: after a red confirmation it cleans the item up anyway, deleting
+the worktree and branch with that work. A PR or issue is then hidden as after Done (it comes
+back if it is reopened or asked for again); a task is deleted.
 
 Cleanup also waits for an agent in the middle of a turn, e.g. one that merged its own PR and
 is still wrapping up: the item is cleaned up on the first poll after the turn ends, and
@@ -892,7 +898,7 @@ activity, a grey bar for lifecycle news.
   `disableAllHooks` in your settings or a policy that allows only managed hooks. The terminal
   works, and a saved conversation is still resumed, but Ariekei cannot tell what the agent does.
 - **Done is refused**: read the listed reasons; commit and push or discard the work, then press
-  Done again.
+  Done again, or **Discard…** to clean up anyway and lose it.
 - **Send to agent is greyed out** (in the Ask agent box or under the drafts): the agent is
   waiting for your permission. Answer it in the Terminal first (**Answer in Terminal**). Or
   its checkout is on another branch (see [Your own checkout](#your-own-checkout)): switch it

@@ -8,8 +8,9 @@
 //!   agent, transcript, worktree and branch (if Ariekei created them), refs and context
 //!   are removed. Cleanup never loses work: it is refused while anything would be lost;
 //! - a task is never finished by GitHub (it may still open more PRs): it ends when the user
-//!   marks it done (cleaned up like the rest, then deleted) or discards it (its work is
-//!   deleted too, after the user confirmed what is lost).
+//!   marks it done (cleaned up like the rest, then deleted);
+//! - any item can be discarded: cleaned up even though its local work is lost, after the user
+//!   confirmed what that is (a task is deleted, a PR or issue hidden as after Done).
 
 use crate::AppState;
 use crate::git::{self, git};
@@ -52,7 +53,7 @@ pub fn blockers(repo: &Repo, item: &WorkItem, prs: &[i64]) -> Vec<String> {
         return vec![];
     }
     fetch_heads(repo, prs, &item.short_name());
-    losses(repo, dir, own_branch, deleted_branch)
+    losses(repo, dir, own_branch, deleted_branch, prs)
 }
 
 /// Fetches GitHub's copies of the heads of `prs` (see `blockers`); `whose`: for the log.
@@ -64,12 +65,14 @@ pub(crate) fn fetch_heads(repo: &Repo, prs: &[i64], whose: &str) {
 
 /// What removing worktree `dir` (if there is one) and deleting `deleted_branch` would lose:
 /// uncommitted changes, and commits not on GitHub (`not_on_github`, so fetch the PR heads
-/// first). `own_branch` is the one checked out there.
+/// first; `prs`: those whose heads may have the commits' changes by content). `own_branch` is
+/// the one checked out there.
 pub(crate) fn losses(
     repo: &Repo,
     dir: Option<&Path>,
     own_branch: Option<&str>,
     deleted_branch: Option<&str>,
+    prs: &[i64],
 ) -> Vec<String> {
     let mut found = vec![];
     if let Some(dir) = dir {
@@ -104,12 +107,14 @@ pub(crate) fn losses(
         return found;
     }
     let tips: Vec<&str> = tips.iter().map(String::as_str).collect();
+    let heads: Vec<String> = prs.iter().map(|&n| worktree::pull_ref(repo, n)).collect();
+    let heads: Vec<&str> = heads.iter().map(String::as_str).collect();
     match not_on_github(
         &repo.path,
         dir.unwrap_or(&repo.path),
         &tips,
         own_branch,
-        &[],
+        &heads,
     ) {
         Ok(commits) if !commits.is_empty() => {
             found.push(format!(
@@ -128,7 +133,10 @@ pub(crate) fn losses(
 /// The commits reachable from `tips` (run in `dir`) that GitHub does not have, as `%h %s`,
 /// newest first. Safe are those a remote branch or GitHub's copy of a PR head has, or a remote
 /// had once for `branch` (`git::from_remotes`: a reviewed PR whose author rebased it since is
-/// not your work), or that `kept` (other revisions) have.
+/// not your work), or that `kept` (other revisions) have. So are a tip's commits whose changes
+/// `kept` or `branch`'s upstream has by content (`git::has_changes_of`): the same commits
+/// rebased and pushed from elsewhere, e.g. a PR merged after a rebase, leave copies here that
+/// no remote has by hash.
 pub fn not_on_github(
     repo: &Path,
     dir: &Path,
@@ -139,23 +147,44 @@ pub fn not_on_github(
     let fetched = branch
         .map(|b| git::from_remotes(repo, b))
         .unwrap_or_default();
-    let mut args = vec!["log", "--format=%h %s"];
-    args.extend(tips);
-    args.extend([
-        "--not",
-        "--remotes",
-        "--glob=refs/ariekei/pull/*",
-        "--glob=refs/ariekei/*/pull/*",
-    ]);
-    args.extend(fetched.iter().map(String::as_str));
-    args.extend(kept);
-    let log = git::git_str(dir, &args)?;
-    Ok(log.lines().map(str::to_owned).collect())
+    // A PR head not fetched (yet) is no revision to git.
+    let kept: Vec<&str> = kept
+        .iter()
+        .copied()
+        .filter(|k| git::commit_exists(dir, k))
+        .collect();
+    // What GitHub has that may hold the same changes.
+    let mut holders: Vec<String> = kept.iter().map(|k| (*k).to_owned()).collect();
+    holders.extend(branch.and_then(|b| git::upstream(repo, b)));
+    holders.retain(|h| git::commit_exists(dir, h));
+    let mut lost: Vec<String> = vec![];
+    for tip in tips {
+        let mut args = vec!["log", "--format=%h %s", tip];
+        args.extend([
+            "--not",
+            "--remotes",
+            "--glob=refs/ariekei/pull/*",
+            "--glob=refs/ariekei/*/pull/*",
+        ]);
+        args.extend(fetched.iter().map(String::as_str));
+        args.extend(&kept);
+        let log = git::git_str(dir, &args)?;
+        if log.is_empty() || holders.iter().any(|h| git::has_changes_of(dir, h, tip)) {
+            continue;
+        }
+        // HEAD and the branch are mostly one: each commit once.
+        for line in log.lines() {
+            if !lost.iter().any(|l| l == line) {
+                lost.push(line.to_owned());
+            }
+        }
+    }
+    Ok(lost)
 }
 
 /// The PRs whose heads GitHub keeps for the item's commits: a PR's own, those for a task's
 /// branch.
-fn pull_heads(state: &AppState, item: &WorkItem) -> Result<Vec<i64>, String> {
+pub(crate) fn pull_heads(state: &AppState, item: &WorkItem) -> Result<Vec<i64>, String> {
     if item.kind == "pr" {
         return Ok(vec![item.number]);
     }
@@ -217,7 +246,7 @@ pub fn clean_up(state: &AppState, id: i64) -> Result<Cleanup, String> {
     Ok(Cleanup::Cleaned { removed })
 }
 
-/// What discarding task `id` would lose besides the agent session: uncommitted changes and
+/// What discarding item `id` would lose besides the agent session: uncommitted changes and
 /// commits that are not on GitHub, in its worktree and those its agent made.
 pub fn discard_losses(state: &AppState, id: i64) -> Result<Vec<String>, String> {
     let item = state.store.item(id)?;
@@ -231,13 +260,12 @@ pub fn discard_losses(state: &AppState, id: i64) -> Result<Vec<String>, String> 
     Ok(found)
 }
 
-/// Deletes task `id` with its worktree and branch even if that loses work (the user
-/// confirmed `discard_losses`); refused only while its agent is in the middle of a turn.
+/// Cleans up item `id` with its worktree and branch even if that loses work (the user
+/// confirmed `discard_losses`): a task is deleted, a PR or issue hidden as after Done (it
+/// comes back as such an item does, e.g. when it is reopened). Refused only while its agent
+/// is in the middle of a turn.
 pub fn discard(state: &AppState, id: i64) -> Result<Cleanup, String> {
     let item = state.store.item(id)?;
-    if !item.is_task() {
-        return Err("only a task can be discarded".into());
-    }
     let repo = state
         .store
         .repo(item.repo_id)?
@@ -248,7 +276,11 @@ pub fn discard(state: &AppState, id: i64) -> Result<Cleanup, String> {
         });
     }
     let removed = remove(state, &repo, &item, true)?;
-    state.store.delete_item(id)?;
+    if item.is_task() {
+        state.store.delete_item(id)?;
+    } else {
+        state.store.mark_cleaned(id)?;
+    }
     Ok(Cleanup::Cleaned { removed })
 }
 
@@ -833,6 +865,84 @@ mod tests {
     }
 
     #[test]
+    fn commits_github_has_by_content_after_a_rebase_elsewhere_lose_nothing() {
+        let upstream = git_repo();
+        let up = upstream.path();
+        std::fs::write(up.join("CHANGELOG.md"), "# Changes\n").unwrap();
+        commit(up, "a changelog");
+        let root = tempfile::tempdir().unwrap();
+        let clone = root.path().join("c");
+        git(root.path(), &["clone", "-q", &up.to_string_lossy(), "c"]).unwrap();
+        let repo = Repo {
+            id: 1,
+            path: clone.clone(),
+            owner: "o".into(),
+            name: "c".into(),
+            base_remote: "origin".into(),
+            viewer: "me".into(),
+            mirror_of: None,
+        };
+        let it = item(&clone);
+        // The work, here: a change, and a changelog entry added and taken out again.
+        git(&clone, &["checkout", "-q", "-b", "feature"]).unwrap();
+        std::fs::write(clone.join("f.txt"), "the change\n").unwrap();
+        commit(&clone, "the change");
+        std::fs::write(clone.join("CHANGELOG.md"), "# Changes\n- the change\n").unwrap();
+        commit(&clone, "add an entry");
+        std::fs::write(clone.join("CHANGELOG.md"), "# Changes\n").unwrap();
+        commit(&clone, "remove the entry");
+        // Rebased elsewhere onto a newer main (whose changelog moved on) and pushed there: the
+        // same commits by content, none by hash.
+        std::fs::write(up.join("CHANGELOG.md"), "# Changes\n- other work\n").unwrap();
+        commit(up, "other work");
+        git(up, &["checkout", "-q", "-b", "feature"]).unwrap();
+        std::fs::write(up.join("f.txt"), "the change\n").unwrap();
+        commit(up, "the change");
+        std::fs::write(
+            up.join("CHANGELOG.md"),
+            "# Changes\n- the change\n- other work\n",
+        )
+        .unwrap();
+        commit(up, "add an entry");
+        std::fs::write(up.join("CHANGELOG.md"), "# Changes\n- other work\n").unwrap();
+        commit(up, "remove the entry");
+        git(up, &["checkout", "-q", "main"]).unwrap();
+        git(&clone, &["fetch", "-q", "origin"]).unwrap();
+        git(
+            &clone,
+            &["branch", "-q", "--set-upstream-to", "origin/feature"],
+        )
+        .unwrap();
+        assert!(
+            blockers(&repo, &it, &[]).is_empty(),
+            "its upstream has the changes: {:?}",
+            blockers(&repo, &it, &[])
+        );
+
+        // Merged, its branch deleted and pruned: GitHub's copy of the PR head has them.
+        git(up, &["update-ref", "refs/pull/7/head", "feature"]).unwrap();
+        git(up, &["branch", "-q", "-D", "feature"]).unwrap();
+        git(&clone, &["fetch", "-q", "--prune", "origin"]).unwrap();
+        assert!(
+            !blockers(&repo, &it, &[]).is_empty(),
+            "nothing on GitHub has them"
+        );
+        assert!(
+            blockers(&repo, &it, &[7]).is_empty(),
+            "the PR's head has them"
+        );
+
+        // Work of its own on top: that is lost, and said.
+        std::fs::write(clone.join("mine.txt"), "x").unwrap();
+        commit(&clone, "my own work");
+        let b = blockers(&repo, &it, &[7]);
+        assert!(
+            b.len() == 1 && b[0].contains("not on GitHub") && b[0].contains("my own work"),
+            "{b:?}"
+        );
+    }
+
+    #[test]
     fn a_pushed_commit_a_force_push_dropped_is_not_on_github() {
         let upstream = git_repo();
         let up = upstream.path();
@@ -981,7 +1091,7 @@ mod tests {
         }
 
         #[test]
-        fn discard_waits_for_the_agent_then_deletes_the_work() {
+        fn discard_waits_for_the_agent_then_deletes_the_work_of_any_item() {
             let app = TestApp::new();
             let task =
                 create_task(&app.state, Some(app.repo.clone()), "Throwaway", "", "").unwrap();
@@ -1014,12 +1124,25 @@ mod tests {
                 None,
                 "its agent is gone"
             );
-            app.add_pr(json!({"number": 20, "title": "Not a task", "head_ref": "main"}));
+
+            // A PR's local work goes the same way; the PR is hidden, as after Done.
+            let (pr, wt) = app.pr_with_worktree(20, "feature/discarded");
+            write(&wt.join("b.txt"), "local only\n");
+            commit(&wt, "not pushed", "me");
+            app.set("prs", 20, json!({"state": "MERGED"}));
             app.poll().unwrap();
-            assert!(
-                discard(&app.state, app.item(20).id).is_err(),
-                "only a task can be discarded"
-            );
+            assert!(matches!(
+                clean_up(&app.state, pr).unwrap(),
+                Cleanup::Blocked { .. }
+            ));
+            assert!(discard_losses(&app.state, pr).unwrap()[0].contains("not pushed"));
+            assert!(matches!(
+                discard(&app.state, pr).unwrap(),
+                Cleanup::Cleaned { .. }
+            ));
+            assert!(!wt.exists() && !branch_exists(&app, "feature/discarded"));
+            let item = app.state.store.item(pr).unwrap();
+            assert!(item.hidden && item.worktree_path.is_none() && item.cleanup_blockers.is_none());
         }
 
         #[test]
