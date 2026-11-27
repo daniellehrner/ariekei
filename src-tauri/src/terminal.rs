@@ -68,6 +68,8 @@ pub struct SessionPlan {
     pub context_file: Option<PathBuf>,
     /// Set in the agent's environment (e.g. `GH_REPO` for a private mirror's item).
     pub env: Vec<(String, String)>,
+    /// The new conversation's first prompt, if it starts with one (`impact::first_request`).
+    pub prompt: Option<String>,
 }
 
 #[derive(Default)]
@@ -164,6 +166,9 @@ fn claude_args(launch: &Launch, plan: &SessionPlan) -> Vec<String> {
         args.push(file.to_string_lossy().into_owned());
     }
     args.extend(launch.extra_args.iter().cloned());
+    // Claude Code takes it as the user's first message, in the interactive session. Last, after
+    // an option of one value: one of several (`--mcp-config <configs...>`) would take it too.
+    args.extend(plan.prompt.iter().cloned());
     args
 }
 
@@ -684,6 +689,7 @@ mod tests {
             resume: false,
             context_file: Some("/ctx.md".into()),
             env: vec![],
+            prompt: None,
         };
         let fresh = claude_args(&launch(), &plan);
         assert_eq!(
@@ -700,8 +706,18 @@ mod tests {
                 "/ctx.md"
             ]
         );
+        plan.prompt = Some("Map this change.".into());
+        let debug = Launch {
+            extra_args: vec!["--debug".into()],
+            ..launch()
+        };
+        assert_eq!(
+            &claude_args(&debug, &plan)[9..],
+            ["--debug", "Map this change."]
+        );
         plan.resume = true;
         plan.context_file = None;
+        plan.prompt = None;
         assert_eq!(&claude_args(&launch(), &plan)[5..], ["--resume", "id-1"]);
     }
 

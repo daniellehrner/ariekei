@@ -20,6 +20,11 @@ A minimal terminal agent that reports through the hooks of `--settings` like Cla
   one with its `add_review_comment` tool, "Reply in thread ID: T" drafts a reply in that thread
   (`reply_to_review_thread`), and the Review tab's message about review comment (or reply) #N
   with "say 'T'" in its prompt changes the draft to T (`update_review_comment`);
+- Ariekei's request to map the change ("… Use Ariekei's impact tools …", also given as the
+  first prompt, the command line's last argument) maps it with the impact tools: an overview,
+  an "affected" entry following from the first changed line of a modified file, with a place in
+  a file the change does not touch, a "similar" one and a "path" (after `clear_impact` when the
+  request says so);
 - a line containing "ask" asks permission for a Bash command and waits;
 - `/clear` ends the conversation (SessionEnd, reason "clear") and goes on in a new one, with a
   new session id;
@@ -142,6 +147,9 @@ def interactive(argv):
         mcp = {"url": server["url"], "headers": {k: re.sub(r"\$\{(\w+)\}", lambda m: os.environ.get(m.group(1), ""), v)
                                                  for k, v in server.get("headers", {}).items()}}
     resume = "--resume" in argv
+    # The first prompt: the one argument that is not a flag or a flag's value.
+    with_value = {"--settings", "--mcp-config", "--resume", "--session-id", "--append-system-prompt-file"}
+    first = [a for i, a in enumerate(argv) if not a.startswith("-") and (i == 0 or argv[i - 1] not in with_value)]
     store = os.environ.get("FAKE_CLAUDE_DIR") or os.path.join(tempfile.gettempdir(), "ariekei-fake-claude")
     os.makedirs(store, exist_ok=True)
     # The conversation: `/clear` starts a new one, with a new session id and transcript.
@@ -180,6 +188,8 @@ def interactive(argv):
             out(open(transcript(), encoding="utf-8").read())
             with open(os.path.join(store, "fake-claude.log"), "a", encoding="utf-8") as log:
                 log.write(f"{time.strftime('%H:%M:%S')} resumed {conv['session']}, printed the transcript\n")
+        if first and not resume:
+            turn(first[0], say, hook, keys, mcp)
         line = ""
         while True:
             out("\r\x1b[2K" + PROMPT + line + "\x1b7\n\x1b[2K  " +
@@ -252,6 +262,31 @@ def tool(mcp, hook, name, args):
     return answer
 
 
+def map_change(base, clear, call):
+    """Maps the change from `base` to HEAD with the impact tools; yields their answers."""
+    def git(*args):
+        return subprocess.run(["git", *args], capture_output=True, text=True, check=True).stdout
+
+    changed = git("diff", "--name-only", f"{base}...HEAD").split()
+    if clear:
+        yield call("clear_impact", {})
+    yield call("set_change_overview", {"overview": f"The change touches {len(changed)} file(s): **{', '.join(changed)}**."})
+    if not changed:
+        return
+    # A file the change modifies, rather than adds, if there is one.
+    path = (git("diff", "--name-only", "--diff-filter=M", f"{base}...HEAD").split() or changed)[0]
+    hunk = re.search(r"^@@ -\S+ \+(\d+)", git("diff", "-U0", f"{base}...HEAD", "--", path), re.M)
+    line = max(1, int(hunk.group(1))) if hunk else 1
+    others = [f for f in git("ls-files").split() if f not in changed]
+    elsewhere = {"path": others[0], "line": 1, "note": "reads it"} if others else {"path": path, "line": line}
+    yield call("add_impact", {"kind": "affected", "title": f"What reads {path}", "attention": True,
+                              "body": f"Reads `{path}` as it was.", "changed": {"path": path, "line": line},
+                              "locations": [elsewhere, {"path": path, "line": line, "note": "the change"}]})
+    yield call("add_impact", {"kind": "similar", "title": f"{elsewhere['path']} does the same", "locations": [elsewhere]})
+    yield call("add_impact", {"kind": "path", "title": "From the top", "changed": {"path": path, "line": line},
+                              "locations": [{"path": path, "line": 1, "note": "starts here"}, {"path": path, "line": line, "note": "the change"}]})
+
+
 def turn(text, say, hook, keys, mcp=None):
     say(f"> {text}")
     hook("UserPromptSubmit", prompt=text)
@@ -271,6 +306,12 @@ def turn(text, say, hook, keys, mcp=None):
         return
     if mcp and redraft:
         say("⏺ " + tool(mcp, hook, "update_review_comment", {"id": int(redraft.group(1)), "body": redraft.group(2)}))
+        hook("Stop")
+        return
+    mapping = re.search(r"Use Ariekei's impact tools.*`git diff (\w+)\.\.\.HEAD`", text)
+    if mcp and mapping:
+        for answer in map_change(mapping.group(1), "clear_impact" in text, lambda name, args: tool(mcp, hook, name, args)):
+            say("⏺ " + answer)
         hook("Stop")
         return
     task = re.search(r"word (\S+) to (\S+?),? then commit with the message '([^']+)'", text)

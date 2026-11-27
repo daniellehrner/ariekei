@@ -52,6 +52,14 @@ export const ariekeiTheme = EditorView.theme({
   ".ak-drafts .cm-gutterElement": { display: "flex", alignItems: "center", justifyContent: "center", width: "12px", padding: "0 0 0 4px" },
   ".ak-draft-mark": { display: "block", width: "8px", height: "8px", borderRadius: "1.5px", backgroundColor: "var(--diff-draft-mark)" },
   ".ak-draft-mark.agent": { borderRadius: "50%", backgroundColor: "var(--agent)" },
+  // The lines of a place in the impact map (CodePeek.svelte): the agent pointed at them.
+  ".ak-place-line": { backgroundColor: "var(--agent-bg)", boxShadow: "inset 2px 0 0 var(--agent)" },
+  // The diff's link to the map's entries that follow from a changed line (impactLinks.ts).
+  ".ak-impact-link": { marginLeft: "12px", padding: "0 6px", border: "1px solid var(--border)", borderRadius: "var(--r-pill)",
+    background: "var(--surface-0)", color: "var(--text-muted)", fontFamily: "var(--font-ui)", fontSize: "var(--fs-11)",
+    lineHeight: "16px", cursor: "pointer", verticalAlign: "1px" },
+  ".ak-impact-link:hover": { color: "var(--text)", borderColor: "var(--border-strong)" },
+  ".ak-impact-link:focus-visible": { outline: "2px solid var(--focus)", outlineOffset: "1px" },
   // The drafts themselves, below their last line (draftCards.ts).
   // Kept in view when the code scrolls sideways, as wide as the pane shows (draftCards.ts).
   ".ak-draft-card": { position: "sticky", left: "var(--ak-gutters-w, 0)", boxSizing: "border-box", maxWidth: "var(--ak-visible-w, 100%)",

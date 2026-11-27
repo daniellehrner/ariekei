@@ -24,7 +24,8 @@
     since: string | null;
     viewer: string;
     onchanged: () => void;
-    onshow?: (path: string) => void;
+    // `line`: of the PR's version at its head (none for an outdated thread).
+    onshow?: (path: string, line: number | null) => void;
   } = $props();
 
   let replyTo: string | null = $state(null);
@@ -116,7 +117,7 @@
       <code title={t.path}>{short(t.path)}{t.line ? `:${t.line}` : ""}</code>
       {#if t.awaitsReply}<Pill size="sm" tone="gh" title="Someone else had the last word: reply, or resolve it">your reply</Pill>{/if}
       {#if t.outdated}<Pill size="sm">outdated</Pill>{/if}
-      {#if onshow}<Button variant="quiet" size="sm" icon="chevron-right" onclick={() => onshow(t.path)} data-show-in-review>Show in Review</Button>{/if}
+      {#if onshow}<Button variant="quiet" size="sm" icon="chevron-right" onclick={() => onshow(t.path, t.outdated ? null : t.line)} data-show-in-review>Show in Review</Button>{/if}
     </header>
     {#if lines.length}
       <pre class="hunk">{#each lines as l}<span class="l {l.kind}"><span class="n">{l.number ?? ""}</span>{l.text}</span>{/each}</pre>

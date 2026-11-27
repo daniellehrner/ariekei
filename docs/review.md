@@ -29,6 +29,17 @@ How the review view works, and the research it is based on.
   permission nothing can be sent, since the text would answer its prompt; while it works,
   Claude Code reads it after the turn. The prompt is sent as you wrote it: ask a question or
   ask for a change.
+- **The impact map** (the Impact tab, before Review): what the change means beyond its diff,
+  made by the item's agent in its worktree, where it has the whole repository. An overview (what
+  changes for the project as a whole, who notices, the modules involved, the real risks), then
+  **Affected** (code outside the diff the change reaches: callers, implementations,
+  registrations, entry points), **Similar** (code elsewhere doing the same thing, and whether it
+  needs the same change) and **Paths** (from an entry point to the changed code). Entries worth
+  checking are marked. Every place is checked against the worktree's commit and opens with its
+  file's code beside the map, also files the diff does not touch; Show in Review goes to a
+  changed one, and the diff's **Impact** chip at a changed line goes back to the entries that
+  follow from it. On someone else's PR the agent maps the change as soon as it starts; when
+  the head moves on, Update the map.
 - **Comments** are drafted in the dock under the diff and show as cards right below their lines
   (their lines keep a mark in the gutter). On someone else's PR the agent drafts its own beside
   yours, with Ariekei's tools, and its replies in other reviewers' threads; each can be edited,
@@ -37,6 +48,10 @@ How the review view works, and the research it is based on.
 
 ## Why
 
+- **The diff is not enough:** it shows the change, not what the change touches. Whether it is
+  right depends on the callers, implementations and similar code around it, which a reviewer
+  otherwise looks up one by one in an IDE. Hence the impact map, with the code of each place a
+  click away, before the diff.
 - **Where to start matters:** files shown later get fewer comments, and in an experiment a bug
   was 64% less likely to be found when its file came last
   ([Fregnan et al. 2022](https://arxiv.org/pdf/2208.04259)); ~90% of developers do not think

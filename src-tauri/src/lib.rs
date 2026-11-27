@@ -13,6 +13,7 @@ mod events;
 mod git;
 mod github;
 mod hooks;
+mod impact;
 mod inbox;
 mod instance;
 mod lifecycle;
@@ -585,6 +586,30 @@ fn delete_drafts(state: State<'_, AppState>, id: i64, drafts: Vec<i64>) -> Res<(
     drafts::delete(&state, id, &drafts)
 }
 
+/// Item `id`'s impact map, as its agent made it (`impact`).
+#[tauri::command]
+async fn impact_map(app: tauri::AppHandle, id: i64) -> Res<impact::Shown> {
+    blocking(app, move |s| impact::shown(s, id)).await
+}
+
+/// Asks item `id`'s agent to map its change; `update`: again, after new commits.
+#[tauri::command]
+async fn map_impact(app: tauri::AppHandle, id: i64, update: bool) -> Res<()> {
+    blocking(app, move |s| {
+        workitem::ensure_on_branch(s, id)?;
+        let text = impact::request(s, id, update)?;
+        s.terminals
+            .send_to_agent(&id.to_string(), &text, AGENT_TAKES)
+    })
+    .await
+}
+
+/// The file `path` as committed at `rev`, for the Impact tab's code pane.
+#[tauri::command]
+async fn file_at(app: tauri::AppHandle, id: i64, rev: String, path: String) -> Res<String> {
+    blocking(app, move |s| impact::file_at(s, id, &rev, &path)).await
+}
+
 /// The worktrees item `id`'s agent made itself (`agent_worktrees`).
 #[tauri::command]
 async fn agent_worktrees(app: tauri::AppHandle, id: i64) -> Res<Vec<agent_worktrees::Shown>> {
@@ -828,15 +853,25 @@ pub fn run() {
             )?;
             // Not fatal: the agents work without Ariekei's tools.
             let handle = app.handle().clone();
+            let mut tools = drafts::tools();
+            if let (Some(all), serde_json::Value::Array(more)) =
+                (tools.as_array_mut(), impact::tools())
+            {
+                all.extend(more);
+            }
             let mcp_server = mcp::McpServer::start(
                 &data_dir,
-                drafts::tools(),
-                drafts::INSTRUCTIONS,
+                tools,
+                format!("{} {}", drafts::INSTRUCTIONS, impact::INSTRUCTIONS),
                 move |terminal, tool, args| {
                     let state = handle
                         .try_state::<AppState>()
                         .ok_or("Ariekei is still starting")?;
-                    drafts::call(&state, terminal, tool, args)
+                    if impact::handles(tool) {
+                        impact::call(&state, terminal, tool, args)
+                    } else {
+                        drafts::call(&state, terminal, tool, args)
+                    }
                 },
             )
             .inspect_err(|e| tracing::warn!("the agents' tools are unavailable: {e}"))
@@ -966,6 +1001,9 @@ pub fn run() {
             comment_ranges,
             review_drafts,
             add_draft,
+            impact_map,
+            map_impact,
+            file_at,
             edit_draft,
             delete_drafts,
             agent_worktrees,

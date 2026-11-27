@@ -18,7 +18,7 @@ How to use it: [docs/manual.md](docs/manual.md) (user manual).
   GitHub's search syntax and starts work on any of them (Enter) or adds them to Open; what you added can be removed again. Notifications for the same events: in the window while Ariekei is in front
   (click one to open its item), OS notifications otherwise.
 - **Work item:** Overview (description, checks, reviewers), Comments (review threads and
-  conversation; reply, resolve, comment), Review, and Terminal.
+  conversation; reply, resolve, comment), Impact, Review, and Terminal.
 - **Agent:** your installed `claude`, unmodified, in an embedded terminal in the item's
   worktree, with the PR or issue as context. Status comes from Claude Code hooks; conversations
   resume after switching items or restarting.
@@ -29,6 +29,11 @@ How to use it: [docs/manual.md](docs/manual.md) (user manual).
   drafts its review comments into the diff through Ariekei's own MCP tools: its drafts and yours
   are cards under their lines, to edit or send back to the agent, and Submit posts them all. See
   [docs/review.md](docs/review.md).
+- **Impact:** the agent's map of what the change means beyond its diff: an overview for the
+  project as a whole, the code outside the diff it reaches, similar code elsewhere, and the
+  paths from entry points to it. Every place is checked against the worktree and opens with its
+  file's code, also files the diff does not touch; the diff links to the map at the changed
+  lines and back. On someone else's PR the agent maps it as soon as it starts.
 - **Repos and windows:** the repo name in the Inbox header switches the window to another
   connected repo, opens one in a new window, or connects another. Each repo is shown in one
   window at a time; every open repo is kept current, and the windows come back after a
@@ -98,8 +103,9 @@ windows never show up on your desktop or take focus, and its notifications stay 
 `E2E_HEADED=1` shows the windows on your display instead.
 
 - `review`: Inbox sections, browsing and adding, starring and removing, Overview, Comments, review without a worktree, review order,
-  n / p across files, submitting a review, a push showing up in the review, the agent's drafted
-  review comments (edited, redrafted, submitted).
+  n / p across files, submitting a review, a push showing up in the review, the agent's impact
+  map of another author's PR (places outside the diff, Show in Review, the diff's link back,
+  Update the map), the agent's drafted review comments (edited, redrafted, submitted).
 - `windows`: two repos, switching, a window per repo, restoring windows after a restart.
 - `lifecycle`: issue → worktree → push → its PR → merge → cleanup.
 - `task`: new task → the agent opens a PR and an issue, each an item of its own → asking the

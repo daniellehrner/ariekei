@@ -9,6 +9,8 @@
     // "all" (vs the base branch) or a commit sha; empty picks the default.
     scope: string;
     file: string | null;
+    // A line of `file` to go to once it shows (from another tab), then cleared.
+    line?: number;
     // Draft comments from before the item stored them (`api.reviewDrafts`): moved there on load.
     comments?: DraftComment[];
     // Layout: the commit list expanded, the whole side panel (scopes + files) hidden.
@@ -53,6 +55,8 @@
   import { gitOverride, lineSeparatorOf } from "./lib/gitDiff";
   import { hscroll } from "./lib/hscroll";
   import { externalLinks } from "./lib/html";
+  import { linksIn, type ImpactMap } from "./lib/impact";
+  import { impactLinks, setImpactLinks } from "./lib/impactLinks";
   import { isTyping } from "./lib/keys";
   import { reloadsAndChecks } from "./lib/latest";
   import { shortcuts } from "./lib/layout.svelte";
@@ -84,6 +88,7 @@
     agentAway = null,
     agentStatus,
     onterminal,
+    onimpact,
     polls = 0,
   }: {
     id: number;
@@ -96,6 +101,8 @@
     agentStatus?: string;
     /// Shows the agent's terminal (where its answer appears); after asking it about code.
     onterminal?: () => void;
+    /// Shows these entries of the impact map (the Impact tab), from the diff's link to them.
+    onimpact?: (entries: number[]) => void;
     /// Counts the polls of the item's repo: after each, GitHub may have newer (see `check`).
     polls?: number;
   } = $props();
@@ -204,6 +211,22 @@
       loadDrafts();
     });
     const unlisten = listen<number>("drafts-changed", (e) => e.payload === id && loadDrafts());
+    return () => void unlisten.then((f) => f());
+  });
+
+  // The agent's impact map: the diff links to its entries at the changed lines they follow from.
+  let impact = $state.raw<ImpactMap | null>(null);
+  async function loadImpact() {
+    try {
+      impact = (await api.impactMap(id)).map;
+    } catch {
+      impact = null;
+    }
+  }
+  $effect(() => {
+    void id;
+    untrack(loadImpact);
+    const unlisten = listen<number>("impact-changed", (e) => e.payload === id && loadImpact());
     return () => void unlisten.then((f) => f());
   });
 
@@ -338,7 +361,11 @@
     if (!range) return;
     try {
       files = await api.reviewFiles(id, range[0], range[1], !!view.ignoreWs);
-      if (view.file && !files.some((f) => f.path === view.file)) view.file = null;
+      if (view.file && !files.some((f) => f.path === view.file)) {
+        view.file = null;
+        // Not later, in another file.
+        view.line = undefined;
+      }
       view.file ??= flatten(sections(files, order))[0]?.path ?? null;
     } catch (e) {
       error = String(e);
@@ -350,6 +377,7 @@
     merge?.destroy();
     unified?.destroy();
     merge = unified = null;
+    shownPath = null;
   }
 
   // The editor whose document is the new version (selection, change navigation).
@@ -403,7 +431,7 @@
     // Each side split into git's lines, keeping its line endings (lib/gitDiff.ts).
     const [oldSep, newSep] = [EditorState.lineSeparator.of(lineSeparatorOf(d.old)), EditorState.lineSeparator.of(lineSeparatorOf(d.new))];
     const canEdit = to === null && !d.lossy;
-    const newDoc = [...draftMarks, ...draftCards, ...common, newSep, EditorView.editable.of(canEdit), EditorState.readOnly.of(!canEdit), onUpdate, currentChange];
+    const newDoc = [...draftMarks, ...draftCards, ...impactLinks, ...common, newSep, EditorView.editable.of(canEdit), EditorState.readOnly.of(!canEdit), onUpdate, currentChange];
     const diffConfig = { override: gitOverride(d.old, d.new, d.hunks) };
     const collapseUnchanged = { margin: 3, minSize: 6 };
     if (onePane) {
@@ -426,10 +454,59 @@
       });
     }
     placeDrafts();
+    placeLinks();
+    shownPath = path;
     const wanted = drafts.find((d) => d.id === goingTo);
     goingTo = null;
     if (wanted) scrollToDraft(wanted);
     land();
+  }
+
+  // The file the editors show, once they do.
+  let shownPath: string | null = $state(null);
+
+  // The diff's links to the impact map's entries.
+  function placeLinks() {
+    const v = newSide();
+    if (!v || !onimpact) return;
+    const open = onimpact;
+    v.dispatch({ effects: setImpactLinks.of({ links: linksIn(impact, view.file, shownRev), open }) });
+  }
+  $effect(() => {
+    void impact;
+    void view.file;
+    void shownRev;
+    untrack(placeLinks);
+  });
+
+  // A line asked for from another tab (a place of the impact map, a review thread): shown
+  // once its file is, unfolded when it is in a stretch of unchanged lines.
+  $effect(() => {
+    const line = view.line;
+    if (!line || shownPath !== view.file) return;
+    untrack(() => {
+      view.line = undefined;
+      goToLine(line);
+    });
+  });
+  function goToLine(n: number) {
+    const v = newSide();
+    if (!v) return;
+    const line = v.state.doc.line(Math.min(Math.max(1, n), v.state.doc.lines));
+    v.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: "center" }) });
+    // The fold is drawn once it is in view: open it there (as a click does, on both sides).
+    requestAnimationFrame(() => {
+      if (v !== newSide()) return;
+      for (const el of v.dom.querySelectorAll<HTMLElement>(".cm-collapsedLines")) {
+        const first = v.state.doc.lineAt(v.posAtDOM(el)).number;
+        const count = Number(el.textContent?.match(/\d+/)?.[0] ?? 0);
+        if (line.number >= first && line.number < first + count) {
+          el.click();
+          break;
+        }
+      }
+      v.dispatch({ selection: { anchor: line.from }, effects: EditorView.scrollIntoView(line.from, { y: "center" }) });
+    });
   }
 
   // The drafts on this file: their lines marked in the gutter, their cards below them.

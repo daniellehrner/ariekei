@@ -193,7 +193,7 @@ try:
           branch == "peers-drop-after-restart" and git(wt, "rev-parse", "HEAD") == git(clone, "rev-parse", "origin/main"), branch)
     contains("the task is titled", s.js("return document.querySelector('.item header .title').textContent"), "T1Peers drop after restart")
     equal("a task has no Comments tab", s.js("return [...document.querySelectorAll('.item [role=tab]')].map(b => b.textContent.trim())"),
-          ["Overview", "Review", "Terminal"])
+          ["Overview", "Impact", "Review", "Terminal"])
     context = os.path.join(data_dir, "context", "owner-proj-task1.md")
     eventually("the agent's context has the notes", lambda: os.path.exists(context) and open(context).read(),
                lambda md: md and "Look at how the peer table is reset." in md and "`gh pr create`" in md)

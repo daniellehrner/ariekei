@@ -207,6 +207,37 @@ ALTER TABLE repos_new RENAME TO repos;
 CREATE UNIQUE INDEX repos_path ON repos(path) WHERE mirror_of IS NULL;
 CREATE UNIQUE INDEX repos_mirror ON repos(mirror_of, owner, name) WHERE mirror_of IS NOT NULL;
 "#,
+    r#"
+-- The agent's map of how the item's change affects the rest of the code (`impact`): what it
+-- changes for the project as a whole, and the code it reaches or that resembles it.
+CREATE TABLE impact_maps (
+    item_id INTEGER PRIMARY KEY REFERENCES work_items(id) ON DELETE CASCADE,
+    -- The commit mapped (the worktree's HEAD at the map's last change), and the base the
+    -- change was taken from.
+    rev TEXT NOT NULL,
+    base TEXT NOT NULL,
+    -- Markdown.
+    overview TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE impact_entries (
+    id INTEGER PRIMARY KEY,
+    item_id INTEGER NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
+    -- 'affected', 'similar' or 'path'.
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    -- Markdown.
+    body TEXT NOT NULL DEFAULT '',
+    -- Worth the user's attention: behaviour may break, or the change may miss a place.
+    attention INTEGER NOT NULL DEFAULT 0,
+    -- JSON: the changed lines it follows from (`ImpactLocation`), or NULL.
+    changed TEXT,
+    -- JSON: its places (`ImpactLocation`s), in order.
+    locations TEXT NOT NULL,
+    -- The commit whose lines the places are.
+    rev TEXT NOT NULL
+);
+CREATE INDEX impact_entries_item ON impact_entries(item_id);
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -341,6 +372,50 @@ pub struct ThreadRef {
     pub text: String,
 }
 
+/// Lines of a file at an impact map's commit (`impact`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImpactLocation {
+    pub path: String,
+    pub from_line: u32,
+    pub to_line: u32,
+    /// The lines (the first ones of a long range).
+    pub code: String,
+    /// What they are, in the agent's words.
+    #[serde(default)]
+    pub note: String,
+    /// The change touches these lines.
+    #[serde(default)]
+    pub in_diff: bool,
+}
+
+/// One entry of an impact map: code the change reaches ("affected"), code elsewhere that does
+/// the same ("similar"), or the way from an entry point to the changed code ("path").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImpactEntry {
+    pub id: i64,
+    pub kind: String,
+    pub title: String,
+    pub body: String,
+    pub attention: bool,
+    /// The changed lines it follows from.
+    pub changed: Option<ImpactLocation>,
+    pub locations: Vec<ImpactLocation>,
+    pub rev: String,
+}
+
+/// The agent's map of how an item's change affects the rest of the code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImpactMap {
+    /// The commit mapped, and the base the change was taken from.
+    pub rev: String,
+    pub base: String,
+    pub overview: String,
+    pub entries: Vec<ImpactEntry>,
+}
+
 /// A worktree an item's agent made itself (`agent_worktrees`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -396,6 +471,10 @@ pub const NOTHING_SEEN: &str = "0";
 
 fn err(e: rusqlite::Error) -> String {
     e.to_string()
+}
+
+fn to_json(value: &impl Serialize) -> String {
+    serde_json::to_string(value).unwrap_or_default()
 }
 
 const ITEM_COLUMNS: &str = "id, repo_id, number, snapshot, open, worktree_path, branch, session_id, \
@@ -1210,6 +1289,139 @@ impl Store {
         Ok(n)
     }
 
+    /// Item `id`'s impact map, if its agent made one.
+    pub fn impact(&self, id: i64) -> Result<Option<ImpactMap>, String> {
+        let conn = self.conn.lock().unwrap();
+        let map = conn
+            .query_row(
+                "SELECT rev, base, overview FROM impact_maps WHERE item_id = ?1",
+                [id],
+                |r| {
+                    Ok(ImpactMap {
+                        rev: r.get(0)?,
+                        base: r.get(1)?,
+                        overview: r.get(2)?,
+                        entries: vec![],
+                    })
+                },
+            )
+            .optional()
+            .map_err(err)?;
+        let Some(mut map) = map else {
+            return Ok(None);
+        };
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, kind, title, body, attention, changed, locations, rev
+                 FROM impact_entries WHERE item_id = ?1 ORDER BY id",
+            )
+            .map_err(err)?;
+        map.entries = stmt
+            .query_map([id], |r| {
+                Ok(ImpactEntry {
+                    id: r.get(0)?,
+                    kind: r.get(1)?,
+                    title: r.get(2)?,
+                    body: r.get(3)?,
+                    attention: r.get(4)?,
+                    changed: r
+                        .get::<_, Option<String>>(5)?
+                        .and_then(|s| serde_json::from_str(&s).ok()),
+                    locations: serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or_default(),
+                    rev: r.get(7)?,
+                })
+            })
+            .map_err(err)?
+            .collect::<Result<_, _>>()
+            .map_err(err)?;
+        Ok(Some(map))
+    }
+
+    /// Item `id`'s impact map is of commit `rev` now, its change taken from `base`; with
+    /// `overview`, that is its overview.
+    pub fn set_impact_rev(
+        &self,
+        id: i64,
+        rev: &str,
+        base: &str,
+        overview: Option<&str>,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO impact_maps (item_id, rev, base, overview) VALUES (?1, ?2, ?3, COALESCE(?4, ''))
+             ON CONFLICT (item_id) DO UPDATE
+             SET rev = ?2, base = ?3, overview = COALESCE(?4, overview)",
+            params![id, rev, base, overview],
+        )
+        .map(|_| ())
+        .map_err(err)
+    }
+
+    /// Adds `entry` (its `id` aside) to item `id`'s impact map, and returns its id.
+    pub fn add_impact_entry(&self, id: i64, entry: &ImpactEntry) -> Result<i64, String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO impact_entries (item_id, kind, title, body, attention, changed, locations, rev)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                id,
+                entry.kind,
+                entry.title,
+                entry.body,
+                entry.attention,
+                entry.changed.as_ref().map(to_json),
+                to_json(&entry.locations),
+                entry.rev,
+            ],
+        )
+        .map_err(err)?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Replaces item `id`'s entry `entry.id`. False: the item has no such entry.
+    pub fn update_impact_entry(&self, id: i64, entry: &ImpactEntry) -> Result<bool, String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE impact_entries SET kind = ?3, title = ?4, body = ?5, attention = ?6,
+                                       changed = ?7, locations = ?8, rev = ?9
+             WHERE item_id = ?1 AND id = ?2",
+            params![
+                id,
+                entry.id,
+                entry.kind,
+                entry.title,
+                entry.body,
+                entry.attention,
+                entry.changed.as_ref().map(to_json),
+                to_json(&entry.locations),
+                entry.rev,
+            ],
+        )
+        .map(|n| n > 0)
+        .map_err(err)
+    }
+
+    /// Deletes item `id`'s entry `entry`. False: the item has no such entry.
+    pub fn delete_impact_entry(&self, id: i64, entry: i64) -> Result<bool, String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM impact_entries WHERE item_id = ?1 AND id = ?2",
+            params![id, entry],
+        )
+        .map(|n| n > 0)
+        .map_err(err)
+    }
+
+    /// Deletes item `id`'s impact map.
+    pub fn clear_impact(&self, id: i64) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM impact_entries WHERE item_id = ?1", [id])
+            .map_err(err)?;
+        conn.execute("DELETE FROM impact_maps WHERE item_id = ?1", [id])
+            .map(|_| ())
+            .map_err(err)
+    }
+
     /// The worktrees the agents of repo `repo`'s items made (`None`: of item `item` only).
     pub fn agent_worktrees(
         &self,
@@ -1790,6 +2002,63 @@ mod tests {
         assert_eq!(store.delete_drafts(id, &[mine]).unwrap(), 1);
         store.delete_item(id).unwrap();
         assert!(store.drafts(id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn impact_maps_are_the_items_own_and_go_with_them() {
+        let (store, repo) = store_with_repo();
+        let id = store.track(repo.id, &polled(7, json!({}))).unwrap();
+        let other = store.track(repo.id, &polled(8, json!({}))).unwrap();
+        assert!(store.impact(id).unwrap().is_none());
+        let place = |line| ImpactLocation {
+            path: "a.rs".into(),
+            from_line: line,
+            to_line: line,
+            code: "x".into(),
+            note: "calls it".into(),
+            in_diff: false,
+        };
+        let mut entry = ImpactEntry {
+            id: 0,
+            kind: "affected".into(),
+            title: "Callers".into(),
+            body: String::new(),
+            attention: true,
+            changed: Some(place(3)),
+            locations: vec![place(9), place(12)],
+            rev: "abc".into(),
+        };
+        store
+            .set_impact_rev(id, "abc", "base", Some("Overview"))
+            .unwrap();
+        entry.id = store.add_impact_entry(id, &entry).unwrap();
+        // A later change keeps the overview, unless it is one.
+        store.set_impact_rev(id, "def", "base", None).unwrap();
+        let map = store.impact(id).unwrap().unwrap();
+        assert_eq!(
+            (map.rev.as_str(), map.overview.as_str(), &map.entries),
+            ("def", "Overview", &vec![entry.clone()])
+        );
+
+        // Another item's entries are out of reach.
+        assert!(!store.update_impact_entry(other, &entry).unwrap());
+        assert!(!store.delete_impact_entry(other, entry.id).unwrap());
+        store.clear_impact(other).unwrap();
+        assert_eq!(store.impact(id).unwrap().unwrap().entries.len(), 1);
+
+        entry.changed = None;
+        entry.title = "Its callers".into();
+        assert!(store.update_impact_entry(id, &entry).unwrap());
+        assert_eq!(store.impact(id).unwrap().unwrap().entries, [entry.clone()]);
+        assert!(store.delete_impact_entry(id, entry.id).unwrap());
+        store.add_impact_entry(id, &entry).unwrap();
+        store.clear_impact(id).unwrap();
+        assert!(store.impact(id).unwrap().is_none());
+
+        store.set_impact_rev(id, "abc", "base", None).unwrap();
+        store.add_impact_entry(id, &entry).unwrap();
+        store.delete_item(id).unwrap();
+        assert!(store.impact(id).unwrap().is_none());
     }
 
     #[test]

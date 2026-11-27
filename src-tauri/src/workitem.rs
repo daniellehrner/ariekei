@@ -537,6 +537,7 @@ pub fn session_plan(state: &AppState, data_dir: &Path, id: i64) -> Result<Sessio
                 .map(|note| write_private_note(data_dir, &repo, note))
                 .transpose()?,
             env,
+            prompt: None,
         });
     }
     // Never prompted: reuse its id (nothing was saved under it), else start fresh.
@@ -570,11 +571,17 @@ pub fn session_plan(state: &AppState, data_dir: &Path, id: i64) -> Result<Sessio
                 .transpose()?
         }
     };
+    // On a PR someone else wrote, the agent maps its change before the user asks anything
+    // (not on another branch: that work is not the PR's).
+    let prompt = (item.kind == "pr" && !by_viewer(&item, &repo) && moved_to(&item).is_none())
+        .then(|| crate::impact::first_request(state, id))
+        .flatten();
     Ok(SessionPlan {
         session_id,
         resume: false,
         context_file,
         env,
+        prompt,
     })
 }
 
@@ -1341,6 +1348,14 @@ fn review(state: &AppState, id: i64) -> Result<Review, String> {
         base,
         base_ref,
     })
+}
+
+/// What the review of item `id` compares, as the clone has it: the directory to run git in, the
+/// base (merge base with the base branch) and the head (the worktree's HEAD, or the fetched PR
+/// head).
+pub(crate) fn review_range(state: &AppState, id: i64) -> Result<(PathBuf, String, String), String> {
+    let r = review(state, id)?;
+    Ok((r.dir, r.base, r.head))
 }
 
 /// Fetches what the review of item `id` compares, when GitHub may have newer, and says whether

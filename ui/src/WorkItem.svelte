@@ -7,6 +7,7 @@
   import { onMount, untrack } from "svelte";
   import AgentWorktrees from "./AgentWorktrees.svelte";
   import Comments from "./Comments.svelte";
+  import ImpactView, { type ImpactViewState } from "./ImpactView.svelte";
   import Overview from "./Overview.svelte";
   import TaskOverview from "./TaskOverview.svelte";
   import ReviewView, { type ReviewViewState } from "./ReviewView.svelte";
@@ -47,8 +48,9 @@
   interface ItemUi {
     tab: Tab;
     review: ReviewViewState;
+    impact: ImpactViewState;
   }
-  const fresh = (): ItemUi => ({ tab: "overview", review: { scope: "", file: null } });
+  const fresh = (): ItemUi => ({ tab: "overview", review: { scope: "", file: null }, impact: {} });
 
   let ui = $state<ItemUi | null>(null);
   // The item `ui` is the view of.
@@ -146,7 +148,7 @@
     api.uiState<ItemUi>(current).then((saved) => {
       if (current !== id) return;
       uiOf = current;
-      ui = { ...fresh(), ...saved, review: { ...fresh().review, ...saved?.review } };
+      ui = { ...fresh(), ...saved, review: { ...fresh().review, ...saved?.review }, impact: { ...saved?.impact } };
       // A new task opens on its agent (shown once the row has the worktree: a reload that
       // started while the task was being created can still lack it).
       if (!saved && isTask) ui.tab = "terminal";
@@ -329,11 +331,23 @@
     }
   }
 
-  // From a review thread to its file in the Review tab.
-  function showInReview(path: string) {
+  // From a review thread, or a place of the impact map, to its file (and line) in the Review
+  // tab: in all changes, which has every file and line of the PR's diff.
+  function showInReview(path: string, line?: number | null) {
     if (!ui) return;
+    if (line) {
+      ui.review.scope = "all";
+      ui.review.line = line;
+    }
     ui.review.file = path;
     ui.tab = "review";
+  }
+
+  // From the diff's link to the impact map's entries that follow from a line.
+  function showImpact(entries: number[]) {
+    if (!ui || !entries.length) return;
+    ui.impact = { ...ui.impact, picked: { entry: entries[0], place: 0 }, open: [...new Set([...(ui.impact.open ?? []), ...entries])], reveal: true };
+    ui.tab = "impact";
   }
 
   const shownBlockers = $derived(blockersDismissed ? null : (blockers ?? row.cleanupBlockers));
@@ -350,7 +364,7 @@
     REVIEW_REQUIRED: ["review required", ""],
   };
   const unresolved = $derived(conv ? conv.threads.filter((t) => !t.resolved).length : 0);
-  const TABS: [Tab, string][] = [["overview", "Overview"], ["comments", "Comments"], ["review", "Review"], ["terminal", "Terminal"]];
+  const TABS: [Tab, string][] = [["overview", "Overview"], ["comments", "Comments"], ["impact", "Impact"], ["review", "Review"], ["terminal", "Terminal"]];
   const KIND_LABEL = { pr: "Pull request", issue: "Issue", task: "Task" } as const;
   const KIND_ICON = { pr: "pull-request", issue: "issue", task: "task" } as const;
 </script>
@@ -540,7 +554,7 @@
   {#if ui}
     <div class="tabs" role="tablist" aria-label="Work item">
       {#each TABS as [value, label]}
-        {#if (value !== "terminal" || row.worktree) && (value !== "review" || hasReview) && (value !== "comments" || !isTask)}
+        {#if (value !== "terminal" || row.worktree) && ((value !== "review" && value !== "impact") || hasReview) && (value !== "comments" || !isTask)}
           <button role="tab" aria-selected={tab === value} class:on={tab === value} onclick={() => ui && (ui.tab = value)} data-tab={value}>
             {#if value === "terminal"}<StatusDot {status} size={10} />{/if}
             <span>{label}</span>
@@ -577,10 +591,14 @@
           {:else}
             <p class="hint">{convError ? `Could not load the ${row.kind === "pr" ? "pull request" : "issue"} from GitHub: ${convError}` : "Loading…"}</p>
           {/if}
+        {:else if tab === "impact"}
+          <ImpactView {id} bind:view={ui.impact} hasWorktree={!!row.worktree} {agentAway}
+            agentStatus={row.worktree ? (agent?.status ?? row.agent ?? undefined) : undefined}
+            onterminal={showAgent} onshow={showInReview} {polls} />
         {:else if tab === "review"}
           <ReviewView {id} bind:view={ui.review} onchanged={changed} canSendToAgent={!!row.worktree} {agentAway}
             agentStatus={row.worktree ? (agent?.status ?? row.agent ?? undefined) : undefined}
-            onterminal={showAgent} {polls} />
+            onterminal={showAgent} onimpact={showImpact} {polls} />
         {/if}
       {/key}
     </div>

@@ -29,8 +29,8 @@ tasks and cleanup: [lifecycle.md](lifecycle.md). The review view in detail:
   at the top.
 - **Work item tabs:** **Overview** (title, author, branches, labels, description, reviewers,
   checks) · **Comments** (review threads by file with their diff snippet, unresolved first; the
-  conversation; reply, resolve/unresolve, new comment) · **Review** · **Terminal** (with a
-  worktree). GitHub renders the markdown; Ariekei sanitizes it (DOMPurify) and opens links in the
+  conversation; reply, resolve/unresolve, new comment) · **Impact** (the agent's map of how the
+  change affects the rest of the code) · **Review** · **Terminal** (with a worktree). GitHub renders the markdown; Ariekei sanitizes it (DOMPurify) and opens links in the
   system browser.
 - **Reviewing without a worktree:** opening a PR fetches GitHub's `refs/pull/<N>/head` into the
   clone as `refs/ariekei/pull/<N>/head`; no checkout, no agent.
@@ -42,7 +42,8 @@ tasks and cleanup: [lifecycle.md](lifecycle.md). The review view in detail:
 - **Agent:** your installed `claude` in the worktree (see `docs/spike-results.md`, agent
   integration v2). A new conversation gets the PR as context via `--append-system-prompt-file`:
   description, unresolved review threads with file/line, review summaries, failing checks with the
-  failing part of the Actions job log. The agent waits for your instructions. Claude Code records
+  failing part of the Actions job log. The agent waits for your instructions; on someone else's
+  PR it first maps the change for the Impact tab (a new conversation's first prompt). Claude Code records
   the system prompt at the conversation's first request, so the context is frozen there; **Send PR
   feedback to agent** sends the current threads, reviews and CI state as a message.
   Each agent, with what it starts, may use up to half the RAM: a command beyond that fails

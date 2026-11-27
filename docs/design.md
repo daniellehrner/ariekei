@@ -131,6 +131,25 @@ told apart in grey-scale and with colour blindness:
   deleted file always shows as one pane.
 - Only the changed lines' gutter markers are coloured, not the whole change column.
 
+## The impact map
+
+- **Its own tab, before Review** (`ImpactView.svelte`): orientation comes before the diff. The
+  map on the left (`--surface-0`, at most 640 px), the code of the picked place on the right
+  (`CodePeek.svelte`); below an 860 px tab they stack, the code under the map.
+- The map is the agent's: its `Mark` heads it ("Mapped by the agent at `<sha>`"), the picked
+  place has a copper bar at its left, and the place's lines in the code are tinted `--agent-bg`
+  with a copper bar (`.ak-place-line`). Everything else is grey. **Worth checking** is the amber
+  warning icon before an entry's title (caution, not broken).
+- Sections (What changes, Affected, Similar, Paths) have `label-caps` headers with a mono
+  count, like the file panel's groups; entries are rows that open in place (chevron), with their
+  places counted in faint mono. A path's places are numbered steps.
+- "in the diff" is a neutral xs pill; Show in Review is a quiet button, it only switches tab.
+- A map older than the head gets a note under the tab bar in `--agent-bg` with the agent's
+  `Mark` and **Update the map**, a filled agent button: it sends the agent work. **Map again**
+  in the map's head is quiet with the agent's `Mark`, as Send PR feedback to agent.
+- In the diff, a changed line that entries follow from ends in a small neutral pill "Impact N"
+  (`.ak-impact-link`): grey, it asks nothing; drafts keep the gutter.
+
 ## Notices
 
 A notice tells the focused window about another item (`Notices.svelte`, `NoticeCard`;

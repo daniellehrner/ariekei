@@ -185,6 +185,7 @@ A work item is a pull request, an issue or a task. Selecting it shows its header
 |---|---|
 | **Overview** | State, branches (`author wants to merge head into base`), labels, description, reviewers, checks (click a check to open it), the discussion and a link to GitHub. For a task: what to look into. |
 | **Comments** | Review threads, unresolved first and the latest commented first, with their diff snippet; the conversation; reply, resolve and comment. Not shown for tasks. |
+| **Impact** | The agent's map of how the change affects the rest of the code, with the code of every place it names (see [The impact map](#the-impact-map)). Shown where Review is. |
 | **Review** | The diff review (see [Reviewing changes](#7-reviewing-changes)). For PRs, and for issues and tasks once they have a worktree. |
 | **Terminal** | The agent, running in the item's worktree. Only with a worktree. |
 
@@ -192,8 +193,8 @@ An item opens on the tab you left it on. The first time you open it, it opens on
 deals with why it needs you: agent needs you → Terminal, new activity → Comments, ready for
 review → Review, CI failing or cleanup blocked → Overview. A new task opens on its Terminal.
 
-Each item remembers its tab, review scope, selected file and draft comments (yours and the
-agent's), so you can switch between items freely.
+Each item remembers its tab, review scope, selected file, draft comments (yours and the
+agent's) and the place picked in its impact map, so you can switch between items freely.
 
 An item shows at once what Ariekei loaded before: Overview and Comments show the PR or issue as
 GitHub last gave it, and replace that by themselves once GitHub answers (and after every poll).
@@ -258,11 +259,14 @@ A new conversation starts with the item as context:
 - **Task:** its title and notes, and the branch it works on.
 - **A PR or issue a task's agent opened:** also the task's title, notes and conversation up to
   then (see [PRs and issues from a task](#prs-and-issues-from-a-task)).
-- **Someone else's PR:** also that you are reviewing it, and that it drafts review comments into
-  Ariekei (see [Drafts from the agent](#drafts-from-the-agent)).
+- **Someone else's PR:** also that you are reviewing it, that it drafts review comments into
+  Ariekei (see [Drafts from the agent](#drafts-from-the-agent)), and that its map of the change
+  is in the Impact tab.
 
 The agent runs with Ariekei's own tools (an MCP server named `ariekei`, allowed without asking)
-and none of your MCP servers. The agent then waits for your instructions. The context is fixed at the conversation's first
+and none of your MCP servers. The agent then waits for your instructions, except on a PR
+someone else wrote: there a new conversation starts by mapping the change (see
+[The impact map](#the-impact-map)). The context is fixed at the conversation's first
 request; use **Send PR feedback to agent** to give it the PR's current state later.
 
 You can also send the agent review comments and questions about code from the Review tab (see
@@ -472,6 +476,40 @@ thread: it can be edited, asked about or deleted, not moved.
 
 A draft on an older version of the file (the author pushed since) says which commit it was
 made on, and goes into the review text rather than onto a line.
+
+### The impact map
+
+The diff shows what changed; the **Impact** tab shows what that change means for the rest of
+the code. The item's agent makes the map in its worktree, where it has the whole repository,
+and records it with Ariekei's tools:
+
+- **What changes:** the change for the project as a whole: behaviour before and after, who
+  notices it (APIs, protocols, command-line options, configuration, stored data), the modules
+  involved, and the real risks.
+- **Affected:** code outside the diff that the change reaches: callers and users of what it
+  changed, implementations and overrides, code that registers, configures or serializes it, and
+  the entry points that lead there.
+- **Similar:** code elsewhere that does the same thing (parallel implementations, duplicated
+  logic, a helper the change could have used), and whether it needs the same change.
+- **Paths:** the way from an entry point to the changed code, a place per step.
+
+An amber warning sign marks an entry worth checking: behaviour may break there, or the change
+may have missed the place. Each entry lists its places (file and lines, with the agent's note);
+pick one and its code shows on the right: the whole file as committed, the lines marked, also
+for files the diff does not touch. Ariekei checks every place the agent names against its
+worktree's commit and refuses the ones that are not there, so each one opens where it says.
+Right-click code there to ask the agent about it or copy it, as in the diff. A place the change
+touches says **in the diff**, with **Show in Review**, which opens the Review tab on that line
+(in all changes, unfolding unchanged lines around it if they were folded).
+
+The diff links back: a changed line that entries follow from ends in an **Impact** chip with
+their count; clicking it opens them in the Impact tab.
+
+On a PR someone else wrote, the agent maps the change as soon as it starts (Start working), and
+the map fills in while it works. On your own work, **Ask agent to map the change** asks for one.
+When the head moves on (new commits, or a rebase), a copper bar says the map is of an older
+commit, with **Update the map**; **Map again** starts over at any time. Without a worktree
+there is no agent, and the tab says so.
 
 ## 8. Comments and GitHub reviews
 
@@ -819,8 +857,8 @@ activity, a grey bar for lifecycle news.
 
 ## 16. Where your data lives
 
-- Ariekei's state (work items, stars, view state, drafts, the worktrees agents made, and each
-  item's conversation as GitHub last gave it) is in an SQLite database `ariekei.db` in the app
+- Ariekei's state (work items, stars, view state, drafts, impact maps, the worktrees agents
+  made, and each item's conversation as GitHub last gave it) is in an SQLite database `ariekei.db` in the app
   data directory: `~/.local/share/me.lehrner.ariekei` on Linux, `~/Library/Application
   Support/me.lehrner.ariekei` on macOS, `%APPDATA%\me.lehrner.ariekei` on Windows. One Ariekei
   runs on it at a time (`ariekei.lock`, `instance`): starting Ariekei again brings the running
@@ -887,8 +925,9 @@ activity, a grey bar for lifecycle news.
   within a minute, it is left grey: restart Ariekei (on Linux).
 
 - **The agent lists review comments in its answer instead of drafting them into the Review
-  tab**: Claude Code did not load Ariekei's MCP server (`claude-mcp.json`), e.g. because of a
-  managed MCP allowlist. `/mcp` in its terminal shows whether `ariekei` is connected.
+  tab**, or the Impact tab stays empty after the agent mapped the change: Claude Code did not
+  load Ariekei's MCP server (`claude-mcp.json`), e.g. because of a managed MCP allowlist. `/mcp`
+  in its terminal shows whether `ariekei` is connected.
 
 Not supported yet:
 

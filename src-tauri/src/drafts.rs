@@ -136,11 +136,7 @@ pub fn call(
     name: &str,
     args: &Value,
 ) -> Result<String, String> {
-    let id = terminal
-        .and_then(|t| state.terminals.key_for(Some(t), ""))
-        .and_then(|key| key.parse::<i64>().ok())
-        .ok_or("Ariekei does not know this agent: its tools work only in agents it started")?;
-    let item = state.store.item(id)?;
+    let (id, item) = agent_item(state, terminal)?;
     let dir = item
         .worktree_path
         .clone()
@@ -288,7 +284,19 @@ pub fn call(
     Ok(answer)
 }
 
-fn string(args: &Value, key: &str) -> Result<String, String> {
+/// The work item whose agent runs in terminal `terminal`.
+pub(crate) fn agent_item(
+    state: &AppState,
+    terminal: Option<&str>,
+) -> Result<(i64, crate::store::WorkItem), String> {
+    let id = terminal
+        .and_then(|t| state.terminals.key_for(Some(t), ""))
+        .and_then(|key| key.parse::<i64>().ok())
+        .ok_or("Ariekei does not know this agent: its tools work only in agents it started")?;
+    Ok((id, state.store.item(id)?))
+}
+
+pub(crate) fn string(args: &Value, key: &str) -> Result<String, String> {
     match args.get(key) {
         Some(Value::String(s)) if !s.trim().is_empty() => Ok(s.clone()),
         Some(_) => Err(format!("`{key}` must be a text")),
@@ -296,7 +304,7 @@ fn string(args: &Value, key: &str) -> Result<String, String> {
     }
 }
 
-fn int(args: &Value, key: &str) -> Result<Option<u32>, String> {
+pub(crate) fn int(args: &Value, key: &str) -> Result<Option<u32>, String> {
     match args.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(v) => v

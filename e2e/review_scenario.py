@@ -12,7 +12,9 @@ main" from refs/pull/N/head), draft comments, Submit to GitHub (line comment ins
 PR diff, the other one folded into the body), a push showing up in the review, new comments
 marked and their thread first, an item opening on the tab it was left on (also one picked just
 before leaving it), a conversation GitHub fails to give (shown as last given, with a bar), no
-approving your own PR, and the agent (e2e/fake_claude.py) drafting review comments with
+approving your own PR, the agent (e2e/fake_claude.py) mapping another author's change as it
+starts (the Impact tab: places outside the diff with their code, Show in Review on a changed
+line, the diff's link back, Update the map after a commit), and drafting review comments with
 Ariekei's tools: shown in the diff below their lines with yours, edited, redrafted on request,
 a reply in another reviewer's thread, and submitted with the review.
 
@@ -675,6 +677,35 @@ try:
     s.wait(".terminal:not(.hidden) .xterm", timeout=60)
     screen = lambda: s.js(VISIBLE_SCREEN) or ""
     eventually("the agent is ready", screen, lambda v: "❯" in v, timeout=60)
+
+    # --- the agent maps Alice's change as it starts, unasked (Impact tab) ---
+    # The map: an overview and entries, each place with its code, also outside the diff; the
+    # diff links to the entries at the changed line they follow from, and back.
+    check("it mapped the change first", "Set the overview" in screen() and screen().count("Added #") == 3, screen())
+    tab(s, "Impact")
+    s.wait(".impact [data-overview]", timeout=30)
+    equal("the map's sections", s.js("return [...document.querySelectorAll('.impact [data-section]')].map(x => x.dataset.section)"),
+          ["affected", "similar", "path"])
+    # The first entry is open, its first place's code shown: d.txt, which the diff does not touch.
+    s.wait(".impact [data-peek='d.txt'] .ak-place-line", timeout=30)
+    equal("the place's line is marked in its file", s.js("return [...document.querySelectorAll('[data-peek] .ak-place-line')].map(l => l.textContent)"), ["d1"])
+    check("a place outside the diff says nothing of the diff", not s.find(".impact [data-peek] [data-in-diff]"))
+    s.screenshot(os.path.join(shots, "r6-impact.png"))
+    # The changed line the entry follows from is in the diff: Show in Review lands on it.
+    dom_click(s, ".impact [data-entry] [data-place='from']")
+    s.wait(".impact [data-peek='a.txt'] [data-in-diff]", timeout=30)
+    dom_click(s, ".impact [data-show-in-review]")
+    s.wait(".review .marker", timeout=30)
+    head_line = NEW_SIDE + "\n        return view ? view.state.doc.lineAt(view.state.selection.main.head).number : 0;"
+    eventually("Show in Review lands on its line", lambda: s.js(head_line), lambda v: v == 10, timeout=20)
+    # The diff links back: both entries that follow from line 10.
+    eventually("the diff links to the map at that line", lambda: s.js("return [...document.querySelectorAll('.diff [data-impact-link]')].map(b => b.textContent)"),
+               lambda v: v == ["Impact 2"], timeout=20)
+    dom_click(s, ".diff [data-impact-link]")
+    s.wait(".impact [data-map-list]", timeout=10)
+    equal("the link opens the entries it names", s.js("return [...document.querySelectorAll('.impact .entry.open')].length"), 2)
+    tab(s, "Terminal")
+    s.wait(".terminal:not(.hidden) .xterm", timeout=30)
     to_agent(s, "Draft a review comment on a.txt line 10: Maybe call it line10_renamed?")
     eventually("the agent drafts it with Ariekei's tool", screen, lambda v: "Drafted #" in v, timeout=60)
     print("[drafts] the agent said:", next(line for line in screen().splitlines() if "Drafted #" in line).replace("⏺", "").strip())
@@ -729,5 +760,15 @@ try:
                lambda v: v == [("T1", "The old name read better, I agree.", "PRR_7")], timeout=10)
     check("then the review is submitted", writes()[-1].get("post") == "repos/owner/proj/pulls/43/reviews/7/events", writes()[-1])
     eventually("submitted drafts are gone", lambda: s.js("return document.querySelectorAll('[data-draft]').length"), lambda v: v == 0, timeout=10)
+
+    # A commit on top of the map: the Impact tab says the map is behind, and Update the map
+    # has the agent map the change again, at the new head.
+    git(os.path.join(work, "proj_pr43"), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "more")
+    tab(s, "Impact")
+    stale = s.wait(".impact [data-stale-map]", timeout=30)
+    contains("the map is a commit behind", s.text(stale), "1 newer commit")
+    dom_click(s, ".impact [data-update-map]")
+    eventually("the agent maps it again at the new head", lambda: bool(s.find(".impact [data-stale-map]")), lambda v: not v, timeout=60)
+    check("the map is back", bool(s.find(".impact [data-overview]")))
 finally:
     s.quit()

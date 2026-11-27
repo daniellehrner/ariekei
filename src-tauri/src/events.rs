@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! What the backend tells the windows and the desktop: agent status, Inbox refreshes and
-//! poll errors, review drafts, the agents' own worktrees, and notices. The app sends them through Tauri (`TauriEvents`);
+//! poll errors, review drafts, impact maps, the agents' own worktrees, and notices. The app sends them through Tauri (`TauriEvents`);
 //! tests record them (`Recorded`), so the logic behind them runs without a Tauri app.
 
 use crate::hooks::AgentStatus;
@@ -19,6 +19,8 @@ pub trait Events: Send + Sync {
     fn inbox_error(&self, repo: i64, message: &str);
     /// The review drafts of item `id` changed, by the user or its agent (`drafts-changed`).
     fn drafts_changed(&self, id: i64);
+    /// Item `id`'s agent changed its impact map (`impact-changed`).
+    fn impact_changed(&self, id: i64);
     /// The worktrees item `id`'s agent made changed (`agent-worktrees-changed`).
     fn worktrees_changed(&self, id: i64);
     /// Tells the user something about item `key`: in the focused window, or as an OS
@@ -83,6 +85,10 @@ impl Events for TauriEvents {
         let _ = self.0.emit("drafts-changed", id);
     }
 
+    fn impact_changed(&self, id: i64) {
+        let _ = self.0.emit("impact-changed", id);
+    }
+
     fn worktrees_changed(&self, id: i64) {
         let _ = self.0.emit("agent-worktrees-changed", id);
     }
@@ -143,6 +149,7 @@ pub enum Sent {
     InboxChanged(i64),
     InboxError(i64, String),
     DraftsChanged(i64),
+    ImpactChanged(i64),
     WorktreesChanged(i64),
     Notice {
         key: String,
@@ -196,6 +203,10 @@ impl Events for Recorded {
 
     fn drafts_changed(&self, id: i64) {
         self.sent.lock().unwrap().push(Sent::DraftsChanged(id));
+    }
+
+    fn impact_changed(&self, id: i64) {
+        self.sent.lock().unwrap().push(Sent::ImpactChanged(id));
     }
 
     fn worktrees_changed(&self, id: i64) {

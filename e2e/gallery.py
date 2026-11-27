@@ -19,7 +19,8 @@ D-Bus; to choose the theme, point D-Bus nowhere and set it in a GTK settings fil
   E2E_WEBDRIVER=http://127.0.0.1:4444 python3 -I e2e/gallery.py <app> <work> [light|dark] [1440x900] [screen,...]
 
 Screens: connect, empty (nothing selected yet), overview, menu, repo-remove (its confirm), comments, collapsed, waiting, terminal, review,
-scope-menu, selection, drafts, submit, code-menu, ask-agent, shortcuts, review-hidden, notice-arriving,
+scope-menu, selection, drafts, submit, code-menu, ask-agent, shortcuts, review-hidden, impact-empty
+(someone else's PR before it has an agent), impact (the map its agent makes as it starts), notice-arriving,
 notices, inbox (every section, one item starred), browse, new-task (on a fork's branch),
 change-end (n past the last change), task (a task with the PR its agent opened), moved (its
 worktree on another branch), quit (asked before quitting stops agents' work).
@@ -284,6 +285,23 @@ try:
             s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }))")
             click(s, "[data-toggle='side']")
             shot(s, "review-hidden")
+    if need("impact-empty", "impact"):
+        # Someone else's PR: its Impact tab before it has an agent, then the map its agent makes
+        # as it starts.
+        if s.find(".inbox.collapsed"):
+            s.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }))")
+        row(s, 7973)
+        s.wait(".item header .title", timeout=30, text="#7973")
+        tab(s, "Impact")
+        s.wait("[data-impact-empty]", timeout=30)
+        shot(s, "impact-empty")
+        click(s, "[data-start]")
+        s.wait(".terminal .xterm", timeout=60)
+        tab(s, "Impact")
+        s.wait(".impact [data-overview]", timeout=60)
+        s.wait(".impact [data-peek] .ak-place-line", timeout=30)
+        time.sleep(0.5)
+        shot(s, "impact")
     if need("task", "moved"):
         # A task whose agent opened a PR: the task's Overview, and the PR an item of its own in
         # My PRs.

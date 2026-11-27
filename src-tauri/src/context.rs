@@ -18,11 +18,13 @@ pub(crate) fn truncate(s: &str, max: usize) -> &str {
     }
 }
 
-/// Added to the context of a PR someone else wrote (see `drafts`).
+/// Added to the context of a PR someone else wrote (see `drafts` and `impact`).
 pub const REVIEWING: &str = "\n## Reviewing\n\nThe user is reviewing this pull request, which \
 someone else wrote. When you draft review comments for them, add each one with Ariekei's \
 add_review_comment tool instead of only listing it in your reply, and an answer in an existing \
-thread with reply_to_review_thread: they edit and submit the drafts from Ariekei's Review tab.\n";
+thread with reply_to_review_thread: they edit and submit the drafts from Ariekei's Review tab. \
+Your map of how the change affects the rest of the code (set_change_overview, add_impact) is \
+in its Impact tab, which they read first.\n";
 
 /// Markdown for the agent. `logs` holds `(check name, log tail)` for failing checks.
 pub fn render(number: i64, pr: &PrDetail, logs: &[(String, String)]) -> String {

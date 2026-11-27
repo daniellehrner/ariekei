@@ -77,7 +77,7 @@ def fixture():
 
 def pr(number, title):
     return {
-        "number": number, "title": title, "url": f"https://github.com/owner/proj/pull/{number}",
+        "number": number, "title": title, "author": "me", "url": f"https://github.com/owner/proj/pull/{number}",
         "isDraft": False, "updatedAt": "2026-10-13T10:00:00Z", "headRef": "feature/x", "headSha": "",
         "headOwner": "owner", "headRepo": "proj", "headSshUrl": GITHUB, "headHttpsUrl": "",
         "baseRef": "main", "reviewDecision": "REVIEW_REQUIRED", "ci": "SUCCESS", "failingChecks": [],

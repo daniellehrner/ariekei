@@ -6,6 +6,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { AgentStatus } from "./agent.svelte";
 import type { Hunk } from "./gitDiff";
+import type { ImpactShown } from "./impact";
 import type { LineComment, ReviewDraft, ThreadReply } from "./reviewComments";
 import type { ReviewFile } from "./review";
 
@@ -315,6 +316,13 @@ export const api = {
   replyComment: (id: number, commentId: number, body: string) => invoke<void>("reply_comment", { id, commentId, body }),
   postComment: (id: number, body: string) => invoke<void>("post_comment", { id, body }),
   resolveThread: (threadId: string, resolved: boolean) => invoke<void>("resolve_thread", { threadId, resolved }),
+  /** The agent's map of how the item's change affects the rest of the code; `impact-changed`
+   *  says when it changes. */
+  impactMap: (id: number) => invoke<ImpactShown>("impact_map", { id }),
+  /** Asks the item's agent to map its change; `update`: again, after new commits. */
+  mapImpact: (id: number, update: boolean) => invoke<void>("map_impact", { id, update }),
+  /** The file as committed at `rev`. */
+  fileAt: (id: number, rev: string, path: string) => invoke<string>("file_at", { id, rev, path }),
   agentWorktrees: (id: number) => invoke<AgentWorktree[]>("agent_worktrees", { id }),
   /** `force`: although that loses its `losses` (the user saw them). */
   removeAgentWorktree: (id: number, worktree: number, force: boolean) =>

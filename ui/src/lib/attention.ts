@@ -35,7 +35,7 @@ export function attentionKind(reason: string | null): Attention {
   return (reason && KIND[reason]) || "none";
 }
 
-export type Tab = "overview" | "comments" | "review" | "terminal";
+export type Tab = "overview" | "comments" | "impact" | "review" | "terminal";
 
 /** The tab that resolves the item's attention reason, if any: the agent needs you → Terminal,
  *  a reply or new comments → Comments, ready for review → Review, CI failing / cleanup

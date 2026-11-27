@@ -29,7 +29,7 @@ impl McpServer {
     pub fn start(
         data_dir: &Path,
         tools: Value,
-        instructions: &'static str,
+        instructions: String,
         call: impl Fn(Option<&str>, &str, &Value) -> Result<String, String> + Send + Sync + 'static,
     ) -> std::io::Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
@@ -69,7 +69,7 @@ impl McpServer {
 struct Server {
     path: String,
     tools: Value,
-    instructions: &'static str,
+    instructions: String,
     call: Box<Call>,
 }
 
@@ -161,7 +161,7 @@ mod tests {
         let server = McpServer::start(
             dir.path(),
             json!([{ "name": "echo" }]),
-            "Use echo.",
+            "Use echo.".into(),
             |terminal, name, args| match name {
                 "echo" => Ok(format!("{} from {}", args["text"], terminal.unwrap_or("?"))),
                 _ => Err(format!("no tool {name}")),

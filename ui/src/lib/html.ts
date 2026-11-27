@@ -1,10 +1,12 @@
 // Copyright contributors to Ariekei.
 // SPDX-License-Identifier: Apache-2.0
 
-// HTML rendered by GitHub (descriptions, comments) shown inside the app.
+// HTML rendered by GitHub (descriptions, comments), and markdown the agent wrote, shown inside
+// the app.
 
 import DOMPurify from "dompurify";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { marked } from "marked";
 
 // GitHub already sanitizes bodyHTML; this is defense in depth, since the app has a
 // privileged bridge to the backend: no scripts, forms, frames or inline styles.
@@ -14,6 +16,12 @@ export function sanitize(html: string): string {
     FORBID_TAGS: ["style", "form", "input", "button", "textarea", "select", "iframe"],
     FORBID_ATTR: ["style"],
   });
+}
+
+// Markdown the agent wrote (its impact map), as sanitized HTML. Raw HTML in it is kept only as
+// far as `sanitize` allows.
+export function markdown(md: string): string {
+  return sanitize(marked.parse(md, { async: false, gfm: true }));
 }
 
 // Svelte action: links open in the system browser instead of navigating the app window;
